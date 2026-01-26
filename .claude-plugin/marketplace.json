@@ -14,7 +14,7 @@
       "description": "CLI tools skills including grok-search",
       "source": "./",
       "strict": false,
-      "skills": ["./skills/grok-search"]
+      "skills": ["../skills/grok-search"]
     }
   ]
 }

@@ -73,21 +73,25 @@ gemini --list-skills
 
 ```
 DSkills/
-├── skills/                    # SSoT - All skills
+├── README.md                          
+├── skills/                            # All skills
 │   └── grok-search/
-│       ├── SKILL.md
-│       ├── README.md
-│       └── scripts/
-├── .claude-plugin/
-│   └── marketplace.json
-└── .claude/skills/            # Auto-synced (deprecated)
+│       ├── SKILL.md                   
+│       ├── README.md                  
+│       └── scripts/                   
+│           ├── groksearch_cli.py
+│           └── .env.example
+└── .claude-plugin/
+    ├── marketplace.json               # Configuration
+    └── plugins/
+        └── cli-skills/
+            └── plugin.json            # metedata
 ```
 
 ## Adding New Skills
 
 1. Create `skills/<skill-name>/SKILL.md`
 2. Update `.claude-plugin/marketplace.json`
-3. Run `python scripts/sync_skills.py`
 
 ## License
 
