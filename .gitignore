@@ -1,0 +1,12 @@
+.ace-tool/
+
+# OpenSpec Files
+openspec/
+.claude/commands/
+
+# Codex Files
+AGENTS.md
+
+# ClaudeCode files
+settings.local.json
+CLAUDE.md

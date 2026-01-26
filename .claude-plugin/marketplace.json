@@ -1,0 +1,20 @@
+{
+  "name": "DSkills",
+  "owner": {
+    "name": "Dianel555",
+    "url": "https://github.com/Dianel555"
+  },
+  "metadata": {
+    "description": "CLI tools skills for Claude Code, Codex, Gemini CLI",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "cli-skills",
+      "description": "CLI tools skills including grok-search",
+      "source": "./",
+      "strict": false,
+      "skills": ["./skills/grok-search"]
+    }
+  ]
+}

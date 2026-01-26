@@ -1,0 +1,9 @@
+{
+  "name": "cli-skills",
+  "version": "1.0.0",
+  "description": "CLI tools skills for AI coding assistants",
+  "skills": ["../../../skills/grok-search"],
+  "dependencies": {
+    "python": ["httpx", "tenacity"]
+  }
+}
