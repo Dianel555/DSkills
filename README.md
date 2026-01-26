@@ -7,6 +7,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Gemini CLI).
 | Skill | Description |
 |-------|-------------|
 | [grok-search](skills/grok-search/) | Enhanced web search via Grok API |
+| [sequential-think](skills/sequential-think/) | Iterative thinking engine for complex problem-solving |
 
 ## Installation
 
@@ -73,19 +74,25 @@ gemini --list-skills
 
 ```
 DSkills/
-├── README.md                          
+├── README.md
 ├── skills/                            # All skills
-│   └── grok-search/
-│       ├── SKILL.md                   
-│       ├── README.md                  
-│       └── scripts/                   
-│           ├── groksearch_cli.py
+│   ├── grok-search/
+│   │   ├── SKILL.md
+│   │   ├── README.md
+│   │   └── scripts/
+│   │       ├── groksearch_cli.py
+│   │       └── .env.example
+│   └── sequential-think/
+│       ├── SKILL.md
+│       ├── README.md
+│       └── scripts/
+│           ├── sequential_think_cli.py
 │           └── .env.example
 └── .claude-plugin/
     ├── marketplace.json               # Configuration
     └── plugins/
         └── cli-skills/
-            └── plugin.json            # metedata
+            └── plugin.json            # metadata
 ```
 
 ## Adding New Skills
