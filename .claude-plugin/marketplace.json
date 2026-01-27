@@ -10,11 +10,25 @@
   },
   "plugins": [
     {
-      "name": "cli-skills",
-      "description": "CLI tools skills including grok-search",
-      "source": "./",
+      "name": "grok-search",
+      "description": "Enhanced web search and real-time content retrieval via Grok API",
+      "source": "./skills/grok-search",
       "strict": false,
-      "skills": ["../skills/grok-search", "../skills/sequential-think", "../skills/exa"]
+      "skills": ["./"]
+    },
+    {
+      "name": "sequential-think",
+      "description": "Multi-step reasoning engine for complex analysis and systematic problem solving",
+      "source": "./skills/sequential-think",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
+      "name": "exa",
+      "description": "High-precision semantic search via Exa API",
+      "source": "./skills/exa",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }
