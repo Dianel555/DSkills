@@ -8,6 +8,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Gemini CLI).
 |-------|-------------|
 | [grok-search](skills/grok-search/) | Enhanced web search via Grok API |
 | [sequential-think](skills/sequential-think/) | Iterative thinking engine for complex problem-solving |
+| [exa](skills/exa/) | High-precision semantic search via Exa API |
 
 ## Installation
 
