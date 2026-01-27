@@ -29,6 +29,13 @@
       "source": "./skills/exa",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "time",
+      "description": "Time and timezone utilities for getting current time and converting between timezones",
+      "source": "./skills/time",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }

@@ -59,11 +59,15 @@ def create_skill(name: str, description: str = "A new skill"):
     with open(MARKETPLACE_JSON, 'r', encoding='utf-8') as f:
         marketplace = json.load(f)
 
-    for plugin in marketplace.get("plugins", []):
-        if "skills" in plugin:
-            skill_path = f"./skills/{name}"
-            if skill_path not in plugin["skills"]:
-                plugin["skills"].append(skill_path)
+    plugins = marketplace.setdefault("plugins", [])
+    if not any(p.get("name") == name for p in plugins):
+        plugins.append({
+            "name": name,
+            "description": description,
+            "source": f"./skills/{name}",
+            "strict": False,
+            "skills": ["./"]
+        })
 
     with open(MARKETPLACE_JSON, "w", encoding='utf-8') as f:
         json.dump(marketplace, f, ensure_ascii=False, indent=2)
