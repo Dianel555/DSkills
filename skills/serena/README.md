@@ -12,7 +12,7 @@ Semantic code understanding with IDE-like symbol operations. MCP-independent CLI
 ## Installation
 
 ```bash
-pip install serena-agent
+pip install serena-agent typer
 ```
 
 ## Quick Start
@@ -22,16 +22,16 @@ pip install serena-agent
 export SERENA_PROJECT=/path/to/project
 
 # Find a symbol
-python -m skills.serena.tools find-symbol MyClass --body
+python -m skills.serena.tools symbol find MyClass --body
 
 # List symbols in file
-python -m skills.serena.tools symbols-overview src/main.py
+python -m skills.serena.tools symbol overview src/main.py
 
 # Find references
-python -m skills.serena.tools find-refs MyClass/method
+python -m skills.serena.tools symbol refs MyClass/method
 
 # List available tools
-python -m skills.serena.tools list-tools
+python -m skills.serena.tools workflow tools
 ```
 
 ## CLI Commands
@@ -39,47 +39,54 @@ python -m skills.serena.tools list-tools
 ### Symbol Operations
 | Command | Description |
 |---------|-------------|
-| `find-symbol <name>` | Find symbols by name |
-| `symbols-overview <path>` | List symbols in file |
-| `find-refs <name>` | Find symbol references |
-| `replace-symbol <name> --path <file>` | Replace symbol body |
-| `insert-after <name> --path <file>` | Insert after symbol |
-| `insert-before <name> --path <file>` | Insert before symbol |
-| `rename-symbol <name> <new> --path <file>` | Rename symbol |
+| `symbol find <name>` | Find symbols by name |
+| `symbol overview <path>` | List symbols in file |
+| `symbol refs <name>` | Find symbol references |
+| `symbol replace <name> --path <file> --body <code>` | Replace symbol body |
+| `symbol insert-after <name> --path <file> --content <code>` | Insert after symbol |
+| `symbol insert-before <name> --path <file> --content <code>` | Insert before symbol |
+| `symbol rename <name> <new> --path <file>` | Rename symbol |
 
 ### Memory Operations
 | Command | Description |
 |---------|-------------|
-| `list-memories` | List all memories |
-| `read-memory <name>` | Read memory content |
-| `write-memory <name> --content <text>` | Create/update memory |
-| `edit-memory <name> --content <text>` | Edit memory |
-| `delete-memory <name>` | Delete memory |
+| `memory list` | List all memories |
+| `memory read <name>` | Read memory content |
+| `memory write <name> --content <text>` | Create/update memory |
+| `memory edit <name> --content <text>` | Edit memory |
+| `memory delete <name>` | Delete memory |
 
 ### File Operations
 | Command | Description |
 |---------|-------------|
-| `list-dir [--path <dir>]` | List directory |
-| `find-file <pattern>` | Find files by pattern |
-| `search <pattern>` | Search for pattern |
+| `file list [--path <dir>]` | List directory |
+| `file find <pattern>` | Find files by pattern |
+| `file search <pattern>` | Search for pattern |
 
 ### Extended Tools
 | Command | Description |
 |---------|-------------|
-| `run-command <cmd>` | Execute shell command |
-| `run-script <path>` | Execute script file |
-| `read-config <path>` | Read JSON/YAML config |
-| `update-config <path> <key> <value>` | Update config value |
+| `cmd run <cmd>` | Execute shell command |
+| `cmd script <path>` | Execute script file |
+| `config read <path>` | Read JSON/YAML config |
+| `config update <path> <key> <value>` | Update config value |
 
-## Python API
+### Workflow
+| Command | Description |
+|---------|-------------|
+| `workflow onboarding` | Run project onboarding |
+| `workflow check` | Check onboarding status |
+| `workflow tools` | List available tools |
 
-```python
-from skills.serena.tools import SerenaCore
+## Global Options
 
-core = SerenaCore(project="/path/to/project")
-result = core.call_tool("find_symbol", name_path="MyClass")
-tools = core.list_tools(scope="all")
-core.shutdown()
+```bash
+python -m skills.serena.tools [OPTIONS] <command>
+
+Options:
+  -p, --project PATH    Project directory (default: ., env: SERENA_PROJECT)
+  -c, --context TEXT    Context: agent, claude-code, ide, codex (env: SERENA_CONTEXT)
+  -m, --mode TEXT       Operation modes (can repeat)
 ```
 
 ## Output Format
@@ -96,34 +103,26 @@ All CLI output is JSON:
 
 Error codes: `INVALID_ARGS`, `TOOL_NOT_FOUND`, `INIT_FAILED`, `RUNTIME_ERROR`
 
-## Documentation
-
-- [SKILL.md](SKILL.md) - Core usage instructions
-- [references/symbol-tools.md](references/symbol-tools.md) - Symbol tools reference
-- [references/memory-tools.md](references/memory-tools.md) - Memory tools reference
-- [references/file-tools.md](references/file-tools.md) - File tools reference
-- [references/workflow-tools.md](references/workflow-tools.md) - Workflow tools reference
-
 ## Project Structure
 
 ```
 skills/serena/
-├── SKILL.md              # Core skill instructions
-├── README.md             # This file
-├── .env.example          # Environment config template
-├── tools/
-│   ├── __init__.py       # Package exports
-│   ├── __main__.py       # CLI entry point
-│   ├── cli.py            # CLI implementation
-│   ├── core.py           # SerenaCore wrapper
-│   ├── cmd_tools.py      # Command execution tools
-│   ├── config_tools.py   # Config file tools
-│   ├── symbol_tools.py   # Symbol tool wrappers
-│   ├── memory_tools.py   # Memory tool wrappers
-│   ├── file_tools.py     # File tool wrappers
-│   ├── workflow_tools.py # Workflow tool wrappers
-│   └── test_agent_init.py # Diagnostic script
-└── references/           # Detailed documentation
+├── SKILL.md              
+├── README.md             
+├── .env.example          
+└── tools/
+    ├── core.py           # SerenaCore wrapper
+    ├── output.py         # JSON output utilities
+    ├── cli/              # Typer CLI commands  
+    │   ├── symbol.py     
+    │   ├── memory.py     
+    │   ├── file.py       
+    │   ├── workflow.py   
+    │   ├── cmd.py        
+    │   └── config.py     
+    └── extended/         # Extended tools
+        ├── cmd_tools.py
+        └── config_tools.py
 ```
 
 ## License

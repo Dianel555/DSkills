@@ -6,132 +6,141 @@ description: |
 
 # Serena - Semantic Code Understanding
 
-IDE-like semantic code operations. Provides symbol-level code navigation, editing, and project memory.
+IDE-like semantic code operations via CLI. Provides symbol-level code navigation, editing, and project memory.
 
-## Execution Methods
+## Execution
 
-### Method 1: MCP Tools (if available)
+### MCP Tools (if available)
 Use `mcp__serena__*` tools directly.
 
-### Method 2: CLI (MCP-Independent)
-Run via `python -m skills.serena.tools`:
-
+### CLI
 ```bash
-# Prerequisites: pip install serena-agent
+# Prerequisites: pip install serena-agent typer
 # Environment: SERENA_PROJECT (default: current directory)
 
 # Symbol operations
-python -m skills.serena.tools find-symbol MyClass --body
-python -m skills.serena.tools symbols-overview src/main.py
-python -m skills.serena.tools find-refs MyClass/method
-python -m skills.serena.tools rename-symbol OldName NewName --path src/file.py
+python -m skills.serena.tools symbol find MyClass --body
+python -m skills.serena.tools symbol overview src/main.py
+python -m skills.serena.tools symbol refs MyClass/method
+python -m skills.serena.tools symbol rename OldName NewName --path src/file.py
 
 # Memory operations
-python -m skills.serena.tools list-memories
-python -m skills.serena.tools read-memory project_overview
-python -m skills.serena.tools write-memory api_notes --content "..."
+python -m skills.serena.tools memory list
+python -m skills.serena.tools memory read project_overview
+python -m skills.serena.tools memory write api_notes --content "..."
 
 # File operations
-python -m skills.serena.tools list-dir --recursive
-python -m skills.serena.tools find-file "**/*.py"
-python -m skills.serena.tools search "TODO:.*" --path src
+python -m skills.serena.tools file list --recursive
+python -m skills.serena.tools file find "**/*.py"
+python -m skills.serena.tools file search "TODO:.*" --path src
 
 # Extended tools
-python -m skills.serena.tools run-command "git status"
-python -m skills.serena.tools read-config config.json
+python -m skills.serena.tools cmd run "git status"
+python -m skills.serena.tools config read config.json
 ```
 
 ## Tool Routing Policy
 
 ### Prefer Serena Over Built-in Tools
 
-| Task | Avoid | Use Serena |
-|------|-------|------------|
-| Find function | `grep "def func"` | `find_symbol(name="func")` |
-| List file structure | `cat file.py` | `get_symbols_overview(file)` |
-| Find usages | `grep "func("` | `find_referencing_symbols(func)` |
-| Edit function | `Edit` tool | `replace_symbol_body` |
-| Rename | Manual find/replace | `rename_symbol` |
+| Task | Avoid | Use Serena CLI |
+|------|-------|----------------|
+| Find function | `grep "def func"` | `symbol find func --body` |
+| List file structure | `cat file.py` | `symbol overview file.py` |
+| Find usages | `grep "func("` | `symbol refs func` |
+| Edit function | `Edit` tool | `symbol replace func --path file.py` |
+| Rename | Manual find/replace | `symbol rename old new --path file.py` |
 
 ### When to Use Built-in Tools
 - Simple text search (non-code patterns)
 - Configuration files (JSON, YAML)
 - Documentation files (Markdown)
 
-## Tool Capability Matrix
+## Command Reference
 
-### Symbol Tools
-| Tool | Parameters | Output |
-|------|------------|--------|
-| `find_symbol` | `name_path`(required), `relative_path`/`include_body`/`depth`(optional) | Symbol info with optional body |
-| `get_symbols_overview` | `relative_path`(required) | List of symbols in file |
-| `find_referencing_symbols` | `name_path`(required), `relative_path`/`include_code_snippets`(optional) | Reference locations |
-| `replace_symbol_body` | `name_path`, `relative_path`, `new_body`(all required) | Edit confirmation |
-| `insert_after_symbol` | `name_path`, `relative_path`, `content`(all required) | Insert confirmation |
-| `insert_before_symbol` | `name_path`, `relative_path`, `content`(all required) | Insert confirmation |
-| `rename_symbol` | `name_path`, `relative_path`, `new_name`(all required) | Rename confirmation |
+### Symbol Commands
+| Command | Description |
+|---------|-------------|
+| `symbol find <name> [--body] [--depth N] [--path file]` | Find symbols by name |
+| `symbol overview <path>` | List all symbols in file |
+| `symbol refs <name> [--path file]` | Find symbol references |
+| `symbol replace <name> --path <file> --body <code>` | Replace symbol body |
+| `symbol insert-after <name> --path <file> --content <code>` | Insert after symbol |
+| `symbol insert-before <name> --path <file> --content <code>` | Insert before symbol |
+| `symbol rename <name> <new> --path <file>` | Rename symbol |
 
-### Memory Tools
-| Tool | Parameters | Output |
-|------|------------|--------|
-| `write_memory` | `name`, `content`(required) | Write confirmation |
-| `read_memory` | `name`(required) | Memory content |
-| `list_memories` | - | List of memory names |
-| `edit_memory` | `name`, `content`(required) | Edit confirmation |
-| `delete_memory` | `name`(required) | Delete confirmation |
+### Memory Commands
+| Command | Description |
+|---------|-------------|
+| `memory list` | List all memories |
+| `memory read <name>` | Read memory content |
+| `memory write <name> --content <text>` | Create/update memory |
+| `memory edit <name> --content <text>` | Edit memory |
+| `memory delete <name>` | Delete memory |
 
-### Extended Tools
-| Tool | Parameters | Output |
-|------|------------|--------|
-| `run_command` | `command`(required), `cwd`/`timeout`(optional) | Command output |
-| `run_script` | `script_path`(required), `args`(optional) | Script output |
-| `read_config` | `path`(required), `format`(optional) | Config content |
-| `update_config` | `path`, `key`, `value`(all required) | Update confirmation |
+### File Commands
+| Command | Description |
+|---------|-------------|
+| `file list [--path dir] [--recursive]` | List directory |
+| `file find <pattern>` | Find files by glob pattern |
+| `file search <pattern> [--path dir]` | Search for regex pattern |
+
+### Extended Commands
+| Command | Description |
+|---------|-------------|
+| `cmd run <command> [--cwd dir] [--timeout N]` | Execute shell command |
+| `cmd script <path> [--args "..."]` | Execute script file |
+| `config read <path> [--format json\|yaml]` | Read config file |
+| `config update <path> <key> <value>` | Update config value |
+
+### Workflow Commands
+| Command | Description |
+|---------|-------------|
+| `workflow onboarding` | Run project onboarding |
+| `workflow check` | Check onboarding status |
+| `workflow tools [--scope all]` | List available tools |
 
 ## Workflow
 
 ### Phase 1: Exploration
-1. Use `get_symbols_overview` to understand file structure
-2. Use `find_symbol` with `depth=1` to explore class members
-3. Use `find_symbol` with `include_body=True` for implementation details
+```bash
+symbol overview src/main.py           # Understand file structure
+symbol find MyClass --depth 1         # Explore class members
+symbol find MyClass/method --body     # Get implementation details
+```
 
 ### Phase 2: Analysis
-1. Use `find_referencing_symbols` for impact analysis
-2. Use `list_memories` to check existing project knowledge
-3. Use `read_memory` to retrieve context
+```bash
+symbol refs MyClass/method            # Impact analysis
+memory list                           # Check project knowledge
+memory read architecture              # Retrieve context
+```
 
 ### Phase 3: Modification
-1. Verify target with `find_symbol(include_body=True)`
-2. Use `replace_symbol_body` for edits
-3. Use `insert_after_symbol`/`insert_before_symbol` for additions
-4. Use `rename_symbol` for refactoring
+```bash
+symbol find target --body             # Verify target
+symbol replace target --path f --body "..."  # Edit
+symbol rename old new --path f        # Refactor
+```
 
 ## Error Handling
 
-### CLI Error Codes
 ```json
 {"error": {"code": "ERROR_CODE", "message": "description"}}
 ```
 
-| Error Code | Meaning | Recovery |
-|------------|---------|----------|
-| `INVALID_ARGS` | Invalid arguments | Check `--help` |
-| `TOOL_NOT_FOUND` | Unknown tool | Use `list-tools` |
-| `INIT_FAILED` | Init failed | Check serena-agent |
-| `RUNTIME_ERROR` | Execution failed | Check message |
-
-### Common Issues
-| Error | Recovery |
-|-------|----------|
-| Symbol not found | Use `search_for_pattern` as fallback |
-| Project not activated | Call `onboarding` |
-| Language server error | Use `restart_language_server` |
+| Error Code | Recovery |
+|------------|----------|
+| `INVALID_ARGS` | Check `--help` |
+| `TOOL_NOT_FOUND` | Use `workflow tools` |
+| `INIT_FAILED` | Check serena-agent installation |
+| `RUNTIME_ERROR` | Check error message |
 
 ## Anti-Patterns
 
 | Prohibited | Correct |
 |------------|---------|
-| Read entire file to find function | Use `find_symbol` |
-| Grep for function calls | Use `find_referencing_symbols` |
-| Manual search-replace rename | Use `rename_symbol` |
-| Skip impact analysis | Check references before editing |
+| Read entire file to find function | `symbol find func --body` |
+| Grep for function calls | `symbol refs func` |
+| Manual search-replace rename | `symbol rename old new --path f` |
+| Skip impact analysis | `symbol refs` before editing |

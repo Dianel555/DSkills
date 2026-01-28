@@ -37,10 +37,35 @@ class SerenaCore:
             return "codex"
         return "agent"
 
+    def _resolve_context(self) -> Optional[Any]:
+        """Convert string context to SerenaAgentContext if needed."""
+        if self.context:
+            try:
+                from serena.agent import SerenaAgentContext
+                return SerenaAgentContext.load_by_name(self.context)
+            except Exception:
+                return None
+        return None
+
+    def _resolve_modes(self) -> Optional[List[Any]]:
+        """Convert string modes to SerenaAgentMode list if needed."""
+        if self.modes:
+            try:
+                from serena.agent import SerenaAgentMode
+                return [SerenaAgentMode(m) for m in self.modes]
+            except Exception:
+                return None
+        return None
+
     def _ensure_agent(self) -> SerenaAgent:
         if self._agent is None:
             config = SerenaConfig()
-            self._agent = SerenaAgent(project=str(self.project_path), serena_config=config)
+            self._agent = SerenaAgent(
+                project=str(self.project_path),
+                serena_config=config,
+                context=self._resolve_context(),
+                modes=self._resolve_modes(),
+            )
         return self._agent
 
     def register_tool(self, tool: Any):
