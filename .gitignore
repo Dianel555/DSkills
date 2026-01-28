@@ -1,9 +1,9 @@
 .ace-tool/
+.serena/
 TESTING.md
 
 # OpenSpec Files
 openspec/
-.claude/commands/
 
 # Codex Files
 AGENTS.md
@@ -40,6 +40,7 @@ venv/
 ENV/
 env/
 .venv
+.env
 
 # IDE
 .vscode/
