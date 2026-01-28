@@ -10,6 +10,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Gemini CLI).
 | [sequential-think](skills/sequential-think/) | Iterative thinking engine for complex problem-solving |
 | [exa](skills/exa/) | High-precision semantic search via Exa API |
 | [time](skills/time/) | Time and timezone utilities |
+| [Serena](skills/serena/) | Semantic code understanding with IDE-like symbol operations |
 
 ## Installation
 
@@ -81,7 +82,8 @@ DSkills/
 │   ├── grok-search/
 │   ├── sequential-think/
 │   ├── exa/
-│   └── time/
+│   ├── time/
+│   └── serena/
 └── .claude-plugin/
     └── marketplace.json               # Metadata
 ```
@@ -89,7 +91,7 @@ DSkills/
 ## Adding New Skills
 
 1. Create `skills/<skill-name>/SKILL.md`
-2. Use `scripts/create_skill.py`  to update `.claude-plugin/marketplace.json`
+2. Update `.claude-plugin/marketplace.json`
 
 ## License
 

@@ -1,4 +1,4 @@
-# Serena Skill
+# Serena CLI
 
 Semantic code understanding with IDE-like symbol operations. MCP-independent CLI for code navigation, editing, and project memory.
 

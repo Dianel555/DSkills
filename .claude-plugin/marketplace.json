@@ -36,6 +36,13 @@
       "source": "./skills/time",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "serena",
+      "description": "Semantic code understanding with IDE-like symbol operations",
+      "source": "./skills/serena",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }

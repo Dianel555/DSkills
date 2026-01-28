@@ -1,4 +1,4 @@
-# Time Skill
+# Time CLI
 
 Time and timezone utilities for AI coding assistants.
 
@@ -11,12 +11,6 @@ Time and timezone utilities for AI coding assistants.
 
 ## Installation
 
-### As Claude Code Skill
-```bash
-claude mcp add-from-claude-plugin https://github.com/Dianel555/DSkills
-```
-
-### Standalone CLI
 ```bash
 pip install pytz  # Python < 3.9
 # or use built-in zoneinfo for Python 3.9+
