@@ -254,6 +254,32 @@ class _WaitWithRetryAfter(wait_base):
 
 
 # ============================================================================
+# Connection Pool
+# ============================================================================
+
+_http_client: Optional[httpx.AsyncClient] = None
+_DEFAULT_TIMEOUT = httpx.Timeout(connect=6.0, read=60.0, write=10.0, pool=None)
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=_DEFAULT_TIMEOUT,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5)
+        )
+    return _http_client
+
+
+async def close_http_client():
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
+
+
+# ============================================================================
 # Grok Provider
 # ============================================================================
 
@@ -288,6 +314,10 @@ class GrokSearchProvider:
         self.api_url = api_url.rstrip('/')
         self.api_key = api_key
         self.model = model
+        self._headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
 
     async def search(self, query: str, platform: str = "", min_results: int = 3, max_results: int = 10) -> str:
         platform_prompt = f"\n\nFocus on platforms: {platform}" if platform else ""
@@ -300,9 +330,8 @@ class GrokSearchProvider:
                 {"role": "system", "content": SEARCH_PROMPT},
                 {"role": "user", "content": time_context + query + platform_prompt + return_prompt},
             ],
-            "stream": True,
         }
-        return await self._execute_stream(payload)
+        return await self._execute(payload)
 
     async def fetch(self, url: str) -> str:
         payload = {
@@ -311,33 +340,62 @@ class GrokSearchProvider:
                 {"role": "system", "content": FETCH_PROMPT},
                 {"role": "user", "content": f"{url}\n\nFetch and return structured Markdown."},
             ],
-            "stream": True,
         }
-        return await self._execute_stream(payload)
+        return await self._execute(payload)
+
+    async def _execute(self, payload: dict) -> str:
+        """Execute request: try non-streaming first, fallback to streaming on failure."""
+        try:
+            return await self._execute_non_stream(payload)
+        except (httpx.HTTPStatusError, json.JSONDecodeError) as e:
+            if config.debug_enabled:
+                print(f"[DEBUG] Non-streaming failed: {e}, falling back to streaming", file=sys.stderr)
+            return await self._execute_stream(payload)
+
+    async def _execute_non_stream(self, payload: dict) -> str:
+        """Non-streaming request (preferred, faster for short responses)."""
+        payload_copy = {**payload, "stream": False}
+        client = await get_http_client()
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=_WaitWithRetryAfter(1, 8),
+            retry=retry_if_exception(_is_retryable_exception),
+            reraise=True,
+        ):
+            with attempt:
+                response = await client.post(
+                    f"{self.api_url}/chat/completions",
+                    headers=self._headers,
+                    json=payload_copy,
+                )
+                response.raise_for_status()
+                data = response.json()
+                choices = data.get("choices", [])
+                if choices:
+                    return choices[0].get("message", {}).get("content", "")
+                return ""
 
     async def _execute_stream(self, payload: dict) -> str:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        timeout = httpx.Timeout(connect=6.0, read=120.0, write=10.0, pool=None)
+        """Streaming request (fallback for large responses)."""
+        payload_copy = {**payload, "stream": True}
+        client = await get_http_client()
 
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            async for attempt in AsyncRetrying(
-                stop=stop_after_attempt(4),
-                wait=_WaitWithRetryAfter(1, 10),
-                retry=retry_if_exception(_is_retryable_exception),
-                reraise=True,
-            ):
-                with attempt:
-                    async with client.stream(
-                        "POST",
-                        f"{self.api_url}/chat/completions",
-                        headers=headers,
-                        json=payload,
-                    ) as response:
-                        response.raise_for_status()
-                        return await self._parse_streaming_response(response)
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=_WaitWithRetryAfter(1, 8),
+            retry=retry_if_exception(_is_retryable_exception),
+            reraise=True,
+        ):
+            with attempt:
+                async with client.stream(
+                    "POST",
+                    f"{self.api_url}/chat/completions",
+                    headers=self._headers,
+                    json=payload_copy,
+                ) as response:
+                    response.raise_for_status()
+                    return await self._parse_streaming_response(response)
 
     async def _parse_streaming_response(self, response) -> str:
         content = ""
@@ -567,6 +625,21 @@ async def cmd_toggle_builtin_tools(args):
 # Main
 # ============================================================================
 
+async def _run_command(args):
+    """Run command with proper cleanup."""
+    commands = {
+        "web_search": cmd_web_search,
+        "web_fetch": cmd_web_fetch,
+        "get_config_info": cmd_get_config_info,
+        "switch_model": cmd_switch_model,
+        "toggle_builtin_tools": cmd_toggle_builtin_tools,
+    }
+    try:
+        await commands[args.command](args)
+    finally:
+        await close_http_client()
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="groksearch_cli",
@@ -610,16 +683,7 @@ def main():
     if args.api_url or args.api_key:
         config.set_overrides(args.api_url, args.api_key)
 
-    # Dispatch command
-    commands = {
-        "web_search": cmd_web_search,
-        "web_fetch": cmd_web_fetch,
-        "get_config_info": cmd_get_config_info,
-        "switch_model": cmd_switch_model,
-        "toggle_builtin_tools": cmd_toggle_builtin_tools,
-    }
-
-    asyncio.run(commands[args.command](args))
+    asyncio.run(_run_command(args))
 
 
 if __name__ == "__main__":
