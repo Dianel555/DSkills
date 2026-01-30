@@ -46,7 +46,7 @@
     },
     {
       "name": "ace-tool",
-      "description": "Semantic codebase search and prompt enhancement via ace-tool-rs MCP server",
+      "description": "Semantic codebase search and prompt enhancement",
       "source": "./skills/ace-tool",
       "strict": false,
       "skills": ["./"]

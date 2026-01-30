@@ -11,6 +11,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Gemini CLI).
 | [exa](skills/exa/) | High-precision semantic search via Exa API |
 | [time](skills/time/) | Time and timezone utilities |
 | [Serena](skills/serena/) | Semantic code understanding with IDE-like symbol operations |
+| [ace-tool](skills/ace-tool/) | Semantic code search and AI-powered prompt enhancement |
 
 ## Installation
 
@@ -83,7 +84,8 @@ DSkills/
 │   ├── sequential-think/
 │   ├── exa/
 │   ├── time/
-│   └── serena/
+│   ├── serena/
+│   └── ace-tool/
 └── .claude-plugin/
     └── marketplace.json               # Metadata
 ```
