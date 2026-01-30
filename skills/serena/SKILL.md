@@ -8,12 +8,8 @@ description: |
 
 IDE-like semantic code operations via CLI. Provides symbol-level code navigation, editing, and project memory.
 
-## Execution
+## Execution Methods
 
-### MCP Tools (if available)
-Use `mcp__serena__*` tools directly.
-
-### CLI
 ```bash
 # Prerequisites: pip install serena-agent typer
 # Environment: SERENA_PROJECT (default: current directory)

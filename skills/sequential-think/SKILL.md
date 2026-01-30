@@ -6,14 +6,10 @@ description: |
 
 # Sequential Think
 
-Structured iterative thinking for complex problem-solving. Supports both MCP server and standalone CLI.
+Structured iterative thinking for complex problem-solving. Standalone CLI only (no MCP dependency).
 
 ## Execution Methods
 
-### Method 1: MCP Tools (if available)
-Use `mcp__sequential-thinking__sequentialthinking` tool directly.
-
-### Method 2: CLI Script (no MCP dependency)
 Run `scripts/sequential_think_cli.py` via Bash:
 
 ```bash

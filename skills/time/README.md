@@ -31,12 +31,6 @@ python scripts/time_cli.py convert --time "16:30" --from "America/New_York" --to
 python scripts/time_cli.py list --filter "America"
 ```
 
-### MCP Tools
-
-If MCP server is configured:
-- `mcp__time__get_current_time`
-- `mcp__time__convert_time`
-
 ## License
 
 MIT

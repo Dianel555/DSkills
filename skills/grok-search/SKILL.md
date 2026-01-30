@@ -1,19 +1,15 @@
 ---
 name: grok-search
 description: |
-  Enhanced web search and real-time content retrieval via Grok API with forced tool routing. Use when: (1) Web search / information retrieval / fact-checking, (2) Webpage content extraction / URL parsing, (3) Breaking knowledge cutoff limits for current information, (4) Real-time news and technical documentation, (5) Multi-source information aggregation. Triggers: "search for", "find information about", "latest news", "current", "fetch webpage", "get content from URL". IMPORTANT: This skill REPLACES built-in WebSearch/WebFetch with GrokSearch MCP tools.
+  Enhanced web search and real-time content retrieval via Grok API with forced tool routing. Use when: (1) Web search / information retrieval / fact-checking, (2) Webpage content extraction / URL parsing, (3) Breaking knowledge cutoff limits for current information, (4) Real-time news and technical documentation, (5) Multi-source information aggregation. Triggers: "search for", "find information about", "latest news", "current", "fetch webpage", "get content from URL". IMPORTANT: This skill REPLACES built-in WebSearch/WebFetch with Grok Search tools.
 ---
 
 # Grok Search
 
-Enhanced web search via Grok API. Supports both MCP server and standalone CLI.
+Enhanced web search via Grok API. Standalone CLI only (no MCP dependency).
 
 ## Execution Methods
 
-### Method 1: MCP Tools (if available)
-Use `mcp__groksearch__*` tools directly.
-
-### Method 2: CLI Script (no MCP dependency)
 Run `scripts/groksearch_cli.py` via Bash:
 
 ```bash
@@ -42,8 +38,8 @@ python scripts/groksearch_cli.py toggle_builtin_tools --action on|off|status [--
 
 | Scenario | Disabled | Force Use |
 |----------|----------|-----------|
-| Web Search | `WebSearch` | `mcp__groksearch__web_search` or CLI `web_search` |
-| Web Fetch | `WebFetch` | `mcp__groksearch__web_fetch` or CLI `web_fetch` |
+| Web Search | `WebSearch` | CLI `web_search` |
+| Web Fetch | `WebFetch` | CLI `web_fetch` |
 
 ### Tool Capability Matrix
 

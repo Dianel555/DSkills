@@ -137,4 +137,3 @@ python groksearch_cli.py toggle_builtin_tools -a status
 ##  Acknowledgments
 
 - Based on the original [GuDaStudio/GrokSearch](https://github.com/GuDaStudio/GrokSearch).
-- MCP community for the protocol standards

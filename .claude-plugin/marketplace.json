@@ -43,6 +43,13 @@
       "source": "./skills/serena",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "ace-tool",
+      "description": "Semantic codebase search and prompt enhancement via ace-tool-rs MCP server",
+      "source": "./skills/ace-tool",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }

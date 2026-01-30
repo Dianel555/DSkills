@@ -1,21 +1,15 @@
 ---
 name: time
 description: |
-  Time and timezone utilities for getting current time and converting between timezones. Use when: (1) Getting current time in any timezone, (2) Converting time between different timezones, (3) Working with IANA timezone names, (4) Scheduling across timezones, (5) Time-sensitive operations. Triggers: "what time is it", "current time", "convert time", "timezone", "time in [city]". Supports both MCP server and standalone CLI.
+  Time and timezone utilities for getting current time and converting between timezones. Use when: (1) Getting current time in any timezone, (2) Converting time between different timezones, (3) Working with IANA timezone names, (4) Scheduling across timezones, (5) Time-sensitive operations. Triggers: "what time is it", "current time", "convert time", "timezone", "time in [city]".
 ---
 
 # Time
 
-Time and timezone conversion utilities. Supports both MCP server and standalone CLI.
+Time and timezone conversion utilities. Standalone CLI only (no MCP dependency).
 
 ## Execution Methods
 
-### Method 1: MCP Tools (if available)
-Use `mcp__time__*` tools directly:
-- `mcp__time__get_current_time` - Get current time in a timezone
-- `mcp__time__convert_time` - Convert time between timezones
-
-### Method 2: CLI Script (no MCP dependency)
 Run `scripts/time_cli.py` via Bash:
 
 ```bash
