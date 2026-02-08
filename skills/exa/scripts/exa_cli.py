@@ -178,7 +178,7 @@ class ExaClient:
     def __init__(self, api_url: str, api_key: str):
         self.api_url = api_url.rstrip('/')
         self.api_key = api_key
-        self.timeout = httpx.Timeout(connect=10.0, read=25.0, write=10.0, pool=None)
+        self.timeout = httpx.Timeout(connect=15.0, read=60.0, write=15.0, pool=None)
 
     async def _request_json(self, method: str, path: str, json_body: Optional[Dict] = None) -> Dict[str, Any]:
         headers = {

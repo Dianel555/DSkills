@@ -258,7 +258,7 @@ class _WaitWithRetryAfter(wait_base):
 # ============================================================================
 
 _http_client: Optional[httpx.AsyncClient] = None
-_DEFAULT_TIMEOUT = httpx.Timeout(connect=6.0, read=60.0, write=10.0, pool=None)
+_DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=15.0, pool=None)
 
 
 async def get_http_client() -> httpx.AsyncClient:
