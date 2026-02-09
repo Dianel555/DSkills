@@ -23,10 +23,10 @@ pip install serena-agent typer pyyaml
 
 ```bash
 # Start Web Dashboard (recommended for first-time use)
-python -m skills.serena.tools dashboard serve --open-browser
+python -m tools dashboard serve --open-browser
 
 # Or manually open browser after starting
-python -m skills.serena.tools dashboard serve
+python -m tools dashboard serve
 # Then open: http://127.0.0.1:24282/dashboard/index.html
 ```
 
@@ -44,16 +44,16 @@ SERENA_DASHBOARD_PORT=24282
 
 ```bash
 # Find a symbol
-python -m skills.serena.tools symbol find MyClass --body
+python -m tools symbol find MyClass --body
 
 # List symbols in file
-python -m skills.serena.tools symbol overview src/main.py
+python -m tools symbol overview src/main.py
 
 # Find references
-python -m skills.serena.tools symbol refs MyClass/method
+python -m tools symbol refs MyClass/method
 
 # List available tools
-python -m skills.serena.tools workflow tools
+python -m tools workflow tools
 ```
 
 ## CLI Commands
@@ -119,7 +119,7 @@ python -m skills.serena.tools workflow tools
 ## Global Options
 
 ```bash
-python -m skills.serena.tools [OPTIONS] <command>
+python -m tools [OPTIONS] <command>
 
 Options:
   -p, --project PATH    Project directory (default: ., env: SERENA_PROJECT)

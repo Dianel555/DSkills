@@ -147,13 +147,10 @@ def serve(
     url = dashboard_server.get_dashboard_url(host=host, port=actual_port)
 
     if open_browser:
-        print(f"[DEBUG] PID={os.getpid()}: About to open browser with URL: {url}", file=sys.stderr)
         try:
-            method = _open_browser_url(url, browser_cmd=browser_cmd)
-            print(f"[DEBUG] PID={os.getpid()}: Browser launched via method={method}", file=sys.stderr)
+            _open_browser_url(url, browser_cmd=browser_cmd)
         except Exception as e:
             print(f"[WARNING] Failed to open browser: {e}", file=sys.stderr)
-        print(f"[DEBUG] PID={os.getpid()}: Browser open call completed", file=sys.stderr)
     else:
         # Display URL for manual opening
         print(f"\n{'='*70}", file=sys.stderr)

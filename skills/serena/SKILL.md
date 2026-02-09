@@ -13,7 +13,7 @@ IDE-like semantic code operations via CLI. Provides symbol-level code navigation
 **First-time setup**: Launch the Web Dashboard to initialize and register the project:
 
 ```bash
-python -m skills.serena.tools dashboard serve --open-browser
+python -m tools dashboard serve --open-browser
 ```
 
 This will:
@@ -34,28 +34,28 @@ SERENA_PROJECT=.
 # Prerequisites: pip install serena-agent typer pyyaml
 
 # Dashboard (recommended for first-time use)
-python -m skills.serena.tools dashboard serve --open-browser
-python -m skills.serena.tools dashboard info
+python -m tools dashboard serve --open-browser
+python -m tools dashboard info
 
 # Symbol operations
-python -m skills.serena.tools symbol find MyClass --body
-python -m skills.serena.tools symbol overview src/main.py
-python -m skills.serena.tools symbol refs MyClass/method
-python -m skills.serena.tools symbol rename OldName NewName --path src/file.py
+python -m tools symbol find MyClass --body
+python -m tools symbol overview src/main.py
+python -m tools symbol refs MyClass/method
+python -m tools symbol rename OldName NewName --path src/file.py
 
 # Memory operations
-python -m skills.serena.tools memory list
-python -m skills.serena.tools memory read project_overview
-python -m skills.serena.tools memory write api_notes --content "..."
+python -m tools memory list
+python -m tools memory read project_overview
+python -m tools memory write api_notes --content "..."
 
 # File operations
-python -m skills.serena.tools file list --recursive
-python -m skills.serena.tools file find "**/*.py"
-python -m skills.serena.tools file search "TODO:.*" --path src
+python -m tools file list --recursive
+python -m tools file find "**/*.py"
+python -m tools file search "TODO:.*" --path src
 
 # Extended tools
-python -m skills.serena.tools cmd run "git status"
-python -m skills.serena.tools config read config.json
+python -m tools cmd run "git status"
+python -m tools config read config.json
 ```
 
 ## Tool Routing Policy
