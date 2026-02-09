@@ -43,6 +43,6 @@ def search_pattern(
     result = State.core.call_tool(
         "search_for_pattern",
         substring_pattern=pattern,
-        relative_path=path,
+        relative_path=path if path is not None else ".",
     )
     output_json(result)

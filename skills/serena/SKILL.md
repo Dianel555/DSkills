@@ -8,6 +8,12 @@ description: |
 
 IDE-like semantic code operations via CLI. Provides symbol-level code navigation, editing, and project memory.
 
+## Prerequisites
+
+```bash
+pip install serena-agent typer pyyaml
+```
+
 ## Quick Start
 
 **First-time setup**: Launch the Web Dashboard to initialize and register the project:
@@ -28,12 +34,38 @@ SERENA_MODES=interactive,editing,onboarding
 SERENA_PROJECT=.
 ```
 
-## Execution Methods
+## Usage
+
+### Basic Command Structure
 
 ```bash
-# Prerequisites: pip install serena-agent typer pyyaml
+python -m tools [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
+```
 
-# Dashboard (recommended for first-time use)
+**Global Options** (must be specified before the command):
+- `-p, --project PATH` - Project directory (default: current directory, env: SERENA_PROJECT)
+- `-c, --context TEXT` - Execution context (auto-detected if not specified, env: SERENA_CONTEXT)
+- `-m, --mode TEXT` - Operation modes (can be specified multiple times, env: SERENA_MODES)
+
+### Working with Different Projects
+
+**Important**: When working with projects in different locations (especially cross-drive on Windows), use `--project`:
+
+```bash
+# Correct: Use --project for different project locations
+python -m tools --project "/path/to/project" symbol find MyClass
+python -m tools --project "E:\MyProject" file search "pattern"
+
+# Incorrect: Don't use --path with absolute paths from different drives
+python -m tools file search "pattern" --path "E:\MyProject"  # Will fail!
+```
+
+The `--path` option in subcommands expects **relative paths** within the project. Always use `--project` to set the project root first.
+
+### Common Operations
+
+```bash
+# Dashboard
 python -m tools dashboard serve --open-browser
 python -m tools dashboard info
 
@@ -128,32 +160,38 @@ python -m tools config read config.json
 | `workflow check` | Check onboarding status |
 | `workflow tools [--scope all]` | List available tools |
 
-## Workflow
+## Workflow Examples
 
 ### Phase 1: Exploration
 ```bash
-symbol overview src/main.py           # Understand file structure
-symbol find MyClass --depth 1         # Explore class members
-symbol find MyClass/method --body     # Get implementation details
+python -m tools symbol overview src/main.py           # Understand file structure
+python -m tools symbol find MyClass --depth 1         # Explore class members
+python -m tools symbol find MyClass/method --body     # Get implementation details
 ```
 
 ### Phase 2: Analysis
 ```bash
-symbol refs MyClass/method            # Impact analysis
-memory list                           # Check project knowledge
-memory read architecture              # Retrieve context
+python -m tools symbol refs MyClass/method            # Impact analysis
+python -m tools memory list                           # Check project knowledge
+python -m tools memory read architecture              # Retrieve context
 ```
 
 ### Phase 3: Modification
 ```bash
-symbol find target --body             # Verify target
-symbol replace target --path f --body "..."  # Edit
-symbol rename old new --path f        # Refactor
+python -m tools symbol find target --body             # Verify target
+python -m tools symbol replace target --path f --body "..."  # Edit
+python -m tools symbol rename old new --path f        # Refactor
 ```
 
 ## Error Handling
 
+All CLI output is JSON:
+
 ```json
+// Success
+{"result": <data>}
+
+// Error
 {"error": {"code": "ERROR_CODE", "message": "description"}}
 ```
 

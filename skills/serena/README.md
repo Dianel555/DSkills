@@ -9,6 +9,7 @@ Semantic code understanding with IDE-like symbol operations and Web Dashboard. M
 - **Cross-file References**: Track symbol usages across entire codebase
 - **Project Memory**: Persist and retrieve project knowledge across sessions
 - **Extended Tools**: Shell commands, config file operations
+- **Cross-Drive Support**: Work with projects on any drive (Windows) or path (Unix)
 - **Auto Project Registration**: Automatically registers projects in global Serena config
 
 ## Installation
@@ -56,9 +57,40 @@ python -m tools symbol refs MyClass/method
 python -m tools workflow tools
 ```
 
+## Command Structure
+
+```bash
+python -m tools [GLOBAL OPTIONS] <command> [COMMAND OPTIONS]
+```
+
+### Global Options
+
+Global options must be specified **before** the command:
+
+- `-p, --project PATH` - Project directory (default: current directory, env: SERENA_PROJECT)
+- `-c, --context TEXT` - Execution context (auto-detected if not specified, env: SERENA_CONTEXT)
+- `-m, --mode TEXT` - Operation modes (can be specified multiple times, env: SERENA_MODES)
+
+### Working with Different Projects
+
+**Important**: When working with projects in different locations (especially cross-drive on Windows), use `--project`:
+
+```bash
+# Correct: Specify project path with --project
+python -m tools --project "E:\MyProject" file search "pattern"
+python -m tools --project "/home/user/project" symbol find MyClass
+python -m tools --project "D:\workspace\app" symbol refs MyClass
+
+# Incorrect: Don't use --path with absolute paths from different drives
+python -m tools file search "pattern" --path "E:\MyProject"  # Will fail!
+```
+
+**Why?** The `--path` option in subcommands expects **relative paths** within the project. Always use `--project` to set the project root first.
+
 ## CLI Commands
 
 ### Dashboard Commands
+
 | Command | Description |
 |---------|-------------|
 | `dashboard serve [--open-browser] [--browser-cmd <path>]` | Start Web Dashboard server |
@@ -75,17 +107,19 @@ python -m tools workflow tools
 - `SERENA_BROWSER_CMD`: Environment variable for browser command
 
 ### Symbol Operations
+
 | Command | Description |
 |---------|-------------|
-| `symbol find <name>` | Find symbols by name |
-| `symbol overview <path>` | List symbols in file |
-| `symbol refs <name>` | Find symbol references |
+| `symbol find <name> [--body] [--depth N] [--path file]` | Find symbols by name |
+| `symbol overview <path>` | List all symbols in file |
+| `symbol refs <name> [--path file]` | Find symbol references |
 | `symbol replace <name> --path <file> --body <code>` | Replace symbol body |
 | `symbol insert-after <name> --path <file> --content <code>` | Insert after symbol |
 | `symbol insert-before <name> --path <file> --content <code>` | Insert before symbol |
 | `symbol rename <name> <new> --path <file>` | Rename symbol |
 
 ### Memory Operations
+
 | Command | Description |
 |---------|-------------|
 | `memory list` | List all memories |
@@ -95,37 +129,29 @@ python -m tools workflow tools
 | `memory delete <name>` | Delete memory |
 
 ### File Operations
+
 | Command | Description |
 |---------|-------------|
-| `file list [--path <dir>]` | List directory |
-| `file find <pattern>` | Find files by pattern |
-| `file search <pattern>` | Search for pattern |
+| `file list [--path <dir>] [--recursive]` | List directory contents |
+| `file find <pattern>` | Find files by glob pattern |
+| `file search <pattern> [--path <dir>]` | Search for regex pattern in files |
 
 ### Extended Tools
+
 | Command | Description |
 |---------|-------------|
-| `cmd run <cmd>` | Execute shell command |
-| `cmd script <path>` | Execute script file |
-| `config read <path>` | Read JSON/YAML config |
+| `cmd run <cmd> [--cwd <dir>] [--timeout <N>]` | Execute shell command |
+| `cmd script <path> [--args "..."]` | Execute script file |
+| `config read <path> [--format json\|yaml]` | Read JSON/YAML config |
 | `config update <path> <key> <value>` | Update config value |
 
 ### Workflow
+
 | Command | Description |
 |---------|-------------|
 | `workflow onboarding` | Run project onboarding |
 | `workflow check` | Check onboarding status |
-| `workflow tools` | List available tools |
-
-## Global Options
-
-```bash
-python -m tools [OPTIONS] <command>
-
-Options:
-  -p, --project PATH    Project directory (default: ., env: SERENA_PROJECT)
-  -c, --context TEXT    Context: agent, claude-code, ide, codex (env: SERENA_CONTEXT)
-  -m, --mode TEXT       Operation modes (can repeat)
-```
+| `workflow tools [--scope all]` | List available tools |
 
 ## Output Format
 
@@ -139,35 +165,7 @@ All CLI output is JSON:
 {"error": {"code": "ERROR_CODE", "message": "description"}}
 ```
 
-Error codes: `INVALID_ARGS`, `TOOL_NOT_FOUND`, `INIT_FAILED`, `RUNTIME_ERROR`
-
-## Project Structure
-
-```
-skills/serena/
-├── SKILL.md
-├── README.md
-├── .env.example
-└── tools/
-    ├── core.py           # SerenaCore wrapper
-    ├── paths.py          # Path utilities
-    ├── output.py         # JSON output utilities
-    ├── cli/              # Typer CLI commands
-    │   ├── __init__.py   # Main CLI entry
-    │   ├── dashboard.py  # Dashboard commands
-    │   ├── symbol.py
-    │   ├── memory.py
-    │   ├── file.py
-    │   ├── workflow.py
-    │   ├── cmd.py
-    │   └── config.py
-    ├── server/           # Web Dashboard server
-    │   ├── __init__.py
-    │   └── dashboard_server.py  # Flask HTTP server
-    └── extended/         # Extended tools
-        ├── cmd_tools.py
-        └── config_tools.py
-```
+**Error codes**: `INVALID_ARGS`, `TOOL_NOT_FOUND`, `INIT_FAILED`, `RUNTIME_ERROR`
 
 ## Web Dashboard Features
 
@@ -179,6 +177,32 @@ The Web Dashboard provides:
 - **Auto Registration**: Automatically adds project to `~/.serena/serena_config.yml`
 
 Access the dashboard at: `http://127.0.0.1:24282/dashboard/index.html`
+
+## Project Structure
+
+```
+skills/serena/
+├── SKILL.md              
+├── README.md             
+├── .env.example          
+└── tools/
+    ├── core.py           # SerenaCore wrapper
+    ├── paths.py          # Path utilities
+    ├── output.py         # JSON output utilities
+    ├── cli/              # Typer CLI commands
+    │   ├── dashboard.py  
+    │   ├── symbol.py     
+    │   ├── memory.py     
+    │   ├── file.py       
+    │   ├── workflow.py   
+    │   ├── cmd.py        
+    │   └── config.py     
+    ├── server/           # Web Dashboard server
+    │   └── dashboard_server.py  # Flask HTTP server
+    └── extended/         # Extended tools
+        ├── cmd_tools.py
+        └── config_tools.py
+```
 
 ## License
 
