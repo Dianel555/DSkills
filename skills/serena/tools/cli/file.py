@@ -15,7 +15,7 @@ def list_dir(
     """List directory contents."""
     result = State.core.call_tool(
         "list_dir",
-        relative_path=path,
+        relative_path=path if path is not None else ".",
         recursive=recursive,
     )
     output_json(result)
@@ -28,7 +28,8 @@ def find_file(
     """Find files by pattern."""
     result = State.core.call_tool(
         "find_file",
-        pattern=pattern,
+        file_mask=pattern,
+        relative_path=".",
     )
     output_json(result)
 
@@ -41,7 +42,7 @@ def search_pattern(
     """Search for pattern in files."""
     result = State.core.call_tool(
         "search_for_pattern",
-        pattern=pattern,
+        substring_pattern=pattern,
         relative_path=path,
     )
     output_json(result)

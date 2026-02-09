@@ -52,3 +52,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Test Files
+tests/

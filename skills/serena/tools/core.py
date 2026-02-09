@@ -10,8 +10,13 @@ try:
 except ImportError:
     raise ImportError("serena-agent is not installed")
 
+from .paths import SerenaToolsPaths
+
+
 class SerenaCore:
     """Wrapper for SerenaAgent providing CLI-friendly interface and context awareness."""
+
+    KNOWN_CONTEXTS = ["agent", "claude-code", "ide", "codex"]
 
     def __init__(
         self,
@@ -25,24 +30,31 @@ class SerenaCore:
         self._agent: Optional[SerenaAgent] = None
         self._extended_tools: Dict[str, Any] = {}
 
+        # Initialize config path
+        self._paths = SerenaToolsPaths()
+        self._paths.ensure_config_exists()
+
     def _detect_context(self, path: Path) -> str:
-        """Detect environment context based on file markers."""
-        if (path / ".claude").exists() or os.environ.get("CLAUDE_CODE_SESSION"):
-            return "claude-code"
-        if (path / ".vscode").exists():
-            return "ide"
-        if (path / ".idea").exists():
-            return "ide"
-        if (path / ".codex").exists():
-            return "codex"
-        return "agent"
+        """Detect environment context from SERENA_CONTEXT env var only.
+
+        No automatic detection - context must be explicitly configured.
+        Default: desktop-app (full toolset)
+        """
+        # Read from environment variable only
+        context = os.environ.get("SERENA_CONTEXT", "desktop-app")
+        return context
 
     def _resolve_context(self) -> Optional[Any]:
         """Convert string context to SerenaAgentContext if needed."""
         if self.context:
             try:
                 from serena.agent import SerenaAgentContext
-                return SerenaAgentContext.load_by_name(self.context)
+                # Map common aliases to actual context names
+                context_map = {
+                    "claude-code": "desktop-app",  # Claude Code uses desktop-app context
+                }
+                context_name = context_map.get(self.context, self.context)
+                return SerenaAgentContext.from_name(context_name)
             except Exception:
                 return None
         return None
@@ -123,6 +135,77 @@ class SerenaCore:
             pass
 
         return sorted(list(set(tools)))
+
+    def get_active_context(self) -> str:
+        """Get active context name from wrapper.
+
+        Returns the user-configured context name (not the mapped internal name).
+        """
+        return self.context
+
+    def get_active_modes(self) -> List[str]:
+        """Get active mode names from wrapper configuration.
+
+        Returns the user-configured modes (not filtered by agent).
+        """
+        return sorted(set(self.modes))
+
+    def list_modes(self, scope: str = "all") -> List[str]:
+        """List modes (active or all registered when discoverable)."""
+        active_modes = self.get_active_modes()
+        if scope == "active":
+            return active_modes
+
+        try:
+            from serena.agent import SerenaAgentMode
+            all_modes = SerenaAgentMode.list_registered_mode_names()
+            return sorted(set(active_modes + all_modes))
+        except Exception:
+            return active_modes
+
+    def list_contexts(self, scope: str = "all") -> List[str]:
+        """List contexts (active or all registered when discoverable)."""
+        active_context = self.get_active_context()
+        if scope == "active":
+            return [active_context] if active_context else []
+
+        discovered: List[str] = []
+        try:
+            from serena.agent import SerenaAgentContext
+            discovered = SerenaAgentContext.list_registered_context_names()
+        except Exception:
+            discovered = []
+
+        base_contexts = discovered if discovered else list(self.KNOWN_CONTEXTS)
+        if active_context:
+            base_contexts.append(active_context)
+        return sorted(set(base_contexts))
+
+    def get_dashboard_info(self) -> Dict[str, Any]:
+        """Get dashboard-like overview of current/available configuration."""
+        active_tools = self.list_tools(scope="active")
+        available_tools = self.list_tools(scope="all")
+
+        active_project_path = str(self.project_path)
+        try:
+            agent = self._ensure_agent()
+            if hasattr(agent, "get_active_project"):
+                project = agent.get_active_project()
+                if project is not None and hasattr(project, "project_root"):
+                    active_project_path = str(Path(project.project_root).resolve())
+        except Exception:
+            pass
+
+        return {
+            "active_project_path": active_project_path,
+            "context": self.get_active_context(),
+            "active_modes": self.get_active_modes(),
+            "active_tools_count": len(active_tools),
+            "active_tools": active_tools,
+            "available_tools": available_tools,
+            "available_modes": self.list_modes(scope="all"),
+            "available_contexts": self.list_contexts(scope="all"),
+        }
 
     def shutdown(self):
         """Cleanup resources."""

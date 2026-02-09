@@ -8,11 +8,34 @@ description: |
 
 IDE-like semantic code operations via CLI. Provides symbol-level code navigation, editing, and project memory.
 
+## Quick Start
+
+**First-time setup**: Launch the Web Dashboard to initialize and register the project:
+
+```bash
+python -m skills.serena.tools dashboard serve --open-browser
+```
+
+This will:
+- Initialize Serena configuration
+- Register the current project in `~/.serena/serena_config.yml`
+- Open the Web Dashboard for monitoring and configuration
+
+**Configuration**: Edit `.env` file in `skills/serena/` directory:
+```bash
+SERENA_CONTEXT=claude-code
+SERENA_MODES=interactive,editing,onboarding
+SERENA_PROJECT=.
+```
+
 ## Execution Methods
 
 ```bash
-# Prerequisites: pip install serena-agent typer
-# Environment: SERENA_PROJECT (default: current directory)
+# Prerequisites: pip install serena-agent typer pyyaml
+
+# Dashboard (recommended for first-time use)
+python -m skills.serena.tools dashboard serve --open-browser
+python -m skills.serena.tools dashboard info
 
 # Symbol operations
 python -m skills.serena.tools symbol find MyClass --body
@@ -53,6 +76,15 @@ python -m skills.serena.tools config read config.json
 - Documentation files (Markdown)
 
 ## Command Reference
+
+### Dashboard Commands
+| Command | Description |
+|---------|-------------|
+| `dashboard serve [--open-browser] [--browser-cmd <path>]` | Start Web Dashboard server |
+| `dashboard info` | Show current configuration |
+| `dashboard tools` | List active and available tools |
+| `dashboard modes` | List active and available modes |
+| `dashboard contexts` | List active and available contexts |
 
 ### Symbol Commands
 | Command | Description |

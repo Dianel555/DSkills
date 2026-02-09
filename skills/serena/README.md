@@ -1,26 +1,48 @@
 # Serena CLI
 
-Semantic code understanding with IDE-like symbol operations. MCP-independent CLI for code navigation, editing, and project memory.
+Semantic code understanding with IDE-like symbol operations and Web Dashboard. MCP-independent CLI for code navigation, editing, and project memory.
 
 ## Features
 
+- **Web Dashboard**: Real-time configuration monitoring and management
 - **Symbol Operations**: Find, rename, replace, insert symbols with language-aware precision
 - **Cross-file References**: Track symbol usages across entire codebase
 - **Project Memory**: Persist and retrieve project knowledge across sessions
 - **Extended Tools**: Shell commands, config file operations
+- **Auto Project Registration**: Automatically registers projects in global Serena config
 
 ## Installation
 
 ```bash
-pip install serena-agent typer
+pip install serena-agent typer pyyaml
 ```
 
 ## Quick Start
 
-```bash
-# Set project path (optional, defaults to current directory)
-export SERENA_PROJECT=/path/to/project
+**First-time setup**: Launch the Web Dashboard to initialize and register the project:
 
+```bash
+# Start Web Dashboard (recommended for first-time use)
+python -m skills.serena.tools dashboard serve --open-browser
+
+# Or manually open browser after starting
+python -m skills.serena.tools dashboard serve
+# Then open: http://127.0.0.1:24282/dashboard/index.html
+```
+
+**Configuration**: Create `.env` file in `skills/serena/` directory:
+
+```bash
+SERENA_CONTEXT=claude-code
+SERENA_MODES=interactive,editing,onboarding
+SERENA_PROJECT=.
+SERENA_DASHBOARD_ENABLED=true
+SERENA_DASHBOARD_PORT=24282
+```
+
+**Basic Usage**:
+
+```bash
 # Find a symbol
 python -m skills.serena.tools symbol find MyClass --body
 
@@ -35,6 +57,22 @@ python -m skills.serena.tools workflow tools
 ```
 
 ## CLI Commands
+
+### Dashboard Commands
+| Command | Description |
+|---------|-------------|
+| `dashboard serve [--open-browser] [--browser-cmd <path>]` | Start Web Dashboard server |
+| `dashboard info` | Show current configuration overview |
+| `dashboard tools` | List active and available tools |
+| `dashboard modes` | List active and available modes |
+| `dashboard contexts` | List active and available contexts |
+
+**Dashboard Options**:
+- `--open-browser` / `--no-open-browser`: Auto-open browser (default: False)
+- `--browser-cmd <path>`: Specify browser executable path
+- `--host <address>`: Listen address (default: 127.0.0.1)
+- `--port <number>`: Listen port (default: 24282, 0 for auto-select)
+- `SERENA_BROWSER_CMD`: Environment variable for browser command
 
 ### Symbol Operations
 | Command | Description |
@@ -107,23 +145,40 @@ Error codes: `INVALID_ARGS`, `TOOL_NOT_FOUND`, `INIT_FAILED`, `RUNTIME_ERROR`
 
 ```
 skills/serena/
-├── SKILL.md              
-├── README.md             
-├── .env.example          
+├── SKILL.md
+├── README.md
+├── .env.example
 └── tools/
     ├── core.py           # SerenaCore wrapper
+    ├── paths.py          # Path utilities
     ├── output.py         # JSON output utilities
-    ├── cli/              # Typer CLI commands  
-    │   ├── symbol.py     
-    │   ├── memory.py     
-    │   ├── file.py       
-    │   ├── workflow.py   
-    │   ├── cmd.py        
-    │   └── config.py     
+    ├── cli/              # Typer CLI commands
+    │   ├── __init__.py   # Main CLI entry
+    │   ├── dashboard.py  # Dashboard commands
+    │   ├── symbol.py
+    │   ├── memory.py
+    │   ├── file.py
+    │   ├── workflow.py
+    │   ├── cmd.py
+    │   └── config.py
+    ├── server/           # Web Dashboard server
+    │   ├── __init__.py
+    │   └── dashboard_server.py  # Flask HTTP server
     └── extended/         # Extended tools
         ├── cmd_tools.py
         └── config_tools.py
 ```
+
+## Web Dashboard Features
+
+The Web Dashboard provides:
+- **Real-time Configuration**: View active context, modes, and tools
+- **Project Management**: See registered projects and active project
+- **Tool Monitoring**: Track active and available tools
+- **Configuration Editing**: Edit `.env` file directly from browser
+- **Auto Registration**: Automatically adds project to `~/.serena/serena_config.yml`
+
+Access the dashboard at: `http://127.0.0.1:24282/dashboard/index.html`
 
 ## License
 

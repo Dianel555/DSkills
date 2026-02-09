@@ -20,7 +20,7 @@ def read_memory(
     """Read memory content."""
     result = State.core.call_tool(
         "read_memory",
-        name=name,
+        memory_file_name=name,
     )
     output_json(result)
 
@@ -33,7 +33,7 @@ def write_memory(
     """Create or update memory."""
     result = State.core.call_tool(
         "write_memory",
-        name=name,
+        memory_name=name,
         content=content,
     )
     output_json(result)
@@ -46,8 +46,8 @@ def edit_memory(
 ):
     """Edit existing memory."""
     result = State.core.call_tool(
-        "edit_memory",
-        name=name,
+        "write_memory",
+        memory_name=name,
         content=content,
     )
     output_json(result)
@@ -60,6 +60,6 @@ def delete_memory(
     """Delete a memory."""
     result = State.core.call_tool(
         "delete_memory",
-        name=name,
+        memory_file_name=name,
     )
     output_json(result)
