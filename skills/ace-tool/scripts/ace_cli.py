@@ -11,10 +11,12 @@ import httpx
 try:
     from .utils import load_env
     from .client import AceToolClient
+    from .indexer import Indexer
     from .web_ui import run_interactive_enhance
 except ImportError:
     from utils import load_env
     from client import AceToolClient
+    from indexer import Indexer
     from web_ui import run_interactive_enhance
 
 load_env()
@@ -38,7 +40,8 @@ def cmd_enhance_prompt(args):
     if not args.no_interactive:
         result = run_interactive_enhance(
             client, args.prompt, history, args.port,
-            auto_open_browser=not args.no_browser
+            auto_open_browser=not args.no_browser,
+            project_root=args.project_root,
         )
         if result:
             print(json.dumps({"enhanced_prompt": result}, indent=2, ensure_ascii=False))
@@ -54,6 +57,24 @@ def cmd_get_config(args):
     """Handle get_config command."""
     client = AceToolClient(args.api_url, args.token, args.endpoint)
     result = client.get_config()
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+def cmd_index(args):
+    """Handle index command."""
+    import os
+    base_url = (args.api_url or os.getenv("ACE_API_URL", "")).rstrip("/")
+    token = args.token or os.getenv("ACE_API_TOKEN", "")
+    if not base_url or not token:
+        print(json.dumps({"error": "ACE_API_URL and ACE_API_TOKEN required for indexing"}), file=sys.stderr)
+        sys.exit(1)
+    indexer = Indexer(args.project_root, base_url, token)
+    blob_names = indexer.get_blob_names()
+    result = {
+        "total_blobs": len(blob_names),
+        "last_indexed": indexer._index.last_indexed,
+        "project_root": args.project_root,
+    }
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
@@ -88,6 +109,10 @@ def main():
 
     p_config = subparsers.add_parser("get_config", help="Show current configuration")
     p_config.set_defaults(func=cmd_get_config)
+
+    p_index = subparsers.add_parser("index", help="Index project for remote search")
+    p_index.add_argument("-p", "--project-root", required=True, help="Project root path")
+    p_index.set_defaults(func=cmd_index)
 
     args = parser.parse_args()
     try:

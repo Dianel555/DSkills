@@ -1,6 +1,6 @@
 """Prompt templates and constants for ACE-Tool CLI."""
 
-USER_AGENT = "augment.cli/0.12.0/mcp"
+USER_AGENT = "augment.cli/0.12.0"
 DEFAULT_MODEL = "claude-sonnet-4-5"
 
 # Default models for third-party APIs
@@ -71,4 +71,26 @@ EXCLUDE_PATTERNS = {
     "coverage", ".nyc_output", "htmlcov",
     ".idea", ".vscode", ".vs",
     ".ace-tool",
+}
+
+# Indexing
+MAX_BLOB_SIZE = 128 * 1024        # 128KB
+MAX_BATCH_SIZE = 1 * 1024 * 1024  # 1MB
+MAX_LINES_PER_BLOB = 800
+UPLOAD_BATCH_COUNT = 30
+RETRIEVAL_TIMEOUT = 60.0
+INDEX_DIR = ".ace-tool"
+INDEX_FILE = "index.json.gz"
+ENCODING_CHAIN = ["utf-8", "gbk", "gb18030", "cp1252"]
+
+BINARY_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
+    ".mp3", ".mp4", ".avi", ".mov", ".wav", ".ogg", ".flv",
+    ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar", ".xz",
+    ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".pyc", ".pyo", ".class", ".jar",
+    ".db", ".sqlite", ".sqlite3",
+    ".bin", ".dat", ".pak", ".bundle",
 }

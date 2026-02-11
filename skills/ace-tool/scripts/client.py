@@ -15,17 +15,23 @@ try:
         USER_AGENT, DEFAULT_MODEL,
         DEFAULT_CLAUDE_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_GEMINI_MODEL,
         ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
-        TEXT_EXTENSIONS, EXCLUDE_PATTERNS,
+        TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
     )
-    from .utils import get_session_id, is_chinese_text, parse_chat_history
+    from .utils import get_session_id, is_chinese_text, parse_chat_history, detect_and_read
+    from .indexer import Indexer
 except ImportError:
     from templates import (
         USER_AGENT, DEFAULT_MODEL,
         DEFAULT_CLAUDE_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_GEMINI_MODEL,
         ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
-        TEXT_EXTENSIONS, EXCLUDE_PATTERNS,
+        TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
     )
-    from utils import get_session_id, is_chinese_text, parse_chat_history
+    from utils import get_session_id, is_chinese_text, parse_chat_history, detect_and_read
+    from indexer import Indexer
+
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class AceToolClient:
@@ -73,7 +79,17 @@ class AceToolClient:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def search_context(self, project_root: str, query: str) -> dict:
-        """Search codebase using natural language query."""
+        """Search codebase: remote via ACE API if available, else local fallback."""
+        if self.base_url and self.token:
+            try:
+                return self._remote_search(project_root, query)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403):
+                    log.error("Auth failed (%d) for remote search: %s", e.response.status_code, e)
+                else:
+                    log.warning("Remote search failed, falling back to local: %s", e)
+            except Exception as e:
+                log.warning("Remote search failed, falling back to local: %s", e)
         return self._local_search(project_root, query)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
@@ -85,7 +101,7 @@ class AceToolClient:
     ) -> dict:
         """Enhance prompt with codebase context and conversation history."""
         if self._is_third_party():
-            return self._call_third_party_api(prompt, conversation_history)
+            return self._call_third_party_api(prompt, conversation_history, project_root)
 
         if not self.base_url:
             return {"enhanced_prompt": prompt, "note": "No API configured, returning original"}
@@ -93,8 +109,8 @@ class AceToolClient:
         chat_history = parse_chat_history(conversation_history)
 
         if self.endpoint == "old":
-            return self._call_old_endpoint(prompt, chat_history)
-        return self._call_new_endpoint(prompt, chat_history)
+            return self._call_old_endpoint(prompt, chat_history, project_root)
+        return self._call_new_endpoint(prompt, chat_history, project_root)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
     def iterative_enhance(
@@ -103,6 +119,7 @@ class AceToolClient:
         previous_enhanced: str,
         current_prompt: str,
         conversation_history: str,
+        project_root: Optional[str] = None,
     ) -> dict:
         """Iteratively enhance an already-enhanced prompt, preserving user modifications."""
         iterative_prompt = ITERATIVE_ENHANCE_TEMPLATE.format(
@@ -112,7 +129,7 @@ class AceToolClient:
         )
 
         if self._is_third_party():
-            return self._call_third_party_api_raw(iterative_prompt, conversation_history)
+            return self._call_third_party_api_raw(iterative_prompt, conversation_history, project_root)
 
         if not self.base_url:
             return {"enhanced_prompt": current_prompt, "note": "No API configured, returning current"}
@@ -120,13 +137,15 @@ class AceToolClient:
         chat_history = parse_chat_history(conversation_history)
 
         if self.endpoint == "old":
-            return self._call_old_endpoint_raw(iterative_prompt, chat_history)
-        return self._call_new_endpoint_raw(iterative_prompt, chat_history)
+            return self._call_old_endpoint_raw(iterative_prompt, chat_history, project_root)
+        return self._call_new_endpoint_raw(iterative_prompt, chat_history, project_root)
 
-    def _call_new_endpoint(self, prompt: str, chat_history: list[dict]) -> dict:
+    def _call_new_endpoint(self, prompt: str, chat_history: list[dict], project_root: Optional[str] = None) -> dict:
         """Call /prompt-enhancer endpoint (new)."""
+        context = self._get_retrieval_context(project_root, prompt)
+        enriched_prompt = f"{context}{prompt}" if context else prompt
         payload = {
-            "nodes": [{"id": 0, "type": 0, "text_node": {"content": prompt}}],
+            "nodes": [{"id": 0, "type": 0, "text_node": {"content": enriched_prompt}}],
             "chat_history": chat_history,
             "conversation_id": None,
             "model": DEFAULT_MODEL,
@@ -144,10 +163,12 @@ class AceToolClient:
             data = resp.json()
             return {"enhanced_prompt": data.get("text", prompt)}
 
-    def _call_new_endpoint_raw(self, raw_prompt: str, chat_history: list[dict]) -> dict:
+    def _call_new_endpoint_raw(self, raw_prompt: str, chat_history: list[dict], project_root: Optional[str] = None) -> dict:
         """Call /prompt-enhancer with pre-built prompt."""
+        context = self._get_retrieval_context(project_root, raw_prompt)
+        enriched_prompt = f"{context}{raw_prompt}" if context else raw_prompt
         payload = {
-            "nodes": [{"id": 0, "type": 0, "text_node": {"content": raw_prompt}}],
+            "nodes": [{"id": 0, "type": 0, "text_node": {"content": enriched_prompt}}],
             "chat_history": chat_history,
             "conversation_id": None,
             "model": DEFAULT_MODEL,
@@ -167,7 +188,7 @@ class AceToolClient:
             enhanced = self._extract_enhanced_prompt(text)
             return {"enhanced_prompt": enhanced}
 
-    def _build_old_payload(self, message: str, chat_history: list[dict], language_guideline: str) -> dict:
+    def _build_old_payload(self, message: str, chat_history: list[dict], language_guideline: str, blob_names: list[str] | None = None) -> dict:
         """Build payload for old endpoint."""
         return {
             "model": DEFAULT_MODEL,
@@ -178,7 +199,7 @@ class AceToolClient:
             "message": message,
             "chat_history": chat_history,
             "lang": None,
-            "blobs": {"checkpoint_id": None, "added_blobs": [], "deleted_blobs": []},
+            "blobs": {"checkpoint_id": None, "added_blobs": blob_names or [], "deleted_blobs": []},
             "user_guided_blobs": [],
             "context_code_exchange_request_id": None,
             "external_source_ids": [],
@@ -199,11 +220,47 @@ class AceToolClient:
             "system_prompt": None,
         }
 
-    def _call_old_endpoint(self, prompt: str, chat_history: list[dict]) -> dict:
+    def _get_blob_names(self, project_root: Optional[str]) -> list[str] | None:
+        """Get blob_names from indexer if API and project_root are available."""
+        if not project_root or not self.base_url or not self.token:
+            return None
+        try:
+            indexer = Indexer(project_root, self.base_url, self.token)
+            return indexer.get_blob_names()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                log.error("Auth failed (%d) getting blob names: %s", e.response.status_code, e)
+            else:
+                log.warning("Failed to get blob names: %s", e)
+            return None
+        except Exception as e:
+            log.warning("Failed to get blob names: %s", e)
+            return None
+
+    def _get_retrieval_context(self, project_root: Optional[str], query: str) -> str:
+        """Get cloud retrieval context to inject into prompts for non-old endpoints."""
+        if not project_root or not self.base_url or not self.token:
+            return ""
+        try:
+            result = self._remote_search(project_root, query)
+            context = result.get("results", "")
+            if context:
+                return f"\n\n<codebase-context>\n{context}\n</codebase-context>\n\n"
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                log.error("Auth failed (%d) for cloud retrieval: %s", e.response.status_code, e)
+            else:
+                log.warning("Cloud retrieval failed, proceeding without context: %s", e)
+        except Exception as e:
+            log.warning("Cloud retrieval failed, proceeding without context: %s", e)
+        return ""
+
+    def _call_old_endpoint(self, prompt: str, chat_history: list[dict], project_root: Optional[str] = None) -> dict:
         """Call /chat-stream endpoint (old, streaming)."""
         final_prompt = ENHANCE_PROMPT_TEMPLATE.replace("{original_prompt}", prompt)
         language_guideline = "Please respond in Chinese (Simplified Chinese). 请用中文回复。" if is_chinese_text(prompt) else ""
-        payload = self._build_old_payload(final_prompt, chat_history, language_guideline)
+        blob_names = self._get_blob_names(project_root)
+        payload = self._build_old_payload(final_prompt, chat_history, language_guideline, blob_names)
 
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(
@@ -218,10 +275,11 @@ class AceToolClient:
             enhanced = self._replace_tool_names(enhanced)
             return {"enhanced_prompt": enhanced}
 
-    def _call_old_endpoint_raw(self, raw_prompt: str, chat_history: list[dict]) -> dict:
+    def _call_old_endpoint_raw(self, raw_prompt: str, chat_history: list[dict], project_root: Optional[str] = None) -> dict:
         """Call /chat-stream with pre-built prompt."""
         language_guideline = "Please respond in Chinese (Simplified Chinese). 请用中文回复。" if is_chinese_text(raw_prompt) else ""
-        payload = self._build_old_payload(raw_prompt, chat_history, language_guideline)
+        blob_names = self._get_blob_names(project_root)
+        payload = self._build_old_payload(raw_prompt, chat_history, language_guideline, blob_names)
 
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(
@@ -269,7 +327,7 @@ class AceToolClient:
             "codebase_retrieval", "search_context"
         )
 
-    def _call_third_party_api(self, prompt: str, conversation_history: str) -> dict:
+    def _call_third_party_api(self, prompt: str, conversation_history: str, project_root: Optional[str] = None) -> dict:
         """Call third-party API (Claude/OpenAI/Gemini)."""
         if not self.third_party_base_url or not self.third_party_token:
             return {"error": f"PROMPT_ENHANCER_BASE_URL and PROMPT_ENHANCER_TOKEN required for '{self.endpoint}' endpoint"}
@@ -278,11 +336,12 @@ class AceToolClient:
         model = self._get_third_party_model()
         final_prompt = ENHANCE_PROMPT_TEMPLATE.replace("{original_prompt}", prompt)
         language_hint = "\n\n请用中文回复。" if is_chinese_text(prompt) else ""
-        full_prompt = f"{final_prompt}{language_hint}"
+        context = self._get_retrieval_context(project_root, prompt)
+        full_prompt = f"{context}{final_prompt}{language_hint}"
 
         return self._dispatch_third_party(full_prompt, chat_history, model)
 
-    def _call_third_party_api_raw(self, raw_prompt: str, conversation_history: str) -> dict:
+    def _call_third_party_api_raw(self, raw_prompt: str, conversation_history: str, project_root: Optional[str] = None) -> dict:
         """Call third-party API with pre-built prompt."""
         if not self.third_party_base_url or not self.third_party_token:
             return {"error": f"PROMPT_ENHANCER_BASE_URL and PROMPT_ENHANCER_TOKEN required for '{self.endpoint}' endpoint"}
@@ -290,7 +349,8 @@ class AceToolClient:
         chat_history = parse_chat_history(conversation_history)
         model = self._get_third_party_model()
         language_hint = "\n\n请用中文回复。" if is_chinese_text(raw_prompt) else ""
-        full_prompt = f"{raw_prompt}{language_hint}"
+        context = self._get_retrieval_context(project_root, raw_prompt)
+        full_prompt = f"{context}{raw_prompt}{language_hint}"
 
         return self._dispatch_third_party(full_prompt, chat_history, model)
 
@@ -395,6 +455,36 @@ class AceToolClient:
                 response=httpx.Response(status),
             )
 
+    def _remote_search(self, project_root: str, query: str) -> dict:
+        """Search via ACE codebase-retrieval API."""
+        indexer = Indexer(project_root, self.base_url, self.token)
+        blob_names = indexer.get_blob_names()
+
+        payload = {
+            "information_request": query,
+            "blobs": {"checkpoint_id": None, "added_blobs": blob_names, "deleted_blobs": []},
+            "dialog": [],
+            "max_output_length": 0,
+            "disable_codebase_retrieval": False,
+            "enable_commit_retrieval": False,
+        }
+
+        with httpx.Client(timeout=httpx.Timeout(RETRIEVAL_TIMEOUT, connect=15.0)) as client:
+            resp = client.post(
+                f"{self.base_url}/agents/codebase-retrieval",
+                headers=self._get_headers(),
+                json=payload,
+            )
+            self._check_auth_error(resp.status_code)
+            resp.raise_for_status()
+            data = resp.json()
+            return {
+                "results": data.get("formatted_retrieval", ""),
+                "query": query,
+                "mode": "remote",
+                "blob_count": len(blob_names),
+            }
+
     def _local_search(self, project_root: str, query: str) -> dict:
         """Fallback local search using keyword matching."""
         results = []
@@ -412,7 +502,10 @@ class AceToolClient:
                 continue
 
             try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore").lower()
+                content = detect_and_read(file_path, ENCODING_CHAIN)
+                if content is None:
+                    continue
+                content = content.lower()
                 score = sum(1 for kw in keywords if kw in content)
                 if score > 0:
                     results.append({"file": str(file_path.relative_to(root)), "score": score})

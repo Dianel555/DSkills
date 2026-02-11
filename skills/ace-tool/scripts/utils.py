@@ -88,3 +88,24 @@ def parse_chat_history(conversation_history: str) -> list[dict]:
         messages.append({"role": current_role, "content": "\n".join(current_lines)})
 
     return messages
+
+
+def detect_and_read(file_path: Path, encoding_chain: list[str]) -> Optional[str]:
+    """Try multiple encodings to read a file. Returns None for binary/unreadable."""
+    try:
+        raw = file_path.read_bytes()
+    except OSError:
+        return None
+    if b"\x00" in raw[:8192]:
+        return None
+    for enc in encoding_chain:
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return None
+
+
+def sanitize_content(content: str) -> str:
+    """Normalize line endings and remove null bytes."""
+    return content.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")

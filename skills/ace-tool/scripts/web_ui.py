@@ -286,6 +286,7 @@ class EnhanceRequestHandler(BaseHTTPRequestHandler):
             result = self.client.enhance_prompt(
                 session["original"],
                 self.conversation_history,
+                session.get("project_root"),
             )
             new_enhanced = result.get("enhanced_prompt", session["original"])
             session["previous_enhanced"] = session["enhanced"]
@@ -321,6 +322,7 @@ class EnhanceRequestHandler(BaseHTTPRequestHandler):
                 previous_enhanced=previous_enhanced,
                 current_prompt=current_prompt,
                 conversation_history=self.conversation_history,
+                project_root=session.get("project_root"),
             )
             new_enhanced = result.get("enhanced_prompt", current_prompt)
             session["previous_enhanced"] = session["enhanced"]
@@ -336,13 +338,13 @@ class EnhanceRequestHandler(BaseHTTPRequestHandler):
 
 def run_interactive_enhance(
     client: "AceToolClient", prompt: str, history: str, port: int = 8765,
-    auto_open_browser: bool = True
+    auto_open_browser: bool = True, project_root: Optional[str] = None,
 ) -> Optional[str]:
     """Run interactive web-based prompt enhancement."""
     global _RESULT_QUEUE
 
     print("Enhancing prompt...", file=sys.stderr)
-    result = client.enhance_prompt(prompt, history)
+    result = client.enhance_prompt(prompt, history, project_root)
     enhanced = result.get("enhanced_prompt", prompt)
 
     session_id = str(uuid.uuid4())
@@ -358,6 +360,7 @@ def run_interactive_enhance(
         "status": "pending",
         "created_at": created_at,
         "timeout_ms": timeout_ms,
+        "project_root": project_root,
     }
 
     _RESULT_QUEUE = queue.Queue()
