@@ -50,6 +50,9 @@ def cmd_enhance_prompt(args):
             sys.exit(1)
     else:
         result = client.enhance_prompt(args.prompt, history, args.project_root)
+        if "error" in result:
+            print(json.dumps(result), file=sys.stderr)
+            sys.exit(1)
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
@@ -86,7 +89,7 @@ def main():
     parser.add_argument("--token", help="API authentication token")
     parser.add_argument(
         "--endpoint",
-        choices=["new", "old", "claude", "openai", "gemini"],
+        choices=["new", "old", "claude", "openai", "gemini", "codex"],
         help="Enhancer endpoint type",
     )
 

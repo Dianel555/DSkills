@@ -11,6 +11,7 @@ AGENTS.md
 # ClaudeCode files
 .claude/
 CLAUDE.md
+.claudeignore
 
 # Python
 __pycache__/

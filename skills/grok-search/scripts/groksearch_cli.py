@@ -72,7 +72,7 @@ load_dotenv()
 
 class Config:
     _instance = None
-    _DEFAULT_MODEL = "grok-4-fast"
+    _DEFAULT_MODEL = "grok-4-1-fast"
 
     def __new__(cls):
         if cls._instance is None:

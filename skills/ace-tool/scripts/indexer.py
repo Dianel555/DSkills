@@ -54,7 +54,7 @@ class Indexer:
         self.index_path = self.root / INDEX_DIR / INDEX_FILE
         self._index: Optional[ProjectIndex] = None
         self._gitignore_patterns: list[str] = []
-        self._load_gitignore()
+        self._load_ignore_patterns()
 
     def get_blob_names(self) -> list[str]:
         """Main entry: load/build index, upload pending, return blob_names."""
@@ -169,16 +169,19 @@ class Indexer:
                 continue
             yield fp
 
-    def _load_gitignore(self):
-        gi = self.root / ".gitignore"
-        if gi.exists():
-            try:
-                for line in gi.read_text(encoding="utf-8", errors="ignore").splitlines():
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        self._gitignore_patterns.append(line)
-            except Exception:
-                pass
+    def _load_ignore_patterns(self):
+        seen = set()
+        for filename in (".gitignore", ".aceignore"):
+            path = self.root / filename
+            if path.exists():
+                try:
+                    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        line = line.strip()
+                        if line and not line.startswith("#") and line not in seen:
+                            seen.add(line)
+                            self._gitignore_patterns.append(line)
+                except Exception:
+                    pass
 
     def _is_gitignored(self, fp: Path) -> bool:
         rel = fp.relative_to(self.root).as_posix()

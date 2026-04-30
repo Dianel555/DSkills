@@ -50,6 +50,7 @@ textarea:focus{outline:none;border-color:#333;background:#fff}
 .info-box p{font-size:14px;color:#555;line-height:1.6}
 .buttons{display:flex;gap:12px;justify-content:flex-end;margin-top:25px;flex-wrap:wrap}
 button{padding:12px 28px;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.3s;display:flex;align-items:center;gap:8px}
+button:focus-visible{outline:2px solid #333;outline-offset:2px}
 .send-btn{background:#333;color:#fff}
 .send-btn:hover:not(:disabled){background:#000}
 .send-btn:disabled{background:#ccc;cursor:not-allowed}
@@ -73,18 +74,18 @@ button{padding:12px 28px;border:none;border-radius:8px;font-size:15px;font-weigh
 <body>
 <div class="container">
 <div class="header">
-<h1><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>Prompt Enhancer</h1>
+<h1><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>Prompt Enhancer</h1>
 <p>Review and refine your enhanced prompt</p>
-<div class="countdown" id="countdown">Loading...</div>
+<div class="countdown" id="countdown" aria-live="polite">Loading...</div>
 </div>
 <div class="content">
-<div class="loading" id="loading"><div class="spinner"></div><p>Loading your enhanced prompt...</p></div>
+<div class="loading" id="loading" role="status" aria-live="polite"><div class="spinner" aria-hidden="true"></div><p>Loading your enhanced prompt...</p></div>
 <div id="mainContent" style="display:none">
 <div class="info-box"><p><strong>Tip:</strong> AI has enhanced your prompt. You can edit it below, then click "Send Enhanced" to continue. Use "Regenerate" to get a completely new enhancement, or "Refine" to improve the current version while keeping your edits.</p></div>
 <div class="section">
 <div class="section-title">Enhanced Prompt</div>
 <div class="editor-wrapper">
-<textarea id="promptText" placeholder="Your enhanced prompt will appear here..." spellcheck="false"></textarea>
+<textarea id="promptText" aria-label="Enhanced prompt" placeholder="Your enhanced prompt will appear here..." spellcheck="false"></textarea>
 <div class="char-count" id="charCount">0 chars</div>
 </div>
 </div>
@@ -96,7 +97,7 @@ button{padding:12px 28px;border:none;border-radius:8px;font-size:15px;font-weigh
 <button class="send-btn" id="sendBtn" onclick="sendPrompt()">Send Enhanced</button>
 </div>
 <div class="keyboard-hint">Shortcuts: <kbd>Ctrl</kbd>+<kbd>Enter</kbd> Send | <kbd>Esc</kbd> Cancel</div>
-<div id="status" class="status"></div>
+<div id="status" class="status" role="alert" aria-live="assertive"></div>
 </div>
 </div>
 </div>
@@ -345,6 +346,11 @@ def run_interactive_enhance(
 
     print("Enhancing prompt...", file=sys.stderr)
     result = client.enhance_prompt(prompt, history, project_root)
+
+    if "error" in result:
+        print(f"Enhancement error: {result['error']}", file=sys.stderr)
+        return None
+
     enhanced = result.get("enhanced_prompt", prompt)
 
     session_id = str(uuid.uuid4())

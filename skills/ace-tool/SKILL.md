@@ -32,6 +32,9 @@ python scripts/ace_cli.py enhance_prompt -p "implement login feature" --project-
 # Enhance prompt with specific endpoint
 python scripts/ace_cli.py --endpoint claude enhance_prompt -p "implement login feature"
 
+# Enhance prompt with codex endpoint
+python scripts/ace_cli.py --endpoint codex enhance_prompt -p "implement feature"
+
 # Check configuration
 python scripts/ace_cli.py get_config
 ```
@@ -56,7 +59,7 @@ python scripts/ace_cli.py get_config
 ## Command Reference
 
 ### index
-Index project files for remote codebase retrieval. Scans, hashes, chunks large files, and uploads to the ACE batch-upload API. Uses incremental indexing with gzip JSON cache at `.ace-tool/index.json.gz`.
+Index project files for remote codebase retrieval. Scans, hashes, chunks large files, and uploads to the ACE batch-upload API. Uses incremental indexing with gzip JSON cache at `.ace-tool/index.json.gz`. Respects both `.gitignore` and `.aceignore` patterns.
 
 ```bash
 python scripts/ace_cli.py index -p <project_root>
@@ -77,13 +80,13 @@ Options:
 ```
 
 ### enhance_prompt
-Enhance prompts with codebase context and conversation history. All endpoints (old, new, third-party) inject cloud retrieval context when `--project-root` is provided.
+Enhance prompts with codebase context and conversation history. All endpoints inject cloud retrieval context when `--project-root` is provided. Third-party endpoints additionally support search context injection via `PROMPT_ENHANCER_INCLUDE_SEARCH_CONTEXT`.
 
 ```bash
 python scripts/ace_cli.py [--endpoint TYPE] enhance_prompt -p <prompt> [options]
 
 Global Options:
-  --endpoint            Endpoint type: new, old, claude, openai, gemini (default: new)
+  --endpoint            Endpoint type: new, old, claude, openai, gemini, codex (default: new)
   --api-url             Override API base URL
   --token               Override API token
 
@@ -98,12 +101,13 @@ Command Options:
 ```
 
 ### get_config
-Show current configuration status.
+Show current configuration status including endpoint resolution, env readiness, and search context injection state.
 
 ```bash
 python scripts/ace_cli.py get_config
 ```
 
+Output fields: `base_url`, `endpoint`, `endpoint_effective`, `endpoint_env_ready`, `token_configured`, `third_party_configured`, `search_context_injection`.
 ## Interactive Enhancement
 
 Default mode opens web UI with actions:
@@ -118,6 +122,74 @@ Default mode opens web UI with actions:
 
 **Keyboard Shortcuts:** `Ctrl+Enter` Send | `Esc` Cancel
 
+## Endpoint Architecture
+
+### Supported Endpoints
+
+| Endpoint | API Path | Default Model | Auth Header |
+|----------|----------|---------------|-------------|
+| `new` | `/prompt-enhancer` | `claude-sonnet-4-5` | `Bearer ACE_API_TOKEN` |
+| `old` | `/chat-stream` (SSE) | `claude-sonnet-4-5` | `Bearer ACE_API_TOKEN` |
+| `claude` | `/v1/messages` | `sonnet-4-6-20250929` | `x-api-key` |
+| `openai` | `/v1/chat/completions` | `gpt-5.4` | `Bearer PROMPT_ENHANCER_TOKEN` |
+| `gemini` | `/v1beta/models/{model}:generateContent` | `gemini-3-flash-preview` | `x-goog-api-key` |
+| `codex` | `/v1/responses` | `gpt-5.4` | `Bearer PROMPT_ENHANCER_TOKEN` |
+
+### Endpoint Resolution Order
+
+`PROMPT_ENHANCER_ENDPOINT` > `ACE_ENHANCER_ENDPOINT` (legacy) > `--endpoint` CLI flag > `new` (default)
+
+### Third-Party Endpoints
+
+`claude`, `openai`, `gemini`, `codex` are third-party endpoints. They require:
+- `PROMPT_ENHANCER_BASE_URL` — API base URL
+- `PROMPT_ENHANCER_TOKEN` — API key/token
+- `PROMPT_ENHANCER_MODEL` — (optional) override default model
+
+Missing configuration raises `ValueError` immediately (hard error, no silent fallback).
+
+### URL Construction
+
+All HTTP calls use `build_api_url(base_url, path)` which handles `/v1/`, `/v1beta/` version prefix deduplication. No hardcoded f-string URL construction.
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ACE_API_URL` | ACE API base URL (required for remote search/indexing) |
+| `ACE_API_TOKEN` | ACE API authentication token |
+| `PROMPT_ENHANCER_ENDPOINT` | Endpoint override: `new`, `old`, `claude`, `openai`, `gemini`, `codex` |
+| `ACE_ENHANCER_ENDPOINT` | Legacy endpoint override (fallback if `PROMPT_ENHANCER_ENDPOINT` not set) |
+| `PROMPT_ENHANCER_BASE_URL` | Third-party API base URL (for claude/openai/gemini/codex endpoints) |
+| `PROMPT_ENHANCER_TOKEN` | Third-party API token |
+| `PROMPT_ENHANCER_MODEL` | Override default model for third-party endpoints |
+| `PROMPT_ENHANCER_INCLUDE_SEARCH_CONTEXT` | Enable search context injection for third-party endpoints (`1`, `true`, `yes`, `on`) |
+
+## Search Context Injection
+
+When `PROMPT_ENHANCER_INCLUDE_SEARCH_CONTEXT` is enabled and a third-party endpoint is used, the system automatically:
+1. Performs a remote codebase search via ACE API using the original prompt as query
+2. Normalizes the result (placeholder if empty, truncate at 12000 chars if too long)
+3. Wraps the search results in `<codebase_context>` XML tags
+4. Wraps the original prompt in `<original_request>` XML tags
+5. Sends the combined prompt to the third-party LLM
+
+Requires `--project-root` and valid `ACE_API_URL`/`ACE_API_TOKEN`. Raises `ValueError` if `project_root` is missing when injection is enabled.
+
+## .aceignore
+
+Place a `.aceignore` file in the project root to exclude additional patterns from code indexing (beyond `.gitignore`). Uses the same glob syntax as `.gitignore`. Patterns from both files are merged (union). Comments (`#`) and empty lines are skipped.
+
+```
+# .aceignore example
+test_fixtures/
+*.generated.ts
+large_data/
+node_modules/
+.*/
+logs/
+tests/
+```
 ## Workflow
 
 ### Phase 0: Index Project (once or after major changes)
@@ -152,6 +224,8 @@ enhance_prompt -p "optimize query performance" --project-root .  # With cloud co
 | Upload failure | Index rollback to previous state; cached blobs still returned |
 | Connection timeout | Retries up to 3 times with exponential backoff |
 | No results | Broaden search query |
+| Third-party not configured | `ValueError` raised immediately (no silent fallback) |
+| Search context missing project_root | `ValueError` raised when injection enabled without `--project-root` |
 
 ## Anti-Patterns
 
@@ -163,3 +237,5 @@ enhance_prompt -p "optimize query performance" --project-root .  # With cloud co
 | Use exact match for conceptual search | Use natural language query |
 | Always use non-interactive mode | Use interactive mode for review |
 | Skip `--project-root` for enhance | Include it for cloud-based code context |
+
+

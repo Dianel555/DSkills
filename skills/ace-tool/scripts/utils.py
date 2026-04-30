@@ -23,7 +23,13 @@ def load_env():
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         key, value = line.split("=", 1)
-                        os.environ.setdefault(key.strip(), value.strip().strip('"\''))
+                        value = value.strip()
+                        # Strip inline comments (unquoted # preceded by whitespace)
+                        if value and value[0] not in ('"', "'"):
+                            value = re.split(r'\s+#', value, maxsplit=1)[0].strip()
+                        else:
+                            value = value.strip('"\'')
+                        os.environ.setdefault(key.strip(), value)
             break
 
 
