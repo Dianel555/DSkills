@@ -10,65 +10,41 @@ High-precision semantic search via Exa API. Standalone CLI only (no MCP dependen
 
 ## Execution Method
 
-Run `scripts/exa_cli.py` via Bash:
-
 ```bash
 # Prerequisites: pip install httpx tenacity
 # Environment: EXA_API_KEY (required), EXA_API_URL (optional, default: https://api.exa.ai)
+
+# All examples assume cwd == skills/exa/. The shim auto-chdirs if you launch
+# it from elsewhere (e.g., the repo root).
+cd skills/exa
+python scripts/exa_cli.py --help
 ```
 
 ## Available Tools
 
-### Search Tools
-
 ```bash
-# Basic semantic search
-python scripts/exa_cli.py web_search_exa --query "emerging patterns in TypeScript" [--num-results 10] [--type auto|keyword|neural] [--livecrawl always|fallback|never]
+# Basic semantic search (highlights always on; supports inline category:<type>)
+python scripts/exa_cli.py web_search_exa --query "TypeScript design patterns" [--num-results 10]
+python scripts/exa_cli.py web_search_exa --query "category:company Anthropic AI safety"
 
-# Advanced search with filters
-python scripts/exa_cli.py web_search_advanced_exa --query "machine learning papers" \
-  [--include-domains arxiv.org,github.com] [--exclude-domains medium.com] \
+# Batch URL fetch (urls is a repeatable flag; payload field is upstream `ids`)
+python scripts/exa_cli.py web_fetch_exa \
+  --urls "https://a.com" --urls "https://b.com" \
+  [--max-chars 3000] [--out content.json]
+
+# Advanced filtered search (list params are repeatable flags, no comma syntax)
+python scripts/exa_cli.py web_search_advanced_exa --query "transformer" \
+  [--type auto|fast|instant] [--category research\ paper] \
+  [--include-domains arxiv.org --include-domains papers.nips.cc] \
+  [--exclude-domains medium.com] \
+  [--include-text "attention"] [--exclude-text "tutorial"] \
   [--start-date 2024-01-01] [--end-date 2024-12-31] \
-  [--text] [--highlights] [--summary] [--out results.json]
+  [--num-results 10] [--max-age-hours 168] \
+  [--text] [--highlights] [--summary] \
+  [--max-chars 5000]   # only effective when --text is set; emits stderr warning otherwise
+  [--out results.json]
 
-# Deep search with query expansion
-python scripts/exa_cli.py deep_search_exa --objective "foundations of quantum error correction" [--additional-queries "query1|query2"]
-
-# Company research
-python scripts/exa_cli.py company_research_exa --company "Anthropic" [--num-results 10]
-
-# LinkedIn profile search
-python scripts/exa_cli.py linkedin_search_exa --query "AI researchers at Stanford" [--num-results 10]
-```
-
-### Content Tools
-
-```bash
-# Extract content from URL
-python scripts/exa_cli.py crawling_exa --url "https://example.com/article" \
-  [--max-chars 5000] [--livecrawl always|fallback|never] \
-  [--text] [--highlights] [--summary] [--out content.json]
-
-# Get code context (documentation, examples)
-python scripts/exa_cli.py get_code_context_exa --query "React useState hook examples" [--tokens-num 10000] [--out code.json]
-```
-
-### Research Tools
-
-```bash
-# Start AI research task
-python scripts/exa_cli.py deep_researcher_start --instructions "Analyze the impact of LLMs on software development" [--model exa-research|exa-research-pro]
-# Returns: {"taskId": "abc123", ...}
-
-# Check research status
-python scripts/exa_cli.py deep_researcher_check --task-id "abc123" [--out report.json]
-# Status: running → completed | failed
-```
-
-### Configuration
-
-```bash
-# Check config and test connection
+# Configuration / connectivity probe (omit --no-test to run a numResults=1 ping)
 python scripts/exa_cli.py get_config_info [--no-test]
 ```
 
@@ -76,29 +52,31 @@ python scripts/exa_cli.py get_config_info [--no-test]
 
 | Tool | Required | Optional | Output |
 |------|----------|----------|--------|
-| `web_search_exa` | `query` | `num-results`, `type`, `livecrawl` | Search results JSON |
-| `web_search_advanced_exa` | `query` | `include-domains`, `exclude-domains`, `start-date`, `end-date`, `text`, `highlights`, `summary` | Filtered results JSON |
-| `deep_search_exa` | `objective` | `additional-queries` | Expanded search results |
-| `company_research_exa` | `company` | `num-results` | Company info JSON |
-| `linkedin_search_exa` | `query` | `num-results` | LinkedIn profiles JSON |
-| `crawling_exa` | `url` | `max-chars`, `livecrawl`, `text`, `highlights`, `summary` | Page content JSON |
-| `get_code_context_exa` | `query` | `tokens-num` (1000-50000) | Code context JSON |
-| `deep_researcher_start` | `instructions` | `model` | Task ID |
-| `deep_researcher_check` | `task-id` | - | Status + report |
+| `web_search_exa` | `--query` | `--num-results` (1-100) | Search results JSON (highlights always present) |
+| `web_fetch_exa` | `--urls` (repeatable, ≥1) | `--max-chars` (default 3000), `--out` | `/contents` response JSON |
+| `web_search_advanced_exa` | `--query` | `--type`, `--category`, repeatable `--include-domains`/`--exclude-domains`/`--include-text`/`--exclude-text`, `--start-date`, `--end-date`, `--num-results`, `--max-age-hours`, `--text`, `--highlights`, `--summary`, `--max-chars`, `--out` | Filtered search results JSON |
+| `get_config_info` | – | `--no-test` | Config + (default) `connection_test` |
+
+## Global Options
+
+Place before the subcommand:
+
+| Option | Purpose |
+|--------|---------|
+| `--api-url` | Override `EXA_API_URL` (does not write to `os.environ`) |
+| `--api-key` | Override `EXA_API_KEY` |
+| `--debug`   | Enable JSON debug events on stderr (`EXA_DEBUG=true`) — never logs auth values |
+| `--max-retry-wait <s>` | Cap (seconds) for single retry wait + exponential backoff (default 60, env: `EXA_MAX_RETRY_WAIT`) |
 
 ## Tool Routing Guide
-
-### Exa vs Grok-Search
 
 | Use Case | Recommended Tool |
 |----------|------------------|
 | Real-time news, current events | grok-search |
-| Semantic/conceptual research | **exa** |
-| Code documentation lookup | **exa** (`get_code_context_exa`) |
-| Company/professional research | **exa** |
-| General web content fetch | grok-search |
-| Academic papers, technical docs | **exa** |
-| AI-powered deep research | **exa** (`deep_researcher_*`) |
+| Semantic/conceptual research | **exa** (`web_search_exa`) |
+| Domain or date-bounded research | **exa** (`web_search_advanced_exa`) |
+| Read full content of one or more URLs | **exa** (`web_fetch_exa`) |
+| Academic papers, technical docs | **exa** (`web_search_advanced_exa --include-domains arxiv.org ...`) |
 
 ## Workflow Patterns
 
@@ -107,37 +85,50 @@ python scripts/exa_cli.py get_config_info [--no-test]
 python scripts/exa_cli.py web_search_exa --query "best practices for React hooks" --num-results 5
 ```
 
-### Pattern 2: Filtered Research
+### Pattern 2: Filtered Research (repeatable flags)
 ```bash
 python scripts/exa_cli.py web_search_advanced_exa --query "transformer architecture" \
-  --include-domains arxiv.org,papers.nips.cc --start-date 2023-01-01 --text --summary
+  --include-domains arxiv.org --include-domains papers.nips.cc \
+  --start-date 2023-01-01 --text --summary
 ```
 
-### Pattern 3: Deep Research Task
+### Pattern 3: Batch URL Read
 ```bash
-# Start research
-python scripts/exa_cli.py deep_researcher_start --instructions "Compare RAG vs fine-tuning for domain adaptation"
-# Poll until completed
-python scripts/exa_cli.py deep_researcher_check --task-id "<taskId>" --out research_report.json
+python scripts/exa_cli.py web_fetch_exa \
+  --urls "https://example.com/a" --urls "https://example.com/b" \
+  --max-chars 4000 --out batch.json
 ```
+
+## References
+
+The `references/` directory carries 11 prompt-engineering guides. Open them on demand when crafting queries:
+
+| File | When to read |
+|------|--------------|
+| `searching.md` | Crafting `web_search_exa` queries (semantic phrasing, category usage) |
+| `extraction.md` | Choosing between highlights / text / summary on advanced search |
+| `filtering.md` | Building include/exclude domain & date filters |
+| `synthesis.md` | Aggregating multiple result sets into a coherent answer |
+| `source-quality.md` | Vetting source credibility |
+| `patterns-code.md` | Code/library research recipes |
+| `patterns-companies.md` | Company research recipes |
+| `patterns-news.md` | Current-events research recipes |
+| `patterns-papers.md` | Academic paper recipes |
+| `patterns-people.md` | People search recipes |
+| `patterns-relationships.md` | Multi-entity relationship research |
 
 ## Error Handling
 
 | Error | Recovery |
 |-------|----------|
-| `EXA_API_KEY not configured` | Set environment variable or use `--api-key` |
-| HTTP 429 (Rate limit) | Automatic retry with exponential backoff |
-| HTTP 401 (Unauthorized) | Verify API key is valid |
-| Timeout | Retry or reduce `num-results` |
+| `EXA_API_KEY not configured` | Set environment variable or pass `--api-key` |
+| HTTP 408/429/5xx | Automatic retry with exponential backoff (max 4 attempts, capped by `--max-retry-wait`) |
+| HTTP 401 | Verify API key |
+| Timeout | Reduce `--num-results` or retry |
 
 ## Output Format
 
-All commands output JSON to stdout. Use `--out <file>` to write to file instead.
-
-```json
-{
-  "results": [
-    {"title": "...", "url": "...", "text": "...", "publishedDate": "..."}
-  ]
-}
-```
+All commands print JSON (`ensure_ascii=False`, indent 2) to stdout. With `--out
+<file>`, the response JSON is written to that path and stdout becomes
+`{"status":"ok","file":"<file>"}`. Errors go to stderr as
+`{"error":"<message>"}` with non-zero exit.
