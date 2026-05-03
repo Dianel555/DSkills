@@ -8,19 +8,33 @@ description: |
 
 Enhanced web search via Grok API. Standalone CLI only (no MCP dependency).
 
+## Implementation Layout
+
+- `scripts/groksearch_cli.py` - CLI entrypoint and compatibility facade
+- `scripts/groksearch/` - internal modules for config, HTTP retry, Grok provider, Tavily calls, formatting, and commands
+
 ## Execution Methods
 
 Run `scripts/groksearch_cli.py` via Bash:
 
 ```bash
 # Prerequisites: pip install httpx tenacity
-# Environment: GROK_API_URL, GROK_API_KEY
+# Environment: GROK_API_URL, GROK_API_KEY (required); TAVILY_API_KEY (optional)
 
-# Web search
+# Web search (Grok only)
 python scripts/groksearch_cli.py web_search --query "search terms" [--platform "GitHub"] [--min-results 3] [--max-results 10]
 
-# Fetch webpage
+# Web search with Tavily extra sources (parallel + URL-deduplicated merge)
+python scripts/groksearch_cli.py web_search --query "..." --extra-sources 5
+
+# Fetch webpage (default: Grok)
 python scripts/groksearch_cli.py web_fetch --url "https://..." [--out file.md]
+
+# Fetch via Tavily extract endpoint
+python scripts/groksearch_cli.py web_fetch --url "https://..." --via tavily
+
+# Map a website's structure (Tavily)
+python scripts/groksearch_cli.py web_map --url "https://docs.example.com" [--instructions "API only"] [--max-depth 2] [--max-breadth 20] [--limit 50] [--timeout 150]
 
 # Check config
 python scripts/groksearch_cli.py get_config_info [--no-test]
@@ -45,9 +59,10 @@ python scripts/groksearch_cli.py toggle_builtin_tools --action on|off|status [--
 
 | Tool | Parameters | Output |
 |------|------------|--------|
-| `web_search` | `query`(required), `platform`/`min_results`/`max_results`(optional) | `[{title,url,description}]` |
-| `web_fetch` | `url`(required), `out`(optional) | Structured Markdown |
-| `get_config_info` | `no_test`(optional) | `{api_url,status,connection_test}` |
+| `web_search` | `query`(required), `platform`/`min_results`/`max_results`(optional), `extra_sources`(int, 0=disabled) | `[{title,url,description,provider?}]` |
+| `web_fetch` | `url`(required), `out`(optional), `via`(grok\|tavily, default grok) | Structured Markdown |
+| `web_map` | `url`(required), `instructions`/`max_depth`/`max_breadth`/`limit`/`timeout`(optional) | `{base_url,results,response_time}` JSON |
+| `get_config_info` | `no_test`(optional) | `{api_url,status,connection_test,tavily_*}` |
 | `switch_model` | `model`(required) | `{previous_model,current_model}` |
 | `toggle_builtin_tools` | `action`(on/off/status), `root`(optional) | `{blocked,deny_list}` |
 

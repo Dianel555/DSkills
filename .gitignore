@@ -35,6 +35,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+pytest.ini
 
 # Virtual environments
 venv/
