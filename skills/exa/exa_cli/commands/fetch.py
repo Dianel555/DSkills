@@ -17,6 +17,7 @@ async def cmd_web_fetch_exa(args) -> None:
             cfg.exa_api_key,
             max_retry_wait=cfg.max_retry_wait,
             debug=cfg.debug_enabled,
+            auth_scheme=cfg.auth_scheme,
         )
         # Upstream payload field is `ids` (see webFetch.ts:64).
         extras = {"contents": {"text": {"maxCharacters": args.max_chars}}}

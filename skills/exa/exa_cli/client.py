@@ -74,17 +74,21 @@ class _WaitWithRetryAfter(wait_base):
 class ExaClient:
     """Async client wrapping POST/GET to Exa API with retry + Retry-After cap."""
 
-    def __init__(self, api_url: str, api_key: str, max_retry_wait: int = 60, debug: bool = False):
+    def __init__(self, api_url: str, api_key: str, max_retry_wait: int = 60, debug: bool = False, auth_scheme: str = "x-api-key"):
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self.max_retry_wait = max_retry_wait
         self.debug = debug
+        self.auth_scheme = auth_scheme
         self.timeout = httpx.Timeout(connect=15.0, read=60.0, write=15.0, pool=None)
 
     async def _request_json(
         self, method: str, path: str, json_body: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        headers = {"x-api-key": self.api_key, "Content-Type": "application/json"}
+        if self.auth_scheme == "bearer":
+            headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        else:
+            headers = {"x-api-key": self.api_key, "Content-Type": "application/json"}
         url = f"{self.api_url}{path}"
         if self.debug:
             _debug_log({"event": "request", "method": method.upper(), "url": url})

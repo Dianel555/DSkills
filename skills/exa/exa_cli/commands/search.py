@@ -38,6 +38,7 @@ async def cmd_web_search_exa(args) -> None:
             cfg.exa_api_key,
             max_retry_wait=cfg.max_retry_wait,
             debug=cfg.debug_enabled,
+            auth_scheme=cfg.auth_scheme,
         )
         cleaned_query, category = extract_category(args.query)
         body = {

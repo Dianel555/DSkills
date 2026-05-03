@@ -41,6 +41,12 @@ python scripts/exa_cli.py web_search_advanced_exa --query "machine learning" \
 
 # Configuration + connectivity probe
 python scripts/exa_cli.py get_config_info
+
+# Third-party endpoint with Bearer authentication
+export EXA_API_URL=https://pool.example.com
+export EXA_AUTH_SCHEME=bearer
+export EXA_API_KEY=your-bearer-token
+python scripts/exa_cli.py web_search_exa --query "AI research"
 ```
 
 ## Available Commands
@@ -62,6 +68,7 @@ Place before the subcommand.
 | `--api-key` | Override `EXA_API_KEY` |
 | `--debug` | Stream JSON debug events on stderr (`EXA_DEBUG=true`) |
 | `--max-retry-wait <s>` | Cap (seconds) for single retry + exponential backoff (default 60, env: `EXA_MAX_RETRY_WAIT`) |
+| `--auth-scheme <scheme>` | Authentication scheme: `x-api-key` (default) or `bearer` for third-party endpoints (env: `EXA_AUTH_SCHEME`) |
 
 ## Output
 

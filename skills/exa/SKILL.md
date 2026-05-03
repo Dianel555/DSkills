@@ -67,6 +67,7 @@ Place before the subcommand:
 | `--api-key` | Override `EXA_API_KEY` |
 | `--debug`   | Enable JSON debug events on stderr (`EXA_DEBUG=true`) — never logs auth values |
 | `--max-retry-wait <s>` | Cap (seconds) for single retry wait + exponential backoff (default 60, env: `EXA_MAX_RETRY_WAIT`) |
+| `--auth-scheme <scheme>` | Authentication scheme: `x-api-key` (default) or `bearer` for third-party endpoints (env: `EXA_AUTH_SCHEME`) |
 
 ## Tool Routing Guide
 
@@ -97,6 +98,20 @@ python scripts/exa_cli.py web_search_advanced_exa --query "transformer architect
 python scripts/exa_cli.py web_fetch_exa \
   --urls "https://example.com/a" --urls "https://example.com/b" \
   --max-chars 4000 --out batch.json
+```
+
+### Pattern 4: Third-Party Endpoint (Bearer Auth)
+```bash
+# Connect to exa-pool or other Exa-compatible proxy
+export EXA_API_URL=https://pool.example.com
+export EXA_AUTH_SCHEME=bearer
+export EXA_API_KEY=your-bearer-token
+
+python scripts/exa_cli.py web_search_exa --query "AI agents" --num-results 5
+
+# Or use CLI flags for one-off requests
+python scripts/exa_cli.py --auth-scheme bearer --api-url https://pool.example.com \
+  web_search_exa --query "AI agents"
 ```
 
 ## References

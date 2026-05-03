@@ -59,10 +59,13 @@ class Config:
             cls._instance._override_url = None
             cls._instance._override_key = None
             cls._instance._override_max_retry_wait = None
+            cls._instance._override_auth_scheme = None
         return cls._instance
 
     @classmethod
     def _reset_for_testing(cls) -> None:
+        if cls._instance is not None:
+            cls._instance._override_auth_scheme = None
         cls._instance = None
 
     def set_overrides(
@@ -70,6 +73,7 @@ class Config:
         api_url: Optional[str] = None,
         api_key: Optional[str] = None,
         max_retry_wait: Optional[int] = None,
+        auth_scheme: Optional[str] = None,
     ) -> None:
         if api_url is not None:
             self._override_url = api_url
@@ -77,6 +81,8 @@ class Config:
             self._override_key = api_key
         if max_retry_wait is not None:
             self._override_max_retry_wait = max_retry_wait
+        if auth_scheme is not None:
+            self._override_auth_scheme = auth_scheme
 
     @property
     def debug_enabled(self) -> bool:
@@ -113,6 +119,15 @@ class Config:
                 pass
         return 60
 
+    @property
+    def auth_scheme(self) -> str:
+        if self._override_auth_scheme is not None:
+            return self._override_auth_scheme
+        env_val = os.getenv("EXA_AUTH_SCHEME")
+        if env_val and env_val in ("x-api-key", "bearer"):
+            return env_val
+        return "x-api-key"
+
     @staticmethod
     def mask_api_key(key: str) -> str:
         if not key or len(key) <= 8:
@@ -132,5 +147,6 @@ class Config:
             "EXA_API_URL": api_url,
             "EXA_API_KEY": api_key_masked,
             "EXA_DEBUG": self.debug_enabled,
+            "auth_scheme": self.auth_scheme,
             "config_status": config_status,
         }

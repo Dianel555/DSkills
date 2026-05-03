@@ -24,6 +24,9 @@ def _add_global_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-retry-wait", type=int, default=None,
                         help="Cap (seconds) for single retry wait and exponential backoff "
                              "(default: 60, env: EXA_MAX_RETRY_WAIT)")
+    parser.add_argument("--auth-scheme", choices=["x-api-key", "bearer"], default=None,
+                        help="Authentication scheme: x-api-key (default) or bearer "
+                             "(env: EXA_AUTH_SCHEME)")
 
 
 def _num_results_in_range(value: str) -> int:
@@ -122,6 +125,7 @@ def main() -> None:
         api_url=args.api_url,
         api_key=args.api_key,
         max_retry_wait=args.max_retry_wait,
+        auth_scheme=args.auth_scheme,
     )
 
     handler = COMMAND_DISPATCH[args.command]

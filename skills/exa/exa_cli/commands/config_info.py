@@ -21,6 +21,7 @@ async def cmd_get_config_info(args) -> None:
                 cfg.exa_api_key,
                 max_retry_wait=cfg.max_retry_wait,
                 debug=cfg.debug_enabled,
+                auth_scheme=cfg.auth_scheme,
             )
             await client.search({"query": "test", "numResults": 1})
             test_result["status"] = "OK"

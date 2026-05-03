@@ -59,6 +59,7 @@ async def cmd_web_search_advanced_exa(args) -> None:
             cfg.exa_api_key,
             max_retry_wait=cfg.max_retry_wait,
             debug=cfg.debug_enabled,
+            auth_scheme=cfg.auth_scheme,
         )
         body = _build_payload(args)
         result = await client.search(body)
