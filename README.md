@@ -12,6 +12,15 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Gemini CLI).
 | [time](skills/time/) | Time and timezone utilities |
 | [Serena](skills/serena/) | Semantic code understanding with IDE-like symbol operations |
 | [ace-tool](skills/ace-tool/) | Semantic code search and AI-powered prompt enhancement |
+| [agent-wiki](skills/agent-wiki/) | Incremental LLM-friendly wiki generator for Obsidian note vaults |
+
+### Python Skill Dependencies
+
+Some skills provide Python CLIs. Install skill-specific dependencies before use:
+
+```bash
+pip install PyYAML
+```
 
 ## Installation
 
@@ -85,7 +94,8 @@ DSkills/
 │   ├── exa/
 │   ├── time/
 │   ├── serena/
-│   └── ace-tool/
+│   ├── ace-tool/
+│   └── agent-wiki/
 └── .claude-plugin/
     └── marketplace.json               # Metadata
 ```

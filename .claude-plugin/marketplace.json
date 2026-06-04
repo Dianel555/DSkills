@@ -50,6 +50,13 @@
       "source": "./skills/ace-tool",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "agent-wiki",
+      "description": "Incremental LLM-friendly wiki generator for Obsidian note vaults",
+      "source": "./skills/agent-wiki",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }

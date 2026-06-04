@@ -11,10 +11,19 @@ openspec/
 # Codex Files
 AGENTS.md
 
-# ClaudeCode files
+# ClaudeCode Files
 .claude/
 CLAUDE.md
 .claudeignore
+
+#Antigravity Files
+.agents/
+
+#Evolver Files
+backup.gepx
+memory/
+.evolver/
+logs/
 
 # Python
 __pycache__/
