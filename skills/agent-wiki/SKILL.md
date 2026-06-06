@@ -35,6 +35,9 @@ python scripts/agent_wiki_cli.py cleanup --vault /path/to/vault
 
 # Get wiki health status
 python scripts/agent_wiki_cli.py status --vault /path/to/vault
+
+# Generate Obsidian Bases (.base) views: wiki/index.base + <name>.base master table
+python scripts/agent_wiki_cli.py gen-base --name sources --vault /path/to/vault
 ```
 
 **Vault Path Resolution**: Use `--vault PATH` or set environment variable `AGENT_WIKI_VAULT`.
@@ -49,6 +52,7 @@ python scripts/agent_wiki_cli.py status --vault /path/to/vault
 | `cache-put` | Record ingest completion | source path, topic list | `{"ok": true, "path": "...", "sha256": "..."}` |
 | `cleanup` | Remove deleted sources from topics | vault path | `{"removed": N, "archived": M, "details": [...]}` |
 | `status` | Wiki health metrics | vault path | `{"vault": "...", "sources_tracked": N, "topics_total": N, ...}` |
+| `gen-base` | Write Obsidian Bases views (index + master table) | vault path, `--name` | `{"ok": true, "prefix": "...", "written": [...]}` |
 
 ## Agent Workflow
 
@@ -58,7 +62,7 @@ python scripts/agent_wiki_cli.py status --vault /path/to/vault
 2. **Process each source**:
    - For `new`/`modified`: Read source → generate/update topic pages → `cache-put`
    - For `deleted`: Run `cleanup` (handles topic frontmatter update and archival)
-3. **Refresh index**: Update `wiki/index.md` with topic summaries
+3. **Refresh index**: Run `gen-base` to (re)write the Bases views, then update `wiki/index.md` with topic summaries and embed `![[index.base#主题总览]]`
 4. **Log**: Append to `wiki/log.md`
 
 ### URL Fetching Rules
@@ -86,21 +90,26 @@ python scripts/agent_wiki_cli.py status --vault /path/to/vault
 - **Preferred**: `obsidian property:set name="sources" value="[...]" file="..."` (surgical update)
 - **Fallback**: Direct YAML rewrite
 
-### Dynamic Index
-- **Primary**: Generate `index.base` (Obsidian Bases view) for sortable/filterable topic table
-- **Fallback**: Generate markdown table in `index.md` if obsidian-bases plugin not detected
+### Dynamic Index (Bases)
+- Run `gen-base` to write two `.base` views deterministically (filter folders auto-resolved relative to the Obsidian vault root — the dir containing `.obsidian`):
+  - `wiki/index.base` — topic overview (主题 / 来源数 / 更新日期); embed via `![[index.base#主题总览]]`
+  - `{vault}/<name>.base` — source master table (文献 / 年份 / 标签); year parsed from a leading `(YYYY…)` filename, `标签` from source `tags` frontmatter
+- **Fallback**: Generate a markdown table in `index.md` if the obsidian-bases plugin is unavailable
 
 ## Wiki Structure
 
 ```
-{vault}/wiki/
-├── index.md             # Auto-maintained topic directory
-├── log.md               # Append-only log
-├── topics/              # Topic pages (LLM-written)
-│   └── 量子叠加原理.md
-├── _archived/{date}/    # Orphaned topics
-├── .wiki-cache.json     # Incremental cache
-└── .wiki-url-cache/     # External URL snapshots (optional)
+{vault}/
+├── <name>.base             # Source master table (Bases, at vault root)
+└── wiki/
+    ├── index.md             # Auto-maintained topic directory
+    ├── index.base           # Topic overview view (Bases)
+    ├── log.md               # Append-only log
+    ├── topics/              # Topic pages (LLM-written)
+    │   └── 量子叠加原理.md
+    ├── _archived/{date}/    # Orphaned topics
+    ├── .wiki-cache.json     # Incremental cache
+    └── .wiki-url-cache/     # External URL snapshots (optional)
 ```
 
 ### Topic Page Frontmatter Contract

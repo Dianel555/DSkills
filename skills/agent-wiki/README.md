@@ -37,6 +37,7 @@ python scripts/agent_wiki_cli.py cache-get <relpath> --vault /path/to/vault
 python scripts/agent_wiki_cli.py cache-put <relpath> --topics topic1.md,topic2.md --vault /path/to/vault
 python scripts/agent_wiki_cli.py cleanup --vault /path/to/vault
 python scripts/agent_wiki_cli.py status --vault /path/to/vault
+python scripts/agent_wiki_cli.py gen-base --name sources --vault /path/to/vault
 ```
 
 | Command | Purpose |
@@ -47,19 +48,23 @@ python scripts/agent_wiki_cli.py status --vault /path/to/vault
 | `cache-put` | Record a completed ingest for one source path and derived topics |
 | `cleanup` | Remove deleted-source references and archive orphaned topics |
 | `status` | Emit machine-readable wiki health metrics |
+| `gen-base` | Write Obsidian Bases views: `wiki/index.base` + `<name>.base` source master table |
 
 All command outputs are JSON.
 
 ## Wiki Layout
 
 ```text
-{vault}/wiki/
-├── index.md
-├── log.md
-├── topics/
-├── _archived/YYYY-MM-DD/
-├── .wiki-cache.json
-└── .wiki-url-cache/
+{vault}/
+├── <name>.base              # source master table (Bases, at vault root)
+└── wiki/
+    ├── index.md
+    ├── index.base           # topic overview (Bases)
+    ├── log.md
+    ├── topics/
+    ├── _archived/YYYY-MM-DD/
+    ├── .wiki-cache.json
+    └── .wiki-url-cache/
 ```
 
 Source markdown files remain outside `wiki/`. The scanner skips `wiki/`, `.obsidian/`, `attachments/`, `.git/`, `.trash/`, `.wikiignore` matches, and symlinked markdown files.
@@ -73,7 +78,7 @@ Source markdown files remain outside `wiki/`. The scanner skips `wiki/`, `.obsid
    - preserve Obsidian links such as `[[note]]` and embeds such as `![[image.png]]`
    - run `cache-put <relpath> --topics ...`
 3. For deleted sources, run `cleanup`.
-4. Refresh `wiki/index.md` and append `wiki/log.md` entries.
+4. Run `gen-base` to refresh the Bases views, update `wiki/index.md`, and append `wiki/log.md` entries.
 
 Topic pages should contain YAML frontmatter:
 

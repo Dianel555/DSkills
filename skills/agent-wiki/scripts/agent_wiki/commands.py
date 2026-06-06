@@ -9,7 +9,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import cache, cleanup, config, frontmatter, scanner
+from . import bases, cache, cleanup, config, frontmatter, scanner
 
 
 def emit(payload: dict) -> None:
@@ -215,3 +215,26 @@ def cmd_status(args) -> None:
         "last_log_entry": last_log,
         "errors": errors,
     })
+
+
+def cmd_gen_base(args) -> None:
+    vault = _vault(args)
+    root = config.wiki_root(vault)
+    if not root.exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+    prefix = bases.obsidian_prefix(vault)
+    name = Path(args.name).name or "sources.base"
+    if not name.endswith(".base"):
+        name += ".base"
+    targets = [
+        (root / "index.base", bases.build_index_base(prefix)),
+        (vault / name, bases.build_master_base(prefix)),
+    ]
+    for path, _content in targets:
+        if not _writable_mode(path):
+            fail({"error": "base_not_writable", "path": config.to_rel_posix(path, vault)}, 1)
+    written: list[str] = []
+    for path, content in targets:
+        path.write_text(content, encoding="utf-8")
+        written.append(config.to_rel_posix(path, vault))
+    emit({"ok": True, "prefix": prefix, "written": written})
