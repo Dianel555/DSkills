@@ -9,7 +9,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import bases, cache, cleanup, config, frontmatter, scanner, wiki_index
+from . import authors, bases, batch, cache, cleanup, config, frontmatter, scanner, source_type, wiki_index
 
 
 def emit(payload: dict) -> None:
@@ -88,6 +88,61 @@ def cmd_scan(args) -> None:
     if "error" in report:
         fail(report, 1)
     emit(report)
+
+
+def cmd_plan(args) -> None:
+    vault = _vault(args)
+    if not config.wiki_root(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+    size = args.batch_size
+    if size <= 0:
+        fail({"error": "invalid_batch_size", "batch_size": size}, 1)
+    state = batch.build_plan(vault, size)
+    batch.save_state(vault, state)
+    batch.write_report(vault, state)
+    emit({
+        "ok": True,
+        "total": state["total"],
+        "batch_size": state["batch_size"],
+        "report": state["report"],
+        "batches": [
+            {"id": item["id"], "status": item["status"], "count": len(item["items"]), "items": item["items"]}
+            for item in state["batches"]
+        ],
+    })
+
+
+def cmd_batch_done(args) -> None:
+    vault = _vault(args)
+    state = batch.load_state(vault)
+    if state is None:
+        fail({"error": "no_batch_plan", "hint": "run plan first"}, 1)
+    target = next((item for item in state["batches"] if item["id"] == args.batch), None)
+    if target is None:
+        fail({"error": "batch_not_found", "batch": args.batch}, 1)
+    tracked = cache.load(vault).get("sources", {})
+    missing = [item for item in target["items"] if not batch.is_ingested(vault, item, tracked)]
+    if missing:
+        fail({"error": "batch_incomplete", "batch": args.batch, "missing": missing}, 1)
+    target["status"] = "done"
+    batch.save_state(vault, state)
+    batch.write_report(vault, state)
+    remaining = [item["id"] for item in state["batches"] if item["status"] != "done"]
+    emit({"ok": True, "batch": args.batch, "status": "done", "remaining": remaining, "complete": not remaining})
+
+
+def cmd_extract_authors(args) -> None:
+    vault = _vault(args)
+    if not config.topics_dir(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+    emit({"ok": True, "topics": authors.extract(vault)})
+
+
+def cmd_aggregate_authors(args) -> None:
+    vault = _vault(args)
+    if not config.topics_dir(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+    emit({"ok": True, "authors": authors.aggregate(authors.extract(vault))})
 
 
 def cmd_cache_get(args) -> None:
@@ -214,13 +269,22 @@ def cmd_index(args) -> None:
     emit({"ok": True, "topics": len(data["topics"]), "errors": errors})
 
 
+def cmd_normalize_source_type(args) -> None:
+    vault = _vault(args)
+    if not config.topics_dir(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+    result = source_type.backfill(vault)
+    emit({"ok": True, **result})
+
+
 def cmd_status(args) -> None:
     vault = _vault(args)
     data = cache.load(vault)
     topics_root = config.topics_dir(vault)
     archive_root = config.archive_dir(vault)
     topics = list(topics_root.glob("*.md")) if topics_root.exists() else []
-    archived_topics = list(archive_root.glob("**/*.md")) if archive_root.exists() else []
+    report_file = batch.report_path(vault)
+    archived_topics = [p for p in archive_root.glob("**/*.md") if p != report_file] if archive_root.exists() else []
     errors = []
     orphaned = 0
 
@@ -255,6 +319,18 @@ def cmd_status(args) -> None:
         index_errors = [{"path": exc.path, "error": "normalized_path_collision"}]
 
     cache_file = config.cache_path(vault)
+    batch_state = batch.load_state(vault)
+    batch_summary = None
+    if batch_state:
+        batches = batch_state.get("batches", [])
+        done = sum(1 for item in batches if item.get("status") == "done")
+        batch_summary = {
+            "planned": batch_state.get("total", 0),
+            "batch_size": batch_state.get("batch_size"),
+            "batches_total": len(batches),
+            "batches_done": done,
+            "batches_pending": len(batches) - done,
+        }
     emit({
         "vault": str(vault),
         "sources_tracked": len(data.get("sources", {})),
@@ -269,6 +345,7 @@ def cmd_status(args) -> None:
         "index_topics": index_topics,
         "index_stale": _index_stale(vault, index_file),
         "index_errors": index_errors,
+        "batch": batch_summary,
     })
 
 

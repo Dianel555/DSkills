@@ -42,6 +42,10 @@ def index_path(vault: str | Path) -> Path:
     return wiki_root(vault) / ".wiki-index.json"
 
 
+def batch_path(vault: str | Path) -> Path:
+    return wiki_root(vault) / ".wiki-batch.json"
+
+
 def topics_dir(vault: str | Path) -> Path:
     return wiki_root(vault) / "topics"
 

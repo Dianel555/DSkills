@@ -15,7 +15,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, frontmatter
+from . import config, frontmatter, source_type
 
 INDEX_VERSION = 1
 EPOCH = "1970-01-01T00:00:00Z"
@@ -96,15 +96,16 @@ def _summary(value) -> str:
 
 
 def _entry(rel: str, meta: dict, stem: str) -> dict:
+    sources = _sources(meta.get("sources"))
     return {
         "path": rel,
         "title": _title(meta.get("title"), stem),
-        "sources": _sources(meta.get("sources")),
+        "sources": sources,
         "last_updated": _str_field(meta.get("last_updated")),
         "year_start": _year(meta.get("year_start")),
         "year_end": _year(meta.get("year_end")),
         "authors": _str_list(meta.get("authors")),
-        "source_type": _str_field(meta.get("source_type")),
+        "source_type": source_type.classify_sources(sources),
         "institutions": _str_list(meta.get("institutions")),
         "methods": _str_list(meta.get("methods")),
         "technical_routes": _str_list(meta.get("technical_routes")),

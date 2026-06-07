@@ -8,6 +8,7 @@ import sys
 import traceback
 
 from agent_wiki import __version__
+from agent_wiki import batch
 from agent_wiki import commands
 
 
@@ -34,6 +35,24 @@ def build_parser() -> argparse.ArgumentParser:
     add_vault(scan)
     scan.set_defaults(func=commands.cmd_scan)
 
+    plan = sub.add_parser("plan")
+    plan.add_argument("--batch-size", type=int, default=batch.DEFAULT_BATCH_SIZE, help="Documents per ingest round")
+    add_vault(plan)
+    plan.set_defaults(func=commands.cmd_plan)
+
+    batch_done = sub.add_parser("batch-done")
+    batch_done.add_argument("--batch", type=int, required=True, help="Batch id to mark complete")
+    add_vault(batch_done)
+    batch_done.set_defaults(func=commands.cmd_batch_done)
+
+    extract_authors = sub.add_parser("extract-authors")
+    add_vault(extract_authors)
+    extract_authors.set_defaults(func=commands.cmd_extract_authors)
+
+    aggregate_authors = sub.add_parser("aggregate-authors")
+    add_vault(aggregate_authors)
+    aggregate_authors.set_defaults(func=commands.cmd_aggregate_authors)
+
     cache_get = sub.add_parser("cache-get")
     cache_get.add_argument("path")
     add_vault(cache_get)
@@ -56,6 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
     index = sub.add_parser("index")
     add_vault(index)
     index.set_defaults(func=commands.cmd_index)
+
+    normalize_source_type = sub.add_parser("normalize-source-type")
+    add_vault(normalize_source_type)
+    normalize_source_type.set_defaults(func=commands.cmd_normalize_source_type)
 
     gen_base = sub.add_parser("gen-base")
     gen_base.add_argument("--name", default="sources", help="Master table base filename (without .base)")
