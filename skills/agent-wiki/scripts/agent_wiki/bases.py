@@ -1,7 +1,9 @@
 """Generate Obsidian Bases (.base) files for the wiki.
 
-Two deterministic views:
-  * index.base   — topic overview over wiki/topics
+Two deterministic files (the two-file output contract):
+  * index.base   — topic overview plus per-dimension faceted table views
+                   (authors, institutions, methods, source_type) read from
+                   topic frontmatter over wiki/topics
   * <name>.base  — source master table (year parsed from a leading
                    "(YYYY...)" filename prefix, tags column from frontmatter)
 
@@ -51,6 +53,18 @@ properties:
     displayName: 来源数
   last_updated:
     displayName: 更新日期
+  year_start:
+    displayName: 起始年
+  year_end:
+    displayName: 截止年
+  authors:
+    displayName: 作者
+  institutions:
+    displayName: 机构
+  methods:
+    displayName: 方法
+  source_type:
+    displayName: 来源类型
 views:
   - type: table
     name: 主题总览
@@ -62,6 +76,37 @@ views:
       formula.source_count: Sum
     columnSize:
       file.basename: 360
+  - type: table
+    name: 按作者
+    order:
+      - authors
+      - file.basename
+      - source_type
+  - type: table
+    name: 按机构
+    order:
+      - institutions
+      - file.basename
+      - source_type
+  - type: table
+    name: 按方法
+    order:
+      - methods
+      - file.basename
+      - source_type
+  - type: table
+    name: 按来源类型
+    order:
+      - source_type
+      - file.basename
+      - authors
+  - type: table
+    name: 按年份
+    order:
+      - year_start
+      - year_end
+      - file.basename
+      - source_type
   - type: cards
     name: 卡片视图
     order:

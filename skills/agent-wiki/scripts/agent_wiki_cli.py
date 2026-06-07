@@ -53,6 +53,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_vault(status)
     status.set_defaults(func=commands.cmd_status)
 
+    index = sub.add_parser("index")
+    add_vault(index)
+    index.set_defaults(func=commands.cmd_index)
+
     gen_base = sub.add_parser("gen-base")
     gen_base.add_argument("--name", default="sources", help="Master table base filename (without .base)")
     add_vault(gen_base)

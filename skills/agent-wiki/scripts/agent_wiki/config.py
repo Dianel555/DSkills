@@ -38,6 +38,10 @@ def cache_path(vault: str | Path) -> Path:
     return wiki_root(vault) / ".wiki-cache.json"
 
 
+def index_path(vault: str | Path) -> Path:
+    return wiki_root(vault) / ".wiki-index.json"
+
+
 def topics_dir(vault: str | Path) -> Path:
     return wiki_root(vault) / "topics"
 

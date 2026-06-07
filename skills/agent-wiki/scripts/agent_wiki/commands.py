@@ -9,7 +9,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import bases, cache, cleanup, config, frontmatter, scanner
+from . import bases, cache, cleanup, config, frontmatter, scanner, wiki_index
 
 
 def emit(payload: dict) -> None:
@@ -72,6 +72,11 @@ def cmd_init(args) -> None:
     if not cache_file.exists():
         cache.save(vault, cache.empty_schema())
         created.append(config.to_rel_posix(cache_file, vault))
+
+    index_file = config.index_path(vault)
+    if not index_file.exists():
+        wiki_index.save_index(vault, wiki_index.empty_schema())
+        created.append(config.to_rel_posix(index_file, vault))
 
     emit({"status": "already_initialized" if existed else "ok", "created": created})
 
@@ -179,6 +184,36 @@ def _topic_meta(path: Path) -> tuple[dict, str] | None:
         return None
 
 
+def _rebuild_index(vault: Path) -> tuple[dict, list[dict]]:
+    try:
+        data, errors = wiki_index.rebuild(vault)
+    except wiki_index.NormalizedPathCollision as exc:
+        fail({"error": "normalized_path_collision", "path": exc.path}, 1)
+    try:
+        wiki_index.save_index(vault, data)
+    except wiki_index.IndexWriteError:
+        fail({"error": "index_write_failed"}, 1)
+    return data, errors
+
+
+def _index_stale(vault: Path, index_file: Path) -> bool:
+    if not index_file.exists():
+        return True
+    index_mtime = index_file.stat().st_mtime_ns
+    topics_root = config.topics_dir(vault)
+    if not topics_root.exists():
+        return False
+    return any(topic.stat().st_mtime_ns > index_mtime for topic in topics_root.glob("*.md"))
+
+
+def cmd_index(args) -> None:
+    vault = _vault(args)
+    if not config.wiki_root(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+    data, errors = _rebuild_index(vault)
+    emit({"ok": True, "topics": len(data["topics"]), "errors": errors})
+
+
 def cmd_status(args) -> None:
     vault = _vault(args)
     data = cache.load(vault)
@@ -204,6 +239,21 @@ def cmd_status(args) -> None:
         lines = [line.strip() for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
         last_log = lines[-1] if lines else ""
 
+    index_file = config.index_path(vault)
+    index_exists = index_file.exists()
+    index_topics = 0
+    if index_exists:
+        try:
+            raw_index = json.loads(index_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            raw_index = None
+        if isinstance(raw_index, dict) and isinstance(raw_index.get("topics"), dict):
+            index_topics = len(raw_index["topics"])
+    try:
+        _index_data, index_errors = wiki_index.rebuild(vault)
+    except wiki_index.NormalizedPathCollision as exc:
+        index_errors = [{"path": exc.path, "error": "normalized_path_collision"}]
+
     cache_file = config.cache_path(vault)
     emit({
         "vault": str(vault),
@@ -214,6 +264,11 @@ def cmd_status(args) -> None:
         "cache_size_bytes": cache_file.stat().st_size if cache_file.exists() else 0,
         "last_log_entry": last_log,
         "errors": errors,
+        "index_exists": index_exists,
+        "index_size_bytes": index_file.stat().st_size if index_exists else 0,
+        "index_topics": index_topics,
+        "index_stale": _index_stale(vault, index_file),
+        "index_errors": index_errors,
     })
 
 
@@ -222,6 +277,7 @@ def cmd_gen_base(args) -> None:
     root = config.wiki_root(vault)
     if not root.exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+    _rebuild_index(vault)
     prefix = bases.obsidian_prefix(vault)
     name = Path(args.name).name or "sources.base"
     if not name.endswith(".base"):
