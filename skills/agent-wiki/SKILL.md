@@ -52,6 +52,20 @@ python scripts/agent_wiki_cli.py normalize-source-type --vault /path/to/vault
 # Generate Obsidian Bases (.base) views: wiki/index.base + <name>.base master table
 python scripts/agent_wiki_cli.py gen-base --name sources --vault /path/to/vault
 
+# Register an Agent-authored conversation page (wiki/sessions/<name>.md) and tag kind: session
+python scripts/agent_wiki_cli.py save-session <name> --vault /path/to/vault
+
+# Register an Agent-authored research report (wiki/queries/<name>.md) and tag kind: query
+python scripts/agent_wiki_cli.py save-report <name> --vault /path/to/vault
+
+# Generate per-topic JSON Canvas knowledge graphs under wiki/graphs/ (one topic or all)
+python scripts/agent_wiki_cli.py gen-canvas --topic <name> --vault /path/to/vault
+python scripts/agent_wiki_cli.py gen-canvas --all --vault /path/to/vault
+
+# Build/refresh the wiki/index.md skeleton + its managed "工作区" card block
+# Cards auto-detect Dataview (--cards auto|on|off); index.md prefers the Obsidian Local REST API when configured, else atomic write (--no-rest forces atomic)
+python scripts/agent_wiki_cli.py gen-home --vault /path/to/vault
+
 # Extract raw 作者 rows from each topic's source notes (read-only)
 python scripts/agent_wiki_cli.py extract-authors --vault /path/to/vault
 
@@ -76,6 +90,10 @@ python scripts/agent_wiki_cli.py aggregate-authors --vault /path/to/vault
 | `index` | Rebuild `wiki/.wiki-index.json` from topic frontmatter (no `.base` written) | vault path | `{"ok": true, "topics": N, "errors": [...]}` |
 | `normalize-source-type` | Rewrite each topic's `source_type` frontmatter to its `sources[]` file format (in place; no-source topics skipped) | vault path | `{"ok": true, "changed": [{"path": "...", "source_type": "..."}], "skipped": N, "errors": [...]}` |
 | `gen-base` | Rebuild the index, then write Obsidian Bases views (index + master table) | vault path, `--name` | `{"ok": true, "prefix": "...", "written": [...]}` |
+| `save-session` | Register an Agent-authored conversation page under `wiki/sessions/`, ensure `kind: session`, log it (page authored by Agent; CLI writes no prose) | name, vault path | `{"ok": true, "path": "sessions/<name>.md", "kind": "session"}` or `{"error": "capture_not_found", "path": "..."}` |
+| `save-report` | Register an Agent-authored research report under `wiki/queries/`, ensure `kind: query`, log it | name, vault path | `{"ok": true, "path": "queries/<name>.md", "kind": "query"}` |
+| `gen-canvas` | Generate per-topic JSON Canvas 1.0 graph(s) under `wiki/graphs/` from the index (topic center + `sources[]` ring + 1-hop neighbor topics) | vault path, `--topic <name>` or `--all` | `{"ok": true, "path": "wiki/graphs/<name>.canvas", "nodes": N, "edges": M}` or `{"ok": true, "written": [...], "count": K}` |
+| `gen-home` | Build/refresh the `wiki/index.md` skeleton + one managed "工作区" block (Dataview card grid when detected, else static list); refreshes **only** the managed block on re-run (agent prose preserved), appends it to an unmarked content-bearing index; never touches `index.base` | vault path, `--cards auto\|on\|off` (default auto), `--no-rest` | `{"ok": true, "path": "wiki/index.md", "cards": bool, "write_via": "rest\|atomic"}` |
 | `extract-authors` | Raw 作者 row per topic source note (read-only) | vault path | `{"ok": true, "topics": {"<topic>.md": [{"src": "...", "file": "...", "authors": "..."}]}}` |
 | `aggregate-authors` | Deduplicated first author per topic for frontmatter backfill (read-only) | vault path | `{"ok": true, "authors": {"<topic>.md": ["作者1", ...]}}` |
 
@@ -119,6 +137,99 @@ authors, normalize them deterministically:
    `作者:` row, and returns the **deduplicated first author** per topic (read-only).
 2. Write the returned lists into each topic's `authors` frontmatter, then rebuild via
    `index`/`gen-base`. Use `extract-authors` to inspect the raw rows when a result looks off.
+
+### Conversation & Report Capture
+
+Persist valuable Agent conversations and research reports as **first-class, cross-linkable
+wiki nodes**. Capture is **passive**: the Agent authors the page, then registers it — the CLI
+writes no prose (mirroring `cache-put`).
+
+1. **Author the page** directly under `wiki/sessions/<name>.md` (a conversation) or
+   `wiki/queries/<name>.md` (a research report), with topic-compatible frontmatter
+   (`title`, `sources` [may be empty], `last_updated`, optional `summary`/`keywords`).
+   Preserve any `[[wikilinks]]`/`![[embeds]]` verbatim.
+2. **Register it**: run `save-session <name>` or `save-report <name>`. The CLI ensures the
+   `kind` discriminator (`session`/`query`, **directory-derived**), force-setting and atomically
+   rewriting only when it is absent or wrong (a correctly-tagged page is left byte-unchanged),
+   appends a `capture | save_session|save_report | <rel>` log entry, and emits the page path.
+   `<name>` is sanitized to its final path component with `.md` ensured.
+3. **Re-ingest / cross-link**: run `index` (or `gen-base`) to pick the page up into the
+   retrieval index under the `sessions`/`queries` objects (with its `kind` and body `links[]`).
+   To relate a capture to a topic, add a `[[wikilink]]` in either page body — neighbor/backlink
+   relations are then derivable from the index and surfaced by `gen-canvas`.
+
+The CLI touches only `wiki/sessions/`, `wiki/queries/`, and `wiki/log.md`; an uninitialized wiki
+→ `wiki_not_initialized`, a missing page → `capture_not_found`, and unparseable frontmatter
+fails with no write and no log entry. **Optional** ergonomics (documented, not required): a
+session-stop hook or a slash command that authors the page then calls `save-session`. A stateless
+CLI cannot observe the conversation itself, so this stays an Agent-driven step.
+
+### Knowledge Graph (Canvas)
+
+`gen-canvas` renders a deterministic **JSON Canvas 1.0** subgraph per topic under
+`wiki/graphs/<topic>.canvas`, consumed purely from the retrieval index:
+
+- **Scope**: the topic at visual center, one node per `sources[]` entry on an inner ring, and one
+  node per **1-hop neighbor topic** on an outer ring.
+- **Neighbor rule**: topics sharing ≥1 `sources[]` entry with the target ∪ topics the target's
+  body `[[wikilinks]]` resolve to ∪ topics whose `[[wikilinks]]` resolve back to the target
+  (by topic-stem), excluding the target itself.
+- **Layout**: closed-form radial — no randomness, no iteration; ring radii scale with member
+  count so same-ring boxes never overlap. **Colors**: topic `4`, source `6`, neighbor `5`.
+  A vault-file source becomes a clickable `file` node; an `http(s)://` source becomes a `link` node.
+- Run `--topic <name>` for one canvas or `--all` for one per topic. The canvas is a derived,
+  hand-editable artifact and is never written back into topic frontmatter; `status.graphs_stale`
+  flags topics newer than (or missing) their canvas. Rebuild the index first so neighbors are current.
+
+### Homepage Skeleton + Managed Cards
+
+`gen-home` deterministically builds the `wiki/index.md` **skeleton**, not a finished page: an
+Obsidian-native frame (overview line, the Bases embed `![[index.base#主题总览]]`, a 主题导航 table
+scaffold with auto-filled 主题/篇数 and `_待补充_` 范围 cells, and a 关系图谱 placeholder) plus **one
+managed "工作区" block** delimited by `<!-- agent-wiki:auto start … -->` / `<!-- … end -->`. The
+**division of labor**: the script owns the skeleton and the managed block; the **agent** writes the
+semantic prose (regroup topics, fill 范围, author the relationship narrative); the **cards** are the
+one-click scriptable part.
+
+**Cards (Dataview auto-detection)**: the managed block renders captured sessions / reports / graphs
+as a centered, responsive **card grid** via a `dataviewjs` query when Dataview is installed *and* its
+JavaScript Queries are enabled (read from `.obsidian/community-plugins.json` + `dataview/data.json`).
+Otherwise it falls back to a static NFC-sorted Markdown list. `--cards auto` (default) follows
+detection; `--cards on` forces the card grid; `--cards off` forces the static list. The grid fills
+rows evenly and **centers the trailing row** (no sparse edges for any item count), using theme-variable
+colors, hover/focus/press feedback and `prefers-reduced-motion` support. Cards are clickable internal
+links; `.canvas` graphs are matched explicitly (Dataview's DQL does not index canvas, so the block
+uses `app.vault.getFiles()`).
+
+> **Prerequisite for cards**: Dataview → Settings → "Enable JavaScript Queries" must be on, or the
+> `dataviewjs` block won't execute. Detection checks this flag; when off, gen-home emits the static
+> list and its callout points the user to the toggle.
+
+**Re-run semantics (never clobber)**: an empty/placeholder `index.md` gets the full skeleton; an index
+that already has the markers gets **only the managed block refreshed** (agent prose outside the markers
+is preserved byte-for-byte); a content-bearing index **without** markers gets the managed block
+**appended** at the end (existing content untouched). Output is byte-identical for a fixed vault (no
+timestamps). It **does not** modify `index.base` or create any `.base` file — `index.base` stays the
+topic data provider and `index.md` the layout controller, so the two-file `gen-base` contract is
+preserved. An optional CSS snippet (see *Optional Homepage CSS* below) adds typography/palette polish;
+the skeleton reads correctly in default light/dark themes without it.
+
+**Conflict-safe write (Obsidian open)**: `index.md` is the one wiki file users keep open in an
+Obsidian tab, so an external `os.replace` can race the editor buffer. When the **Obsidian Local REST
+API** plugin is configured (env vars below), gen-home writes `index.md` *through* Obsidian
+(`PUT /vault/{path}`) so the editor buffer and disk update together; otherwise it falls back to the
+normal atomic write. `write_via` in the output reports which path was taken (`rest` / `atomic`). Only
+`index.md` uses this; canvas/capture/index files stay atomic. Pass `--no-rest` to always write
+directly. Configure (key from Obsidian → Settings → Local REST API; read from the environment only,
+never persisted — see `.env.example`):
+
+```bash
+export AGENT_WIKI_OBSIDIAN_API_KEY=<your-key>          # required to enable REST write
+export AGENT_WIKI_OBSIDIAN_API_URL=https://127.0.0.1:27124  # optional, this is the default
+```
+
+The HTTPS endpoint uses a self-signed cert; agent-wiki skips TLS verification **only for loopback
+hosts** (127.0.0.1/localhost/::1).
 
 ### Hybrid Retrieval Protocol
 
@@ -182,11 +293,14 @@ or attachments.
 {vault}/
 ├── <name>.base             # Source master table (Bases, at vault root)
 └── wiki/
-    ├── index.md             # Auto-maintained topic directory
+    ├── index.md             # Homepage skeleton (gen-home); agent fills prose, cards auto-render
     ├── index.base           # Topic overview view (Bases)
     ├── log.md               # Append-only log
     ├── topics/              # Topic pages (LLM-written)
     │   └── 量子叠加原理.md
+    ├── sessions/            # Captured conversation pages (kind: session)
+    ├── queries/             # Captured research reports (kind: query)
+    ├── graphs/              # Generated JSON Canvas graphs (<topic>.canvas)
     ├── _archived/{date}/    # Orphaned topics
     ├── .wiki-cache.json     # Incremental cache
     ├── .wiki-index.json     # Derived retrieval index (normalized metadata)
@@ -225,12 +339,17 @@ Derived retrieval cache; **frontmatter is the single source of truth** — the i
 are regenerated from it and are never written back into topic files. The Obsidian Bases plugin renders
 `.base` views by reading topic frontmatter **directly**, not this JSON.
 
-- Top-level: `version` (int `1`), `generated_at` (UTC ISO-8601 derived from the max topic mtime, not
-  wall-clock), `topics` (keyed by NFC POSIX path relative to `wiki/topics/`).
-- Per-topic fields: `path`, `title`, `sources[]`, `last_updated`,
+- Top-level: `version` (int `1`), `generated_at` (UTC ISO-8601 derived from the max page mtime across
+  all three directories, not wall-clock), `topics` (keyed by NFC POSIX path relative to `wiki/topics/`),
+  and `sessions` / `queries` (captured pages, keyed by NFC POSIX path relative to `wiki/`, e.g.
+  `sessions/<name>.md`). Topic counts stay clean: `index` reports only the topic count.
+- Per-entry fields: `path`, `title`, `sources[]`, `last_updated`,
   `year_start` (int|null), `year_end` (int|null), `authors[]`,
   `source_type`, `institutions[]`, `methods[]`, `technical_routes[]`, `research_trends[]`, `summary`
-  (≤1000 chars), `keywords[]`. Missing fields use null-or-empty defaults; list order is preserved (no
+  (≤1000 chars), `keywords[]`, plus a directory-derived `kind` (`topic`/`session`/`query`) and a
+  `links[]` array of the `[[wikilink]]` targets parsed from the page **body** (NFC, order preserved,
+  deduped per page; alias `|` and heading/block `#`/`^` suffixes stripped; bodies are never rewritten
+  during indexing). Missing fields use null-or-empty defaults; list order is preserved (no
   dedup/reorder). `year_start`/`year_end` parse a 4-digit run from int or string, else null.
 - `source_type` is **always derived from the source file formats** in `sources[]` (`.md`→`markdown`,
   `.pdf`→`pdf`, `.doc/.docx`→`word`, `.xls/.xlsx/.csv`→`spreadsheet`, `.ppt/.pptx`→`slides`, `.txt`→`text`,
@@ -243,10 +362,60 @@ are regenerated from it and are never written back into topic files. The Obsidia
 - Deterministic: identical topic inputs produce byte-identical JSON. Rebuilds skip and report malformed
   topics (`topic_decode_failed` / `frontmatter_parse_failed`) without blocking others.
 
-### Out of Scope
+### Capture Page Frontmatter Contract
 
-Q&A/chat archive capture and Obsidian Canvas/graph generation are **not** part of this skill; they
-remain future independent changes.
+Session/query pages use the **same frontmatter contract as topics** (`title`, `sources` [may be
+empty], `last_updated`, optional `summary`/`keywords`, auto-derived `source_type`) plus a `kind`
+discriminator that the CLI sets from the directory (`session` for `wiki/sessions/`, `query` for
+`wiki/queries/`). They are indexed under the `sessions`/`queries` objects and can be cross-linked
+into topics with body `[[wikilinks]]`.
+
+### Optional Homepage CSS
+
+The `gen-home` skeleton renders correctly in default Obsidian themes. For typography/palette polish,
+the user may add this **optional** CSS snippet (Settings → Appearance → CSS snippets) — pure
+progressive enhancement, safe to omit:
+
+```css
+/* agent-wiki homepage — optional progressive enhancement */
+.markdown-preview-view,
+.markdown-rendered {
+  --aw-ink: #475569;          /* slate body ink (light) */
+  --aw-accent: #2563eb;       /* blue accent */
+}
+.theme-dark .markdown-preview-view,
+.theme-dark .markdown-rendered {
+  --aw-ink: #cbd5e1;          /* lighten ink in dark mode for ≥4.5:1 contrast */
+  --aw-accent: #60a5fa;
+}
+.markdown-rendered h1,
+.markdown-rendered h2 {
+  font-family: "Crimson Pro", var(--font-text), serif;
+  letter-spacing: 0.01em;
+}
+.markdown-rendered p,
+.markdown-rendered li,
+.markdown-rendered .callout {
+  font-family: "Atkinson Hyperlegible", var(--font-text), sans-serif;
+  color: var(--aw-ink);
+  line-height: 1.6;           /* 8px vertical rhythm at default size */
+}
+.markdown-rendered .callout { margin: 8px 0; padding: 8px 12px; }   /* 4/8px spacing */
+.markdown-rendered a { color: var(--aw-accent); }
+```
+
+The palette (`#475569` ink / `#2563EB` accent), Crimson Pro + Atkinson Hyperlegible pairing, and
+4/8px spacing rhythm are delivered via Obsidian CSS variables so themes still control the chrome;
+dark-mode variants keep text contrast at ≥4.5:1.
+
+### Scope Boundaries
+
+This skill **includes** conversation/report capture (`save-session`/`save-report`) and Obsidian
+Canvas knowledge-graph generation (`gen-canvas`). Two boundaries still hold: the CLI makes **no
+embedded LLM API calls** (all page prose is Agent-authored; the CLI only places, registers, indexes,
+or renders derived artifacts), and classification/visualization **never physically reorganizes**
+topic/session/query files into per-category folders — they stay flat under `wiki/topics/`,
+`wiki/sessions/`, `wiki/queries/`.
 
 
 ## Example: Minimal Ingest

@@ -50,6 +50,18 @@ def topics_dir(vault: str | Path) -> Path:
     return wiki_root(vault) / "topics"
 
 
+def sessions_dir(vault: str | Path) -> Path:
+    return wiki_root(vault) / "sessions"
+
+
+def queries_dir(vault: str | Path) -> Path:
+    return wiki_root(vault) / "queries"
+
+
+def graphs_dir(vault: str | Path) -> Path:
+    return wiki_root(vault) / "graphs"
+
+
 def archive_dir(vault: str | Path) -> Path:
     return wiki_root(vault) / "_archived"
 

@@ -21,6 +21,7 @@ INDEX_VERSION = 1
 EPOCH = "1970-01-01T00:00:00Z"
 _SUMMARY_LIMIT = 1000
 _YEAR_RE = re.compile(r"\d{4}")
+_WIKILINK_RE = re.compile(r"!?\[\[(.+?)\]\]")
 
 
 class NormalizedPathCollision(Exception):
@@ -34,7 +35,7 @@ class IndexWriteError(OSError):
 
 
 def empty_schema() -> dict:
-    return {"version": INDEX_VERSION, "generated_at": EPOCH, "topics": {}}
+    return {"version": INDEX_VERSION, "generated_at": EPOCH, "topics": {}, "sessions": {}, "queries": {}}
 
 
 def _nfc(value: str) -> str:
@@ -95,7 +96,23 @@ def _summary(value) -> str:
     return _nfc(text)[:_SUMMARY_LIMIT]
 
 
-def _entry(rel: str, meta: dict, stem: str) -> dict:
+def _parse_links(body: str) -> list[str]:
+    """`[[Target]]`/`![[Target]]` targets from a page body, alias and
+    heading/block suffixes stripped, NFC-normalized, order-preserved, deduped."""
+    links: list[str] = []
+    seen: set[str] = set()
+    for match in _WIKILINK_RE.finditer(body):
+        target = match.group(1)
+        for sep in ("|", "#", "^"):
+            target = target.split(sep, 1)[0]
+        target = _nfc(target.strip())
+        if target and target not in seen:
+            seen.add(target)
+            links.append(target)
+    return links
+
+
+def _entry(rel: str, meta: dict, stem: str, kind: str, links: list[str]) -> dict:
     sources = _sources(meta.get("sources"))
     return {
         "path": rel,
@@ -112,6 +129,8 @@ def _entry(rel: str, meta: dict, stem: str) -> dict:
         "research_trends": _str_list(meta.get("research_trends")),
         "summary": _summary(meta.get("summary")),
         "keywords": _str_list(meta.get("keywords")),
+        "kind": kind,
+        "links": links,
     }
 
 
@@ -120,23 +139,14 @@ def _iso_utc(mtime_ns: int) -> str:
     return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def rebuild(vault: str | Path) -> tuple[dict, list[dict]]:
-    """Build the index from topic frontmatter.
-
-    Returns ``(data, errors)``. Decode/parse failures are skipped and reported;
-    a normalized-key collision is fatal and raises ``NormalizedPathCollision``.
-    """
-    topics_root = config.topics_dir(vault)
-    files = list(topics_root.glob("*.md")) if topics_root.exists() else []
-    files.sort(key=lambda p: config.normalize_relpath(p.relative_to(topics_root).as_posix()))
-
-    topics: dict[str, dict] = {}
-    errors: list[dict] = []
-    max_mtime = 0
+def _index_dir(directory: Path, key_root: Path, kind: str, entries: dict, errors: list, mtimes: list) -> None:
+    """Index every ``*.md`` under ``directory`` into ``entries`` keyed by its NFC
+    POSIX path relative to ``key_root``; per-directory collision detection."""
+    files = list(directory.glob("*.md")) if directory.exists() else []
+    files.sort(key=lambda p: config.normalize_relpath(p.relative_to(key_root).as_posix()))
     seen: set[str] = set()
-
     for path in files:
-        rel = config.normalize_relpath(path.relative_to(topics_root).as_posix())
+        rel = config.normalize_relpath(path.relative_to(key_root).as_posix())
         if rel in seen:
             raise NormalizedPathCollision(rel)
         seen.add(rel)
@@ -146,20 +156,43 @@ def rebuild(vault: str | Path) -> tuple[dict, list[dict]]:
             errors.append({"path": rel, "error": "topic_decode_failed"})
             continue
         try:
-            meta, _ = frontmatter.parse(text)
+            meta, body = frontmatter.parse(text)
         except frontmatter.FrontmatterError:
             errors.append({"path": rel, "error": "frontmatter_parse_failed"})
             continue
-        topics[rel] = _entry(rel, meta, path.stem)
+        entries[rel] = _entry(rel, meta, path.stem, kind, _parse_links(body))
         try:
-            max_mtime = max(max_mtime, path.stat().st_mtime_ns)
+            mtimes.append(path.stat().st_mtime_ns)
         except OSError:
             pass
 
+
+def rebuild(vault: str | Path) -> tuple[dict, list[dict]]:
+    """Build the index from topic, session, and query frontmatter.
+
+    Topic keys are ``wiki/topics/``-relative (bare ``<name>.md``); session/query
+    keys are ``wiki/``-relative (``sessions/<name>.md``). Returns ``(data,
+    errors)``. Decode/parse failures are skipped and reported; a normalized-key
+    collision within a directory is fatal and raises ``NormalizedPathCollision``.
+    """
+    wiki = config.wiki_root(vault)
+    topics_root = config.topics_dir(vault)
+    topics: dict[str, dict] = {}
+    sessions: dict[str, dict] = {}
+    queries: dict[str, dict] = {}
+    errors: list[dict] = []
+    mtimes: list[int] = []
+
+    _index_dir(topics_root, topics_root, "topic", topics, errors, mtimes)
+    _index_dir(config.sessions_dir(vault), wiki, "session", sessions, errors, mtimes)
+    _index_dir(config.queries_dir(vault), wiki, "query", queries, errors, mtimes)
+
     data = {
         "version": INDEX_VERSION,
-        "generated_at": _iso_utc(max_mtime) if topics else EPOCH,
+        "generated_at": _iso_utc(max(mtimes)) if mtimes else EPOCH,
         "topics": topics,
+        "sessions": sessions,
+        "queries": queries,
     }
     return data, errors
 

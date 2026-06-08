@@ -68,6 +68,16 @@ def build_parser() -> argparse.ArgumentParser:
     add_vault(cleanup)
     cleanup.set_defaults(func=commands.cmd_cleanup)
 
+    save_session = sub.add_parser("save-session")
+    save_session.add_argument("name")
+    add_vault(save_session)
+    save_session.set_defaults(func=commands.cmd_save_session)
+
+    save_report = sub.add_parser("save-report")
+    save_report.add_argument("name")
+    add_vault(save_report)
+    save_report.set_defaults(func=commands.cmd_save_report)
+
     status = sub.add_parser("status")
     add_vault(status)
     status.set_defaults(func=commands.cmd_status)
@@ -84,6 +94,21 @@ def build_parser() -> argparse.ArgumentParser:
     gen_base.add_argument("--name", default="sources", help="Master table base filename (without .base)")
     add_vault(gen_base)
     gen_base.set_defaults(func=commands.cmd_gen_base)
+
+    gen_canvas = sub.add_parser("gen-canvas")
+    scope = gen_canvas.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--topic", help="Topic page name (one canvas)")
+    scope.add_argument("--all", action="store_true", help="One canvas per topic")
+    add_vault(gen_canvas)
+    gen_canvas.set_defaults(func=commands.cmd_gen_canvas)
+
+    gen_home = sub.add_parser("gen-home")
+    gen_home.add_argument("--cards", choices=["auto", "on", "off"], default="auto",
+                          help="Workspace cards: auto-detect Dataview (default), force dataviewjs (on), or static list (off)")
+    gen_home.add_argument("--no-rest", action="store_true",
+                          help="Always write index.md directly (skip the Obsidian Local REST API)")
+    add_vault(gen_home)
+    gen_home.set_defaults(func=commands.cmd_gen_home)
     return parser
 
 
