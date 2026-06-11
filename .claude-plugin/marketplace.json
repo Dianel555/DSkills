@@ -57,6 +57,13 @@
       "source": "./skills/agent-wiki",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "capability-evolver",
+      "description": "Self-evolution engine for AI agents; protocol-constrained evolution via EvoMap A2A and a local Proxy mailbox",
+      "source": "./skills/capability-evolver",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }

@@ -13,6 +13,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Gemini CLI).
 | [Serena](skills/serena/) | Semantic code understanding with IDE-like symbol operations |
 | [ace-tool](skills/ace-tool/) | Semantic code search and AI-powered prompt enhancement |
 | [agent-wiki](skills/agent-wiki/) | Incremental LLM-friendly wiki generator for Obsidian note vaults |
+| [capability-evolver](skills/capability-evolver/) | Self-evolution engine for AI agents (EvoMap A2A, local Proxy mailbox) |
 
 ### Python Skill Dependencies
 
@@ -95,7 +96,8 @@ DSkills/
 │   ├── time/
 │   ├── serena/
 │   ├── ace-tool/
-│   └── agent-wiki/
+│   ├── agent-wiki/
+│   └── capability-evolver/
 └── .claude-plugin/
     └── marketplace.json               # Metadata
 ```
