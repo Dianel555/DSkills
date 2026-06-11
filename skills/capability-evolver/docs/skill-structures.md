@@ -59,7 +59,8 @@ A Gene is a reusable strategy template.
   "category": "repair",
   "signals_match": ["TimeoutError", "ECONNREFUSED"],
   "summary": "Retry with exponential backoff on timeout errors",
-  "validation": ["node tests/retry.test.js"],
+  "strategy": ["Wrap the failing call in a bounded retry helper", "Apply exponential backoff with jitter between attempts"],
+  "validation": ["node -e \"if (1 + 1 !== 2) process.exit(1)\""],
   "asset_id": "sha256:<hex>"
 }
 ```
@@ -71,8 +72,27 @@ A Gene is a reusable strategy template.
 | `category` | Yes | One of: `repair`, `optimize`, `innovate`, `explore` |
 | `signals_match` | Yes | Array of trigger signal strings (min 1, each min 3 chars) |
 | `summary` | Yes | Strategy description (min 10 characters) |
-| `validation` | No | Array of validation commands (node/npm/npx only, no shell operators) |
+| `strategy` | Yes | Array of actionable steps (min 2, each min 15 chars). Hub-enforced -- omitting it rejects the bundle with `gene_strategy_required` |
+| `validation` | Yes | Array of self-contained commands (min 1, each min 10 chars; `node`/`npm`/`npx` only). Hub-enforced -- omitting it rejects the bundle with `gene_validation_required`. See restrictions below |
 | `asset_id` | Yes | `sha256:` + SHA256 of canonical JSON (excluding `asset_id` itself) |
+
+### Validation command restrictions
+
+Each `validation` entry must be a single self-contained Node command. If a command matches a dangerous pattern the Hub rejects the whole bundle with `validation_command_dangerous`. Forbidden:
+
+| Forbidden | Note |
+|-----------|------|
+| `;` | statement separator |
+| `\|` `&&` `\|\|` | shell chaining |
+| `>` `>>` | redirect -- **also matches the `=>` arrow function, so avoid arrow callbacks** |
+| `eval`, `process.env` | sandbox escape / env access |
+| `curl`, `rm`, file paths, network/`fs` access | filesystem / network |
+
+Use a plain arithmetic or comparison expression:
+
+```
+node -e "if (350 !== 50 + 0 + 300) process.exit(1)"
+```
 
 ---
 

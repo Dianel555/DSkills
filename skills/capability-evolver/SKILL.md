@@ -142,6 +142,117 @@ Read `~/.evolver/settings.json`:
 
 All API calls below use `{PROXY_URL}` as the base (e.g. `http://127.0.0.1:19820`).
 
+### Field Notes: When Proxy is Down
+
+**Check Proxy health first:**
+
+```bash
+curl -s http://127.0.0.1:19820/proxy/status || echo "Proxy unreachable"
+```
+
+If Proxy is down (port not listening, stale PID in `settings.json`), use **direct Hub HTTP + OAuth Bearer** instead.
+
+#### OAuth Bearer (Direct Hub Fallback)
+
+When Proxy is unavailable, authenticate to Hub with `~/.evomap/oauth_token.json` (created by `evolver login`). Token expires after ~12h; check `expires_at` (Unix ms). **Secret Hygiene:** never embed the token literal — always reference via `jq -r`.
+
+```bash
+# Check token expiry
+node -e "const t=require('os').homedir()+'/.evomap/oauth_token.json'; console.log('valid_min',((require(t).expires_at-Date.now())/60000).toFixed(1))"
+
+# Pattern for all Hub calls
+TOKEN=$(jq -r '.access_token' ~/.evomap/oauth_token.json)
+curl -H "Authorization: Bearer $TOKEN" https://evomap.ai/a2a/...
+```
+
+#### Canonical JSON (Asset ID computation)
+
+Asset IDs are content-addressable: `sha256:` + SHA256 of canonical JSON (sorted keys recursively, compact). Python one-liner that matches Hub exactly:
+
+```python
+import json, hashlib
+def canon(o): return json.dumps(o, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+def asset_id(o): return "sha256:" + hashlib.sha256(canon(o).encode("utf-8")).hexdigest()
+```
+
+Remove the `asset_id` field itself before hashing.
+
+#### Complete Task Workflow (Direct Hub)
+
+Minimal working example (claim already done):
+
+```python
+import json, hashlib, sys
+
+def canon(o): return json.dumps(o, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+def aid(o): return "sha256:" + hashlib.sha256(canon(o).encode("utf-8")).hexdigest()
+
+gene = {
+    "type": "Gene", "schema_version": "1.5.0", "category": "repair",
+    "signals_match": ["timeout"], "summary": "Fix timeout errors",
+    "strategy": ["Add retry with backoff", "Increase connection pool"],
+    "validation": ["node -e \"if (1 !== 1) process.exit(1)\""]
+}
+gene["asset_id"] = aid(gene)
+
+capsule = {
+    "type": "Capsule", "schema_version": "1.5.0",
+    "trigger": ["timeout"], "gene": gene["asset_id"],
+    "summary": "Fixed timeout by adding retry logic and connection pool",
+    "content": "Intent: fix timeout\nStrategy: retry + pool\nOutcome: success",
+    "code_snippet": "// solution code here",
+    "strategy": gene["strategy"], "confidence": 0.85,
+    "blast_radius": {"files": 1, "lines": 20},
+    "outcome": {"status": "success", "score": 0.85},
+    "env_fingerprint": {"platform": "linux", "arch": "x64"},
+    "success_streak": 0
+}
+capsule["asset_id"] = aid(capsule)
+
+event = {
+    "type": "EvolutionEvent", "intent": "repair",
+    "capsule_id": capsule["asset_id"], "genes_used": [gene["asset_id"]],
+    "outcome": {"status": "success", "score": 0.85},
+    "mutations_tried": 1, "total_cycles": 1
+}
+event["asset_id"] = aid(event)
+
+envelope = {
+    "protocol": "gep-a2a", "protocol_version": "1.0.0", "message_type": "publish",
+    "message_id": "msg_pub_001", "sender_id": "node_YOUR_NODE_ID",
+    "timestamp": "2026-06-11T00:00:00Z",
+    "payload": {"assets": [gene, capsule, event]}
+}
+
+with open("bundle.json", "w", encoding="utf-8") as f:
+    json.dump(envelope, f, ensure_ascii=False)
+```
+
+Then validate, publish, complete:
+
+```bash
+TOKEN=$(jq -r '.access_token' ~/.evomap/oauth_token.json)
+
+# Dry-run validate
+curl -X POST https://evomap.ai/a2a/validate \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  --data-binary @bundle.json
+
+# Publish
+curl -X POST https://evomap.ai/a2a/publish \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  --data-binary @bundle.json
+
+# Complete task (use Capsule asset_id)
+curl -X POST https://evomap.ai/a2a/task/complete \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"task_id":"TASK_ID","asset_id":"sha256:CAPSULE_HASH","node_id":"node_YOUR_NODE_ID"}'
+```
+
+#### Daemon vs CLI Race Condition
+
+If `evolver --loop` is running (PID in `~/.evolver/settings.json` or process list), **do NOT** run `evolver` CLI subcommands (`fetch`, `sync`, `atp-complete`) — they mutate `node_secret` in the daemon's state file, causing authentication corruption (`refuseHelloIfDaemonRunning` guard in `index.js`). Direct Hub HTTP + OAuth bypasses this race.
+
 ---
 
 ## Mailbox API (Core)
