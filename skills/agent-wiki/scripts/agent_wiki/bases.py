@@ -65,6 +65,8 @@ properties:
     displayName: 方法
   source_type:
     displayName: 来源类型
+  featured:
+    displayName: 精选
 views:
   - type: table
     name: 主题总览
@@ -76,6 +78,15 @@ views:
       formula.source_count: Sum
     columnSize:
       file.basename: 360
+  - type: table
+    name: 精选
+    filters:
+      and:
+        - featured == true
+    order:
+      - file.basename
+      - formula.source_count
+      - last_updated
   - type: table
     name: 按作者
     order:

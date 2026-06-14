@@ -109,6 +109,23 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Always write index.md directly (skip the Obsidian Local REST API)")
     add_vault(gen_home)
     gen_home.set_defaults(func=commands.cmd_gen_home)
+
+    quality = sub.add_parser("quality")
+    add_vault(quality)
+    quality.set_defaults(func=commands.cmd_quality)
+
+    coverage = sub.add_parser("coverage")
+    add_vault(coverage)
+    coverage.set_defaults(func=commands.cmd_coverage)
+
+    worklist = sub.add_parser("worklist")
+    add_vault(worklist)
+    worklist.set_defaults(func=commands.cmd_worklist)
+
+    gen_site = sub.add_parser("gen-site")
+    add_vault(gen_site)
+    gen_site.set_defaults(func=commands.cmd_gen_site)
+
     return parser
 
 

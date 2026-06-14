@@ -71,6 +71,18 @@ python scripts/agent_wiki_cli.py extract-authors --vault /path/to/vault
 
 # Deduplicated first-author list per topic, for frontmatter backfill (read-only)
 python scripts/agent_wiki_cli.py aggregate-authors --vault /path/to/vault
+
+# Compute quality tier distribution and per-topic metrics (read-only)
+python scripts/agent_wiki_cli.py quality --vault /path/to/vault
+
+# Identify covered sources vs gaps (read-only)
+python scripts/agent_wiki_cli.py coverage --vault /path/to/vault
+
+# Get maintenance worklists: wanted (broken links) and stale (low-quality/outdated) topics (read-only)
+python scripts/agent_wiki_cli.py worklist --vault /path/to/vault
+
+# Generate static HTML site (optional, requires markdown package)
+python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 ```
 
 **Vault Path Resolution**: Use `--vault PATH` or set environment variable `AGENT_WIKI_VAULT`.
@@ -86,7 +98,7 @@ python scripts/agent_wiki_cli.py aggregate-authors --vault /path/to/vault
 | `cache-get` | Query cache entry | source relative path | `{"path": "...", "sha256": "...", ...}` or `{"path": "...", "status": "absent"}` |
 | `cache-put` | Record ingest completion | source path, topic list | `{"ok": true, "path": "...", "sha256": "..."}` |
 | `cleanup` | Remove deleted sources from topics | vault path | `{"removed": N, "archived": M, "details": [...]}` |
-| `status` | Wiki health metrics (read-only) | vault path | `{"vault": "...", "sources_tracked": N, "topics_total": N, "index_exists": bool, "index_topics": N, "index_stale": bool, "index_errors": [...], "batch": {...}\|null, ...}` |
+| `status` | Wiki health metrics (read-only) | vault path | `{"vault": "...", "sources_tracked": N, "topics_total": N, "index_exists": bool, "index_topics": N, "index_stale": bool, "index_errors": [...], "batch": {...}\|null, "quality_distribution": {...}, "featured_count": N, "aliases_count": N, "backlinks_max": N, "gaps_count": N, "wanted_count": N, "stale_count": N, "site_exists": bool, "site_stale": bool, ...}` |
 | `index` | Rebuild `wiki/.wiki-index.json` from topic frontmatter (no `.base` written) | vault path | `{"ok": true, "topics": N, "errors": [...]}` |
 | `normalize-source-type` | Rewrite each topic's `source_type` frontmatter to its `sources[]` file format (in place; no-source topics skipped) | vault path | `{"ok": true, "changed": [{"path": "...", "source_type": "..."}], "skipped": N, "errors": [...]}` |
 | `gen-base` | Rebuild the index, then write Obsidian Bases views (index + master table) | vault path, `--name` | `{"ok": true, "prefix": "...", "written": [...]}` |
@@ -96,6 +108,10 @@ python scripts/agent_wiki_cli.py aggregate-authors --vault /path/to/vault
 | `gen-home` | Build/refresh the `wiki/index.md` skeleton + one managed "工作区" block (Dataview card grid when detected, else static list); refreshes **only** the managed block on re-run (agent prose preserved), appends it to an unmarked content-bearing index; never touches `index.base` | vault path, `--cards auto\|on\|off` (default auto), `--no-rest` | `{"ok": true, "path": "wiki/index.md", "cards": bool, "write_via": "rest\|atomic"}` |
 | `extract-authors` | Raw 作者 row per topic source note (read-only) | vault path | `{"ok": true, "topics": {"<topic>.md": [{"src": "...", "file": "...", "authors": "..."}]}}` |
 | `aggregate-authors` | Deduplicated first author per topic for frontmatter backfill (read-only) | vault path | `{"ok": true, "authors": {"<topic>.md": ["作者1", ...]}}` |
+| `quality` | Compute quality tier distribution and metrics per topic (read-only) | vault path | `{"ok": true, "tiers": {"<topic>.md": {"tier": "...", "metrics": {...}}}, "distribution": {"stub": N, ...}, "errors": [...]}` |
+| `coverage` | Identify covered sources vs gaps (read-only) | vault path | `{"ok": true, "covered": N, "gaps": [{"path": "..."}], "coverage_ratio": 0.0-1.0}` |
+| `worklist` | Get maintenance worklists: `wanted` (broken link targets ranked by demand) and `stale` (low-quality or index-stale topics) for bounded enrichment (read-only) | vault path | `{"ok": true, "wanted": [{"target": "...", "inbound": N, "linked_from": [...]}], "stale": [{"path": "...", "tier": "...", "reason": "low_tier"\|"index_stale"}]}` |
+| `gen-site` | Generate self-contained static HTML site under `wiki/site/` (optional; requires `markdown` package; degrades gracefully to escaped plaintext if absent; inline CSS; deterministic injective filenames) | vault path | `{"ok": true, "pages": N, "out": "wiki/site", "degraded": bool}` |
 
 ## Agent Workflow
 
@@ -127,6 +143,26 @@ the single-pass loop above:
 
 `status` reports batch progress under `batch` (`batches_done`/`batches_pending`). Re-running
 `plan` re-derives batches from the current scan — already-ingested docs drop out automatically.
+
+### Bounded Enrichment Loop
+
+After initial ingest, maintain and improve topics incrementally **without scanning the entire vault**:
+
+1. **Check worklist**: Run `worklist` to get two bounded work queues:
+   - `wanted`: broken wikilink targets ranked by demand (inbound link count)
+   - `stale`: low-quality topics (`stub`/`basic` tier) or index-stale topics (modified after last index rebuild)
+2. **Pick one page**: Select a single target from `wanted` (create new topic) or `stale` (enrich existing topic)
+3. **Enrich the page**: Read relevant sources, author/update the topic body and frontmatter
+4. **Re-index**: Run `index` to update the retrieval index (this recomputes quality tiers, backlinks, alias resolution)
+5. **Repeat**: Run `worklist` again to get the updated work queue
+
+**Key properties**:
+- **No full-vault scan**: `worklist` reads only the index, not every source file
+- **One page per iteration**: Bounded context, no state explosion
+- **Automatic priority**: `wanted` ranks by link demand, `stale` identifies quality gaps
+- **Self-correcting**: as topics improve (tier rises), they drop out of `stale` automatically
+
+**Status metrics**: `status` reports `wanted_count` and `stale_count` for progress tracking.
 
 ### Authors Backfill
 
@@ -163,6 +199,33 @@ The CLI touches only `wiki/sessions/`, `wiki/queries/`, and `wiki/log.md`; an un
 fails with no write and no log entry. **Optional** ergonomics (documented, not required): a
 session-stop hook or a slash command that authors the page then calls `save-session`. A stateless
 CLI cannot observe the conversation itself, so this stays an Agent-driven step.
+
+### Optional Static HTML Export
+
+Generate a self-contained static site under `wiki/site/` for offline browsing or hosting. **Obsidian remains the primary interface** — export is opt-in only.
+
+**Requirements**: 
+- Optional `markdown` package (pinned for determinism)
+- Degrades gracefully: if `markdown` is absent, exports plaintext (HTML-escaped) instead
+
+**What gets exported**:
+- One HTML page per topic with:
+  - Frontmatter infobox sidebar (title, type, quality tier, featured marker, backlinks count)
+  - Rendered markdown body (or escaped plaintext in degraded mode)
+  - Inline CSS (no external dependencies)
+- `index.html` listing all topics
+
+**Determinism**:
+- Byte-identical output for fixed inputs and markdown version
+- No wall-clock timestamps (uses index `generated_at`)
+- Injective filenames: `sanitize(stem)-<sha256[:8]>.html` (CJK preserved)
+
+**Workflow**:
+1. Run `gen-site` to generate/refresh the site
+2. Check `status` for `site_exists` and `site_stale` (true if any topic is newer than site)
+3. Deploy `wiki/site/` to a static host if desired
+
+The export is **write-only under `wiki/site/`** — never modifies sources, topics, `.base`, or `.canvas` files.
 
 ### Knowledge Graph (Canvas)
 
@@ -235,17 +298,27 @@ hosts** (127.0.0.1/localhost/::1).
 
 Answer questions in two passes — route cheaply, then ground precisely:
 
-1. **Route** (fast): Read `wiki/.wiki-index.json` and use indexed `title`, `keywords`, `summary`,
-   `source_type`, and `sources` paths to identify the likely-relevant topics — do **not** read every
-   topic file.
-2. **Ground** (deep): For detailed evidence, methods, paper data, or comparisons, follow each topic's
-   `sources` entries and relevant backlinks to read the **original notes** before answering.
-3. **Conflict rule**: If an indexed `summary` conflicts with source content, the **source note is
-   authoritative**; correct the topic and rebuild the index on the next ingest pass.
+1. **Route** (fast): Read `wiki/.wiki-index.json` and use indexed fields to identify likely-relevant topics:
+   - **Alias resolution**: Check `alias_index` first (maps alternative names → canonical topic keys)
+   - **Primary fields**: `title`, `keywords`, `summary`, `source_type`, `sources` paths
+   - **Ranking signals**: `quality_tier` (premium/rich/standard prioritized), `backlinks` (popularity/centrality), `featured` flag
+   - **Do not** read every topic file during routing
 
-The index is a derived cache: topic frontmatter is the single source of truth. `index`/`gen-base`
-regenerate it from `wiki/topics/*.md`; `status` reports `index_stale` (any topic newer than the index)
-read-only and never rebuilds.
+2. **Ground** (deep): For detailed evidence, methods, paper data, or comparisons:
+   - Follow each topic's `sources` entries to read the **original notes**
+   - Check topics with high `backlinks` counts for cross-references and related concepts
+   - Use `coverage` command to verify completeness (identify gaps in source coverage)
+
+3. **Conflict rule**: If an indexed `summary` conflicts with source content, the **source note is authoritative**; correct the topic and rebuild the index on the next ingest pass.
+
+4. **Disambiguation**: When `alias_index` lookup fails or returns conflicts, consult `.wiki-aliases.json` for manual disambiguation mappings. Conflicts are reported but never auto-resolved.
+
+The index is a derived cache: topic frontmatter is the single source of truth. `index`/`gen-base` regenerate it from `wiki/topics/*.md`; `status` reports `index_stale` (any topic newer than the index) read-only and never rebuilds.
+
+**Quality & Coverage Metrics**:
+- `quality` command: Per-topic tier distribution and metrics (sections, evidence_lines, prose_chars, has_image, has_lead)
+- `coverage` command: Identifies which sources are covered by topics vs gaps (uncovered sources)
+- `status` extended fields: `quality_distribution`, `featured_count`, `aliases_count`, `backlinks_max`, `gaps_count`
 
 ### Enriched Topic Authoring
 
@@ -254,6 +327,94 @@ key paper data, experimental methods, technical routes, research trends, and sou
 **when the source supports them**. If a source lacks a dimension, **omit the field or mark the section
 unavailable — never fabricate**. Preserve existing wikilinks/embeds verbatim; never modify source notes
 or attachments.
+
+### Topic Type Taxonomy & Content Structure
+
+#### Type Field (Page Kind)
+
+The optional frontmatter `type` field describes the page kind and is **orthogonal** to the auto-derived `source_type` (file format):
+- `type` = **page kind** (concept/method/paper/person/event/place/overview) — Agent-authored, optional
+- `source_type` = **file format** (markdown/pdf/web/mixed) — **CLI-derived** from `sources[]`, never hand-edited
+
+**Recommended `type` vocabulary** (stored as-is if outside this list, never rejected):
+- `concept` — principles, definitions, theoretical constructs
+- `method` — techniques, algorithms, protocols
+- `paper` — research papers, publications
+- `person` — researchers, authors, historical figures
+- `event` — conferences, experiments, historical events
+- `place` — institutions, labs, geographical locations
+- `overview` — surveys, meta-analyses, literature reviews
+
+#### Lead Sentence Rule (定位句)
+
+**Every topic body MUST open with a single positioning sentence** (定位句) before the first `##` heading:
+- Concisely states what/who/where the topic is
+- No heading, no list, no quote block — plain paragraph
+- Example: `量子叠加原理是量子力学的核心原理，描述量子态可以同时处于多个本征态的线性组合。`
+
+The CLI computes a read-only `has_lead` metric (quality metrics) but **never authors prose**.
+
+#### Per-Type Section Templates
+
+Each `type` has a recommended priority-ordered section structure. Omit sections the source doesn't support.
+
+**concept**:
+1. `## 定义` (definition)
+2. `## 核心原理` (core principles)
+3. `## 应用场景` (applications)
+4. `## 相关概念` (related concepts)
+5. `## 历史发展` (historical development, if relevant)
+
+**method**:
+1. `## 原理` (principle/mechanism)
+2. `## 步骤` (procedure/algorithm)
+3. `## 参数` (parameters/configuration, if applicable)
+4. `## 适用范围` (scope/constraints)
+5. `## 案例` (examples/applications)
+
+**paper**:
+1. `## 研究问题` (research question)
+2. `## 方法` (methods)
+3. `## 主要发现` (key findings)
+4. `## 技术路线` (technical routes, if applicable)
+5. `## 局限性` (limitations, if stated)
+
+**person**:
+1. `## 基本信息` (affiliation, period)
+2. `## 主要贡献` (key contributions)
+3. `## 代表作` (notable works)
+4. `## 合作者` (collaborators, if relevant)
+
+**event**:
+1. `## 背景` (context)
+2. `## 经过` (proceedings/timeline)
+3. `## 成果` (outcomes/impact)
+4. `## 参与者` (participants, if relevant)
+
+**place**:
+1. `## 概况` (overview)
+2. `## 研究方向` (research areas)
+3. `## 主要成果` (notable achievements)
+4. `## 关键人物` (key people, if relevant)
+
+**overview**:
+1. `## 范围` (scope/coverage)
+2. `## 主要主题` (major themes)
+3. `## 关键文献` (key references)
+4. `## 研究趋势` (research trends)
+
+#### Conflict/Contradiction Convention
+
+When source notes **disagree on a fact** (different values, contradictory claims):
+- **Do NOT silently pick one** — record the disagreement
+- Create a dedicated `## ⚠️ 矛盾` (conflict) section listing each variant with its source
+- Example:
+  ```markdown
+  ## ⚠️ 矛盾
+  
+  - 来源 A.md 称实验于 1926 年完成
+  - 来源 B.md 称实验于 1927 年完成
+  ```
 
 ### URL Fetching Rules
 
@@ -316,6 +477,9 @@ Agent-authored, and normalized into `wiki/.wiki-index.json` (omit any the source
 ```yaml
 ---
 title: 量子叠加原理
+type: concept                 # optional page kind (concept/method/paper/person/event/place/overview)
+aliases: ["叠加原理", "态叠加"]  # optional alternative names
+featured: true                # optional emphasis flag (strict boolean)
 sources:
   - "物理/量子力学/态叠加.md"
   - "物理/量子力学/双缝实验.md"
@@ -341,16 +505,19 @@ are regenerated from it and are never written back into topic files. The Obsidia
 
 - Top-level: `version` (int `1`), `generated_at` (UTC ISO-8601 derived from the max page mtime across
   all three directories, not wall-clock), `topics` (keyed by NFC POSIX path relative to `wiki/topics/`),
-  and `sessions` / `queries` (captured pages, keyed by NFC POSIX path relative to `wiki/`, e.g.
-  `sessions/<name>.md`). Topic counts stay clean: `index` reports only the topic count.
-- Per-entry fields: `path`, `title`, `sources[]`, `last_updated`,
+  `sessions` / `queries` (captured pages, keyed by NFC POSIX path relative to `wiki/`, e.g.
+  `sessions/<name>.md`), and `alias_index` (derived NFC alias→topic key map for routing). Topic counts stay clean: `index` reports only the topic count.
+- **Topic entries** include: `path`, `title`, `sources[]`, `last_updated`,
   `year_start` (int|null), `year_end` (int|null), `authors[]`,
-  `source_type`, `institutions[]`, `methods[]`, `technical_routes[]`, `research_trends[]`, `summary`
-  (≤1000 chars), `keywords[]`, plus a directory-derived `kind` (`topic`/`session`/`query`) and a
-  `links[]` array of the `[[wikilink]]` targets parsed from the page **body** (NFC, order preserved,
-  deduped per page; alias `|` and heading/block `#`/`^` suffixes stripped; bodies are never rewritten
-  during indexing). Missing fields use null-or-empty defaults; list order is preserved (no
-  dedup/reorder). `year_start`/`year_end` parse a 4-digit run from int or string, else null.
+  `source_type` (derived), `institutions[]`, `methods[]`, `technical_routes[]`, `research_trends[]`, `summary`
+  (≤1000 chars), `keywords[]`, `kind` (`topic`), `links[]` (parsed from body), plus **extended fields**:
+  - `type` (string, default `""`) — page kind from frontmatter (orthogonal to derived `source_type`)
+  - `aliases` (array, default `[]`) — order-preserved alternative names from frontmatter
+  - `quality_tier` (string enum) — derived tier (`stub`/`basic`/`standard`/`rich`/`premium`)
+  - `featured` (boolean, default `false`) — emphasis flag (strict boolean coercion)
+  - `backlinks` (int ≥ 0) — distinct inbound linker count across all pages
+- **Session/query entries** preserve existing schema (no extended fields); they include the same base fields plus `kind` (`session`/`query`).
+- Missing fields use null-or-empty defaults; list order is preserved (no dedup/reorder). `year_start`/`year_end` parse a 4-digit run from int or string, else null.
 - `source_type` is **always derived from the source file formats** in `sources[]` (`.md`→`markdown`,
   `.pdf`→`pdf`, `.doc/.docx`→`word`, `.xls/.xlsx/.csv`→`spreadsheet`, `.ppt/.pptx`→`slides`, `.txt`→`text`,
   URL→`web`, else `other`; a topic spanning more than one format becomes `mixed`). Values are always

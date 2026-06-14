@@ -9,7 +9,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import authors, bases, batch, cache, canvas, cleanup, config, frontmatter, home, obsidian_api, plugins, scanner, source_type, wiki_index
+from . import authors, bases, batch, cache, canvas, cleanup, config, coverage, frontmatter, home, obsidian_api, plugins, quality, scanner, site, source_type, wiki_index, worklist
 
 
 def emit(payload: dict) -> None:
@@ -392,6 +392,55 @@ def cmd_status(args) -> None:
     except wiki_index.NormalizedPathCollision as exc:
         index_errors = [{"path": exc.path, "error": "normalized_path_collision"}]
 
+    # Compute quality metrics from in-memory rebuild
+    quality_distribution = {"stub": 0, "basic": 0, "standard": 0, "rich": 0, "premium": 0}
+    featured_count = 0
+    aliases_count = len(_index_data.get("alias_index", {}))
+    backlinks_max = 0
+
+    for topic_key, topic_entry in _index_data.get("topics", {}).items():
+        tier = topic_entry.get("quality_tier", "stub")
+        quality_distribution[tier] = quality_distribution.get(tier, 0) + 1
+
+        if topic_entry.get("featured", False):
+            featured_count += 1
+
+        backlinks_count = topic_entry.get("backlinks", 0)
+        if backlinks_count > backlinks_max:
+            backlinks_max = backlinks_count
+
+    # Compute coverage metrics
+    try:
+        coverage_result = coverage.compute_coverage(vault)
+        gaps_count = len(coverage_result.get("gaps", []))
+    except (ValueError, Exception):
+        gaps_count = 0  # Graceful fallback
+
+    # Compute worklist metrics
+    try:
+        worklist_result = worklist.compute_worklist(vault)
+        wanted_count = len(worklist_result.get("wanted", []))
+        stale_count = len(worklist_result.get("stale", []))
+    except (ValueError, Exception):
+        wanted_count = 0
+        stale_count = 0
+
+    # Check site status
+    site_dir = config.wiki_root(vault) / "site"
+    site_index = site_dir / "index.html"
+    site_exists = site_index.exists()
+    site_stale = False
+    if site_exists and topics:
+        try:
+            site_mtime = site_index.stat().st_mtime_ns
+            # Site is stale if any topic is newer
+            for topic_path in topics:
+                if topic_path.stat().st_mtime_ns > site_mtime:
+                    site_stale = True
+                    break
+        except OSError:
+            pass
+
     cache_file = config.cache_path(vault)
     batch_state = batch.load_state(vault)
     batch_summary = None
@@ -424,6 +473,15 @@ def cmd_status(args) -> None:
         "index_stale": _index_stale(vault, index_file),
         "index_errors": index_errors,
         "batch": batch_summary,
+        "quality_distribution": quality_distribution,
+        "featured_count": featured_count,
+        "aliases_count": aliases_count,
+        "backlinks_max": backlinks_max,
+        "gaps_count": gaps_count,
+        "wanted_count": wanted_count,
+        "stale_count": stale_count,
+        "site_exists": site_exists,
+        "site_stale": site_stale,
     })
 
 
@@ -523,3 +581,79 @@ def cmd_gen_home(args) -> None:
     text = home.merge(existing, vault, cards)
     write_via = _write_index(vault, text, use_rest=not args.no_rest)
     emit({"ok": True, "path": "wiki/index.md", "cards": cards, "write_via": write_via})
+
+
+def cmd_quality(args) -> None:
+    vault = _vault(args)
+    if not config.wiki_root(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+
+    topics_dir = config.topics_dir(vault)
+    if not topics_dir.exists():
+        emit({"ok": True, "tiers": {}, "distribution": {tier: 0 for tier in ["stub", "basic", "standard", "rich", "premium"]}, "errors": []})
+        return
+
+    tiers = {}
+    distribution = {"stub": 0, "basic": 0, "standard": 0, "rich": 0, "premium": 0}
+    errors = []
+
+    for path in sorted(topics_dir.glob("*.md")):
+        rel = path.name
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except (UnicodeDecodeError, OSError):
+            errors.append({"path": rel, "error": "topic_decode_failed"})
+            continue
+
+        try:
+            meta, body = frontmatter.parse(text)
+        except frontmatter.FrontmatterError:
+            errors.append({"path": rel, "error": "frontmatter_parse_failed"})
+            continue
+
+        metrics = quality.compute_metrics(body)
+        tier = quality.compute_tier(body)
+
+        tiers[rel] = {"tier": tier, "metrics": metrics}
+        distribution[tier] += 1
+
+    emit({"ok": True, "tiers": tiers, "distribution": distribution, "errors": errors})
+
+
+def cmd_coverage(args) -> None:
+    vault = _vault(args)
+    if not config.wiki_root(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+
+    try:
+        result = coverage.compute_coverage(vault)
+    except ValueError as exc:
+        fail({"error": str(exc)}, 1)
+
+    emit(result)
+
+
+def cmd_worklist(args) -> None:
+    vault = _vault(args)
+    if not config.wiki_root(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+
+    try:
+        result = worklist.compute_worklist(vault)
+    except ValueError as exc:
+        fail({"error": str(exc)}, 1)
+
+    emit({"ok": True, **result})
+
+
+def cmd_gen_site(args) -> None:
+    vault = _vault(args)
+    if not config.wiki_root(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+
+    try:
+        result = site.generate_site(vault)
+    except ValueError as exc:
+        fail({"error": str(exc)}, 1)
+
+    emit(result)

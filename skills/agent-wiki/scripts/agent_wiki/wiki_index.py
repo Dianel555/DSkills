@@ -15,7 +15,7 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import config, frontmatter, source_type
+from . import config, frontmatter, quality, source_type
 
 INDEX_VERSION = 1
 EPOCH = "1970-01-01T00:00:00Z"
@@ -35,7 +35,7 @@ class IndexWriteError(OSError):
 
 
 def empty_schema() -> dict:
-    return {"version": INDEX_VERSION, "generated_at": EPOCH, "topics": {}, "sessions": {}, "queries": {}}
+    return {"version": INDEX_VERSION, "generated_at": EPOCH, "topics": {}, "sessions": {}, "queries": {}, "alias_index": {}}
 
 
 def _nfc(value: str) -> str:
@@ -112,9 +112,10 @@ def _parse_links(body: str) -> list[str]:
     return links
 
 
-def _entry(rel: str, meta: dict, stem: str, kind: str, links: list[str]) -> dict:
+def _entry(rel: str, meta: dict, stem: str, kind: str, links: list[str], body: str = "") -> dict:
+    """Build an index entry. Topic entries include extended fields; sessions/queries preserve their current schema."""
     sources = _sources(meta.get("sources"))
-    return {
+    entry = {
         "path": rel,
         "title": _title(meta.get("title"), stem),
         "sources": sources,
@@ -132,6 +133,30 @@ def _entry(rel: str, meta: dict, stem: str, kind: str, links: list[str]) -> dict
         "kind": kind,
         "links": links,
     }
+
+    # Add topic-only fields
+    if kind == "topic":
+        # type: optional page kind (orthogonal to derived source_type)
+        type_value = meta.get("type")
+        if isinstance(type_value, str):
+            entry["type"] = _nfc(type_value)
+        else:
+            entry["type"] = ""
+
+        # aliases: order-preserved list (not deduplicated)
+        entry["aliases"] = _str_list(meta.get("aliases"))
+
+        # quality_tier: computed from body
+        entry["quality_tier"] = quality.compute_tier(body)
+
+        # featured: strict boolean coercion
+        featured_value = meta.get("featured")
+        entry["featured"] = featured_value is True
+
+        # backlinks: initialized to 0, computed later in rebuild
+        entry["backlinks"] = 0
+
+    return entry
 
 
 def _iso_utc(mtime_ns: int) -> str:
@@ -160,7 +185,7 @@ def _index_dir(directory: Path, key_root: Path, kind: str, entries: dict, errors
         except frontmatter.FrontmatterError:
             errors.append({"path": rel, "error": "frontmatter_parse_failed"})
             continue
-        entries[rel] = _entry(rel, meta, path.stem, kind, _parse_links(body))
+        entries[rel] = _entry(rel, meta, path.stem, kind, _parse_links(body), body)
         try:
             mtimes.append(path.stat().st_mtime_ns)
         except OSError:
@@ -187,12 +212,100 @@ def rebuild(vault: str | Path) -> tuple[dict, list[dict]]:
     _index_dir(config.sessions_dir(vault), wiki, "session", sessions, errors, mtimes)
     _index_dir(config.queries_dir(vault), wiki, "query", queries, errors, mtimes)
 
+    # Build alias_index from frontmatter aliases + optional .wiki-aliases.json
+    alias_index: dict[str, str] = {}
+    alias_sources: dict[str, list[str]] = {}  # Track sources for conflict detection
+
+    # Collect frontmatter aliases
+    for topic_key, topic_entry in topics.items():
+        for alias in topic_entry.get("aliases", []):
+            alias_nfc = _nfc(alias)
+            if alias_nfc not in alias_sources:
+                alias_sources[alias_nfc] = []
+            alias_sources[alias_nfc].append(topic_key)
+
+    # Merge optional .wiki-aliases.json
+    aliases_file = wiki / ".wiki-aliases.json"
+    if aliases_file.exists():
+        try:
+            aliases_text = aliases_file.read_text(encoding="utf-8")
+            aliases_map = json.loads(aliases_text)
+            if not isinstance(aliases_map, dict):
+                errors.append({"error": "alias_map_invalid"})
+            else:
+                for alias, target in aliases_map.items():
+                    if not isinstance(alias, str) or not isinstance(target, str):
+                        errors.append({"error": "alias_map_invalid"})
+                        continue
+                    alias_nfc = _nfc(alias)
+                    target_nfc = _nfc(target)
+                    if alias_nfc not in alias_sources:
+                        alias_sources[alias_nfc] = []
+                    alias_sources[alias_nfc].append(target_nfc)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            errors.append({"error": "alias_map_invalid"})
+
+    # Resolve aliases: check for conflicts and missing targets
+    topic_keys = set(topics.keys())
+    for alias_nfc, targets in alias_sources.items():
+        # Deduplicate targets
+        unique_targets = sorted(set(targets))
+
+        # Check if alias conflicts with a real topic key
+        if alias_nfc in topic_keys:
+            unique_targets.append(alias_nfc)
+            unique_targets = sorted(set(unique_targets))
+
+        # Check for missing targets
+        valid_targets = [t for t in unique_targets if t in topic_keys]
+
+        # Report missing targets
+        for target in unique_targets:
+            if target not in topic_keys:
+                errors.append({"alias": alias_nfc, "error": "alias_target_missing", "target": target})
+
+        # Check for conflicts
+        if len(valid_targets) > 1:
+            errors.append({"alias": alias_nfc, "error": "alias_conflict", "candidates": valid_targets})
+        elif len(valid_targets) == 1:
+            alias_index[alias_nfc] = valid_targets[0]
+
+    # Compute backlinks (inbound link count per topic)
+    backlinks: dict[str, set[str]] = {key: set() for key in topic_keys}
+
+    # Helper: extract stem from wikilink target (strip #heading and |alias)
+    def _link_stem(link: str) -> str:
+        link = link.split("#")[0]  # Strip heading
+        link = link.split("|")[0]  # Strip alias
+        return link.strip()
+
+    # Collect all linkers (topics, sessions, queries)
+    all_entries = list(topics.items()) + list(sessions.items()) + list(queries.items())
+
+    for source_key, source_entry in all_entries:
+        for link in source_entry.get("links", []):
+            target_stem = _link_stem(link)
+            # Resolve to topic key (add .md if needed)
+            if not target_stem.endswith(".md"):
+                target_key = target_stem + ".md"
+            else:
+                target_key = target_stem
+
+            # Only count if target exists and is not self-link
+            if target_key in topic_keys and target_key != source_key.split("/")[-1]:
+                backlinks[target_key].add(source_key)
+
+    # Update topic entries with backlink counts
+    for topic_key in topic_keys:
+        topics[topic_key]["backlinks"] = len(backlinks[topic_key])
+
     data = {
         "version": INDEX_VERSION,
         "generated_at": _iso_utc(max(mtimes)) if mtimes else EPOCH,
         "topics": topics,
         "sessions": sessions,
         "queries": queries,
+        "alias_index": dict(sorted(alias_index.items())),
     }
     return data, errors
 
