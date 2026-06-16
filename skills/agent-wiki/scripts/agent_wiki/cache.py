@@ -111,17 +111,17 @@ def sha256_file(path: str | Path) -> str:
     return h.hexdigest()
 
 
-def stat_signature(path: str | Path) -> tuple[float, int]:
+def stat_signature(path: str | Path) -> tuple[int, int]:
     stat_result = Path(path).stat()
-    return stat_result.st_mtime, stat_result.st_size
+    return stat_result.st_mtime_ns, stat_result.st_size
 
 
-def upsert(data: dict, relpath: str, sha: str, mtime: float, size: int, derived_topics: list[str]) -> None:
+def upsert(data: dict, relpath: str, sha: str, mtime_ns: int, size: int, derived_topics: list[str]) -> None:
     data.setdefault("version", SCHEMA_VERSION)
     data.setdefault("sources", {})
     data["sources"][config.normalize_relpath(relpath)] = {
         "sha256": sha,
-        "mtime": mtime,
+        "mtime_ns": mtime_ns,
         "size": size,
         "last_ingest_at": datetime.now(timezone.utc).isoformat(),
         "derived_topics": [config.normalize_relpath(topic) for topic in derived_topics],

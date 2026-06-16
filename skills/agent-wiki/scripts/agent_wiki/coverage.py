@@ -60,7 +60,7 @@ def compute_coverage(vault: str | Path) -> dict:
     if len(scan_set) == 0:
         coverage_ratio = 1.0  # Vacuously covered
     else:
-        coverage_ratio = len(covered_set) / len(scan_set)
+        coverage_ratio = len(covered_set & scan_set) / len(scan_set)
 
     return {
         "ok": True,

@@ -146,8 +146,10 @@ def _entry(rel: str, meta: dict, stem: str, kind: str, links: list[str], body: s
         # aliases: order-preserved list (not deduplicated)
         entry["aliases"] = _str_list(meta.get("aliases"))
 
-        # quality_tier: computed from body
-        entry["quality_tier"] = quality.compute_tier(body)
+        # quality_tier: computed from body with source grounding
+        # Use deduplicated source count (per D3.3)
+        unique_sources = len(set(sources))
+        entry["quality_tier"] = quality.compute_tier(body, source_count=unique_sources)
 
         # featured: strict boolean coercion
         featured_value = meta.get("featured")

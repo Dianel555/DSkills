@@ -49,13 +49,37 @@ def _sanitize_filename(stem: str) -> str:
     return re.sub(unsafe_pattern, '_', stem)
 
 
-def _slug(topic_key: str) -> str:
-    """Generate deterministic injective filename: sanitize(stem)-sha256[:8].html"""
-    stem = topic_key[:-3] if topic_key.endswith(".md") else topic_key
-    sanitized = _sanitize_filename(stem)
-    key_hash = hashlib.sha256(_nfc(topic_key).encode("utf-8")).hexdigest()[:8]
-    return f"{sanitized}-{key_hash}.html"
+def _build_slug_map(topic_keys: list[str]) -> dict[str, str]:
+    """Build key->filename map with numeric disambiguation on collision.
 
+    Keys are sorted by NFC, then each gets sanitize(stem).html. On collision,
+    append -2, -3, ... until free. First key in NFC order keeps bare name.
+    """
+    sorted_keys = sorted(topic_keys, key=_nfc)
+    slug_map = {}
+    base_counts: dict[str, int] = {}
+
+    for key in sorted_keys:
+        stem = key[:-3] if key.endswith(".md") else key
+        base = _sanitize_filename(stem)
+
+        if base not in base_counts:
+            # First occurrence gets bare name
+            slug_map[key] = f"{base}.html"
+            base_counts[base] = 1
+        else:
+            # Collision: append -2, -3, etc.
+            base_counts[base] += 1
+            slug_map[key] = f"{base}-{base_counts[base]}.html"
+
+    return slug_map
+
+
+# --- SVG Icons (inline, self-contained) ------------------------------------------
+
+_SVG_SEAL = '''<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>'''
+
+_SVG_THEME_TOGGLE = '''<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>'''
 
 # --- Inline design system (D4) -------------------------------------------------
 
@@ -88,7 +112,7 @@ html{scroll-behavior:smooth;}
 body{
 margin:0;font-family:var(--font-ui);font-size:14px;line-height:1.65;color:var(--ink);
 background-color:var(--bg);
-background-image:radial-gradient(120% 70% at 50% -10%,rgba(255,255,255,.16),rgba(255,255,255,0) 60%),repeating-linear-gradient(0deg,rgba(120,100,70,.022) 0 1px,rgba(120,100,70,0) 1px 4px);
+background-image:radial-gradient(120% 70% at 50% -10%,rgba(255,255,255,.16),rgba(255,255,255,0) 60%),repeating-linear-gradient(0deg,rgba(120,100,70,.01) 0 1px,rgba(120,100,70,0) 1px 4px);
 background-attachment:fixed;
 }
 a{color:var(--cinnabar);text-decoration:underline;text-underline-offset:2px;}
@@ -99,7 +123,8 @@ h1,h2,h3,h4{font-family:var(--font-serif);line-height:1.3;color:var(--ink);}
 .skip-link{position:absolute;left:-9999px;top:0;z-index:20;display:inline-flex;align-items:center;min-height:44px;padding:0 16px;background:var(--cinnabar);color:#fff;border-radius:var(--radius-sm);text-decoration:none;}
 .skip-link:focus{left:var(--s2);top:var(--s2);}
 .band{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;max-width:1320px;margin:0 auto;padding:var(--s4);border-bottom:1px solid var(--rule);background:var(--surface);}
-.seal{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:var(--radius-sm);background:var(--cinnabar);color:var(--surface);font-family:var(--font-serif);font-size:20px;box-shadow:var(--shadow);}
+.seal{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:var(--radius-sm);background:var(--cinnabar);color:var(--surface);box-shadow:var(--shadow);}
+.seal svg{display:block;}
 .band__title{font-size:22px;font-weight:700;margin:0;flex:0 1 auto;}
 .search{flex:1 1 200px;min-width:160px;min-height:44px;padding:8px 14px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--ink);font-family:var(--font-ui);font-size:16px;}
 .search::placeholder{color:var(--muted);}
@@ -124,7 +149,8 @@ h1,h2,h3,h4{font-family:var(--font-serif);line-height:1.3;color:var(--ink);}
 .article tbody tr:nth-child(even){background:var(--mist);}
 .article blockquote{margin:1em 0;padding:var(--s2) var(--s3);background:var(--surface-2);border-left:3px solid var(--cinnabar);border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:var(--ink);}
 .wikilink{color:var(--cinnabar);text-underline-offset:2px;}
-.wikilink--missing{color:var(--muted);text-decoration:underline dashed;cursor:default;}
+.wikilink--missing{color:var(--muted);text-decoration:underline dashed;cursor:help;}
+.wikilink--missing::after{content:" ?";opacity:0.6;}
 .toc{list-style:none;margin:var(--s2) 0 0;padding:0;font-size:13px;}
 .toc__item{margin:2px 0;}
 .toc__item--h3{padding-left:var(--s3);}
@@ -146,13 +172,14 @@ h1,h2,h3,h4{font-family:var(--font-serif);line-height:1.3;color:var(--ink);}
 [data-theme="mo-ye"] .badge--premium,[data-theme="mo-ye"] .badge--rich,[data-theme="mo-ye"] .badge--standard{color:#14110D;}
 [data-theme="hu-yan"] .badge--basic{color:#FFFDF7;}
 .kw{display:inline-block;margin:0 4px 4px 0;padding:0 8px;border-radius:var(--pill);background:var(--mist);color:var(--ink);border:1px solid var(--rule);font-size:12px;}
+mark{background:var(--jade);color:var(--surface);padding:0 .2em;border-radius:2px;font-weight:500;}
 .index-main{max-width:1320px;margin:0 auto;padding:var(--s4);}
 .section__title{display:flex;align-items:center;gap:var(--s2);font-size:18px;margin:var(--s5) 0 var(--s3);}
 .type-dot{width:10px;height:10px;border-radius:50%;background:var(--dot,var(--faint));}
 .featured .section__title{color:var(--cinnabar);}
 .card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--s3);}
-.card{display:flex;flex-direction:column;gap:var(--s2);padding:var(--s3);background:var(--surface);border:1px solid var(--rule);border-radius:var(--radius);color:inherit;text-decoration:none;transition:transform .15s,border-color .15s,box-shadow .15s;}
-.card:hover{transform:translateY(-1px);border-color:var(--cinnabar);box-shadow:var(--shadow);}
+.card{display:flex;flex-direction:column;gap:var(--s2);padding:var(--s3);background:var(--surface);border:1px solid var(--rule);border-radius:var(--radius);color:inherit;text-decoration:none;transition:all .25s cubic-bezier(0.4, 0, 0.2, 1);}
+.card:hover{transform:translateY(-4px);border-color:var(--cinnabar);box-shadow:0 12px 24px rgba(0,0,0,.08);}
 .card__meta{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap;}
 .card__title{font-size:16px;margin:0;}
 .card__summary{margin:0;color:var(--muted);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
@@ -195,6 +222,22 @@ _BODY_SCRIPT = (
     "root.setAttribute('data-theme',next);"
     "try{localStorage.setItem('agentwiki-theme',next);}catch(e){}});}"
     "var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;"
+    "var search=document.getElementById('search');"
+    "if(search){document.addEventListener('keydown',function(e){"
+    "if(e.key==='/'&&document.activeElement.tagName!=='INPUT'&&document.activeElement.tagName!=='TEXTAREA'){"
+    "e.preventDefault();search.focus();}});"
+    "var cards=[].slice.call(document.querySelectorAll('[data-search]'));"
+    "var sections=[].slice.call(document.querySelectorAll('.type-section,.featured'));"
+    "var empty=document.getElementById('search-empty');"
+    "search.addEventListener('input',function(){var q=search.value.toLowerCase().trim(),ws=q?q.split(/\\s+/):[];var any=false;"
+    "cards.forEach(function(c){var s=c.getAttribute('data-search'),hit=ws.every(function(w){return s.indexOf(w)>=0;});"
+    "c.classList.toggle('is-hidden',!hit);if(hit)any=true;"
+    "if(hit&&q){var title=c.querySelector('.card__title');if(title){"
+    "var text=title.textContent;var esc=q.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&');"
+    "var re=new RegExp('('+esc+')','gi');title.innerHTML=text.replace(re,'<mark>$1</mark>');}}"
+    "else{var title=c.querySelector('.card__title');if(title){title.innerHTML=title.textContent;}}});"
+    "sections.forEach(function(s){var on=s.querySelectorAll('[data-search]:not(.is-hidden)').length>0;"
+    "s.classList.toggle('is-hidden',!on);});if(empty){empty.hidden=any;}});}"
     "var toc=document.querySelector('[data-toc]');"
     "if(toc){var links=[].slice.call(toc.querySelectorAll('a[href^=\"#\"]'));var map={};"
     "links.forEach(function(a){var id=a.getAttribute('href').slice(1);map[id]=a;"
@@ -209,15 +252,6 @@ _BODY_SCRIPT = (
     "links.forEach(function(a){a.classList.remove('toc__link--active');a.removeAttribute('aria-current');});"
     "if(top&&map[top]){map[top].classList.add('toc__link--active');map[top].setAttribute('aria-current','true');}},"
     "{rootMargin:'0px 0px -70% 0px'});heads.forEach(function(h){obs.observe(h);});}}"
-    "var search=document.getElementById('search');"
-    "if(search){var cards=[].slice.call(document.querySelectorAll('[data-search]'));"
-    "var sections=[].slice.call(document.querySelectorAll('.type-section,.featured'));"
-    "var empty=document.getElementById('search-empty');"
-    "search.addEventListener('input',function(){var q=search.value.toLowerCase().trim(),ws=q?q.split(/\\s+/):[];var any=false;"
-    "cards.forEach(function(c){var s=c.getAttribute('data-search'),hit=ws.every(function(w){return s.indexOf(w)>=0;});"
-    "c.classList.toggle('is-hidden',!hit);if(hit)any=true;});"
-    "sections.forEach(function(s){var on=s.querySelectorAll('[data-search]:not(.is-hidden)').length>0;"
-    "s.classList.toggle('is-hidden',!on);});if(empty){empty.hidden=any;}});}"
     "function sync(){var w=window.innerWidth;"
     "[].slice.call(document.querySelectorAll('details[data-collapse]')).forEach(function(d){"
     "var bp=parseInt(d.getAttribute('data-collapse'),10);d.open=w>=bp;});}"
@@ -230,19 +264,19 @@ _TIERS = ("premium", "rich", "standard", "basic", "stub")
 
 # --- Content rendering (D8/D9) -------------------------------------------------
 
-def _resolve_target(target: str, topic_keys: set[str], alias_index: dict) -> str | None:
+def _resolve_target(target: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]) -> str | None:
     """Resolve a wikilink target to a slug: exact key -> Target.md -> alias_index."""
     if target in topic_keys:
-        return _slug(target)
+        return slug_map[target]
     key = target + ".md"
     if key in topic_keys:
-        return _slug(key)
+        return slug_map[key]
     if target in alias_index:
-        return _slug(alias_index[target])
+        return slug_map[alias_index[target]]
     return None
 
 
-def _convert_links(text: str, topic_keys: set[str], alias_index: dict) -> str:
+def _convert_links(text: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]) -> str:
     """Replace `[[...]]` outside code with escaped anchors/inert spans."""
     def repl(m: re.Match) -> str:
         raw = m.group(1)
@@ -257,26 +291,26 @@ def _convert_links(text: str, topic_keys: set[str], alias_index: dict) -> str:
         target = _nfc(target.strip())
         if label is None:
             label = target
-        slug = _resolve_target(target, topic_keys, alias_index)
+        slug = _resolve_target(target, topic_keys, alias_index, slug_map)
         if slug:
             return f'<a class="wikilink" href="{_esc(slug)}">{_esc(label)}</a>'
         return f'<span class="wikilink wikilink--missing">{_esc(label)}</span>'
     return _WIKILINK_RE.sub(repl, text)
 
 
-def _convert_inline(line: str, topic_keys: set[str], alias_index: dict) -> str:
+def _convert_inline(line: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]) -> str:
     """Convert wikilinks on a line, leaving inline code spans untouched."""
     parts = []
     pos = 0
     for m in _CODESPAN_RE.finditer(line):
-        parts.append(_convert_links(line[pos:m.start()], topic_keys, alias_index))
+        parts.append(_convert_links(line[pos:m.start()], topic_keys, alias_index, slug_map))
         parts.append(m.group(0))
         pos = m.end()
-    parts.append(_convert_links(line[pos:], topic_keys, alias_index))
+    parts.append(_convert_links(line[pos:], topic_keys, alias_index, slug_map))
     return "".join(parts)
 
 
-def _resolve_wikilinks(body: str, topic_keys: set[str], alias_index: dict) -> str:
+def _resolve_wikilinks(body: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]) -> str:
     """Pre-pass over raw markdown: convert wikilinks outside fenced blocks and code spans."""
     out = []
     in_fence = False
@@ -294,7 +328,7 @@ def _resolve_wikilinks(body: str, topic_keys: set[str], alias_index: dict) -> st
             fence = m.group(1)
             out.append(line)
             continue
-        out.append(_convert_inline(line, topic_keys, alias_index))
+        out.append(_convert_inline(line, topic_keys, alias_index, slug_map))
     return "\n".join(out)
 
 
@@ -316,14 +350,17 @@ def _add_heading_ids(html_body: str) -> tuple[str, list[tuple[str, str, str]]]:
     return _HEADING_RE.sub(repl, html_body), toc
 
 
-def _render_body_and_toc(body: str, topic_keys: set[str], alias_index: dict):
+def _render_body_and_toc(body: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]):
     """Render a topic body to HTML + TOC, or escaped plaintext fallback (degraded)."""
     if MARKDOWN_AVAILABLE:
-        pre = _resolve_wikilinks(body, topic_keys, alias_index)
+        pre = _resolve_wikilinks(body, topic_keys, alias_index, slug_map)
         rendered = markdown_lib.markdown(
             pre, extensions=["fenced_code", "tables"], output_format="html"
         )
-        return _add_heading_ids(rendered)
+        html_with_ids, toc = _add_heading_ids(rendered)
+        # Add lazy loading to images for performance
+        html_with_lazy = re.sub(r'<img\s+', '<img loading="lazy" ', html_with_ids)
+        return html_with_lazy, toc
     return f"<pre>{html.escape(body)}</pre>", []
 
 
@@ -378,7 +415,7 @@ def _render_infobox(entry: dict, type_accent: dict) -> str:
     return "".join(rows)
 
 
-def _card(key: str, entry: dict, type_accent: dict) -> str:
+def _card(key: str, entry: dict, type_accent: dict, slug_map: dict[str, str]) -> str:
     title = entry.get("title", "")
     type_str = _nfc(entry.get("type", ""))
     tier = entry.get("quality_tier", "")
@@ -395,7 +432,7 @@ def _card(key: str, entry: dict, type_accent: dict) -> str:
         meta += '<span class="star" title="精选">⭐</span>'
     summ = f'<p class="card__summary">{_esc(summary)}</p>' if summary else ""
     backl = f'<span class="card__backlinks">{backlinks} backlinks</span>' if backlinks else ""
-    return (f'<a href="{_esc(_slug(key))}" class="card" data-search="{search_payload}">'
+    return (f'<a href="{_esc(slug_map[key])}" class="card" data-search="{search_payload}">'
             f'<span class="card__meta">{meta}</span>'
             f'<h3 class="card__title">{_esc(title)}</h3>{summ}{backl}</a>')
 
@@ -422,9 +459,9 @@ def _article_page(title, generated_at, toc_html, body_html, infobox_html) -> str
 <body>
 <a class="skip-link" href="#main-article">跳到正文</a>
 <header class="band">
-<span class="seal" aria-hidden="true">志</span>
+{_SVG_SEAL}
 <h1 class="band__title">{_esc(title)}</h1>
-<button class="theme-toggle" data-theme-toggle type="button" aria-label="切换主题">☯ 主题</button>
+<button class="theme-toggle" data-theme-toggle type="button" aria-label="切换主题">{_SVG_THEME_TOGGLE} 主题</button>
 </header>
 <div class="layout">
 <nav class="zone zone--nav" aria-label="目录">
@@ -450,7 +487,7 @@ def _section(label: str, accent_token: str, cards_html: str, kind: str, extra: s
             f'<div class="card-grid">{cards_html}</div></section>')
 
 
-def _index_page(data: dict, type_accent: dict, generated_at: str) -> str:
+def _index_page(data: dict, type_accent: dict, generated_at: str, slug_map: dict[str, str]) -> str:
     topics = data["topics"]
     items = list(topics.items())
 
@@ -460,7 +497,7 @@ def _index_page(data: dict, type_accent: dict, generated_at: str) -> str:
     sections = []
     featured = sorted((ke for ke in items if ke[1].get("featured")), key=by_title)
     if featured:
-        cards = "".join(_card(k, e, type_accent) for k, e in featured)
+        cards = "".join(_card(k, e, type_accent, slug_map) for k, e in featured)
         sections.append(
             '<section class="featured" aria-label="精选">'
             '<h2 class="section__title"><span class="star">⭐</span> 精选</h2>'
@@ -471,10 +508,10 @@ def _index_page(data: dict, type_accent: dict, generated_at: str) -> str:
     for k, e in items:
         groups.setdefault(_nfc(e.get("type", "")), []).append((k, e))
     for t in sorted(x for x in groups if x):
-        cards = "".join(_card(k, e, type_accent) for k, e in sorted(groups[t], key=by_title))
+        cards = "".join(_card(k, e, type_accent, slug_map) for k, e in sorted(groups[t], key=by_title))
         sections.append(_section(t, type_accent.get(t, "--faint"), cards, "type-section"))
     if "" in groups:
-        cards = "".join(_card(k, e, type_accent) for k, e in sorted(groups[""], key=by_title))
+        cards = "".join(_card(k, e, type_accent, slug_map) for k, e in sorted(groups[""], key=by_title))
         sections.append(_section("未分类", "--faint", cards, "type-section"))
 
     body = "".join(sections)
@@ -490,14 +527,14 @@ def _index_page(data: dict, type_accent: dict, generated_at: str) -> str:
 <body>
 <a class="skip-link" href="#main-index">跳到正文</a>
 <header class="band">
-<span class="seal" aria-hidden="true">舆</span>
+{_SVG_SEAL}
 <h1 class="band__title">知识舆图</h1>
-<input type="search" id="search" class="search" placeholder="搜索标题 / 关键词 / 摘要…" aria-label="搜索">
-<button class="theme-toggle" data-theme-toggle type="button" aria-label="切换主题">☯ 主题</button>
+<input type="search" id="search" class="search" placeholder="搜索标题 / 关键词 / 摘要…（按 / 快速搜索）" aria-label="搜索">
+<button class="theme-toggle" data-theme-toggle type="button" aria-label="切换主题">{_SVG_THEME_TOGGLE} 主题</button>
 </header>
 <main id="main-index" class="index-main">
 {body}
-<div id="search-empty" class="search-empty" role="status" hidden>无匹配结果</div>
+<div id="search-empty" class="search-empty" role="status" aria-live="polite" hidden>无匹配结果</div>
 </main>
 <footer class="foot">{_footer(generated_at)}</footer>
 <script>{_BODY_SCRIPT}</script>
@@ -526,8 +563,7 @@ def generate_site(vault: str | Path) -> dict:
     """Generate a self-contained static HTML site under wiki/site/.
 
     Returns ``{"ok": True, "pages": int, "out": str, "degraded": bool}``.
-    Raises ``ValueError("wiki_not_initialized")`` if the wiki is absent and
-    ``ValueError("site_slug_collision: ...")`` on an impossible slug clash.
+    Raises ``ValueError("wiki_not_initialized")`` if the wiki is absent.
     """
     vault = Path(vault)
     wiki_root = config.wiki_root(vault)
@@ -540,13 +576,8 @@ def generate_site(vault: str | Path) -> dict:
     generated_at = data.get("generated_at", wiki_index.EPOCH)
     topic_keys = set(topics.keys())
 
-    # Injective slug check (no overwrite).
-    slug_map: dict[str, str] = {}
-    for key in topics:
-        slug = _slug(key)
-        if slug in slug_map:
-            raise ValueError(f"site_slug_collision: {key} and {slug_map[slug]}")
-        slug_map[slug] = key
+    # Build slug map: NFC-sorted keys, numeric disambiguation on collision
+    slug_map = _build_slug_map(list(topics.keys()))
 
     # Deterministic per-type accent assignment.
     nonempty_types = sorted({_nfc(e.get("type", "")) for e in topics.values() if _nfc(e.get("type", ""))})
@@ -566,16 +597,22 @@ def generate_site(vault: str | Path) -> dict:
             _meta, body = frontmatter.parse(text)
         except Exception:
             continue
-        body_html, toc = _render_body_and_toc(body, topic_keys, alias_index)
+        body_html, toc = _render_body_and_toc(body, topic_keys, alias_index, slug_map)
         page = _article_page(
             entry.get("title", key), generated_at,
             _render_toc(toc), body_html, _render_infobox(entry, type_accent),
         )
-        _atomic_write(site_dir, _slug(key), page)
+        _atomic_write(site_dir, slug_map[key], page)
         pages_written += 1
 
     # index.html is written LAST so status.site_stale stays correct.
-    _atomic_write(site_dir, "index.html", _index_page(data, type_accent, generated_at))
+    _atomic_write(site_dir, "index.html", _index_page(data, type_accent, generated_at, slug_map))
+
+    # Prune orphaned HTML files not in current output set
+    current_files = {"index.html"} | set(slug_map.values())
+    for html_file in site_dir.glob("*.html"):
+        if html_file.name not in current_files:
+            html_file.unlink()
 
     return {
         "ok": True,

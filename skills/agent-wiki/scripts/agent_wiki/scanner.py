@@ -50,26 +50,41 @@ def walk_sources(vault: str | Path) -> Iterator[Path]:
     yield from _collect_sources(vault)[0]
 
 
-def _item(path: Path, vault: Path, derived_topics: list[str] | None = None) -> dict:
-    mtime, size = cache_mod.stat_signature(path)
+def _item(path: Path, vault: Path, derived_topics: list[str] | None = None, *, cached_entry: dict | None = None) -> dict:
+    st = path.stat()
+    mtime_ns, size = st.st_mtime_ns, st.st_size
+
+    if cached_entry is not None:
+        cached_mtime_ns = cached_entry.get("mtime_ns")
+        cached_size = cached_entry.get("size")
+        if cached_mtime_ns is not None and cached_mtime_ns == mtime_ns and cached_size == size:
+            return {
+                "path": config.to_rel_posix(path, vault),
+                "size": size,
+                "mtime_ns": mtime_ns,
+                "derived_topics": derived_topics or [],
+                "signature_match": True,
+            }
+
+    sha256 = cache_mod.sha256_file(path)
     return {
         "path": config.to_rel_posix(path, vault),
-        "sha256": cache_mod.sha256_file(path),
+        "sha256": sha256,
         "size": size,
-        "mtime": mtime,
+        "mtime_ns": mtime_ns,
         "derived_topics": derived_topics or [],
     }
 
 
-def classify(vault: str | Path, cache_data: dict) -> dict:
+def classify(vault: str | Path, cache_data: dict, *, collect=None) -> dict:
     root = Path(vault).resolve()
     sources = cache_data.get("sources", {})
     result = {"new": [], "modified": [], "unchanged": [], "deleted": [], "errors": [], "skipped_symlinks": []}
 
-    if walk_sources.__module__ == __name__:
+    if collect is None:
         source_paths, skipped = _collect_sources(root)
     else:
-        source_paths, skipped = list(walk_sources(root)), []
+        source_paths, skipped = collect(root)
     result["skipped_symlinks"] = skipped
     result["errors"].extend(skipped)
 
@@ -88,12 +103,14 @@ def classify(vault: str | Path, cache_data: dict) -> dict:
     for rel, path in current_paths.items():
         cached = sources.get(rel)
         try:
-            item = _item(path, root, cached.get("derived_topics", []) if cached else [])
+            item = _item(path, root, cached.get("derived_topics", []) if cached else [], cached_entry=cached)
         except OSError:
             result["errors"].append({"path": rel, "error": "unreadable"})
             continue
         if cached is None:
             result["new"].append(item)
+        elif item.get("signature_match"):
+            result["unchanged"].append(item)
         elif item["sha256"] != cached.get("sha256"):
             result["modified"].append(item)
         else:

@@ -164,6 +164,38 @@ After initial ingest, maintain and improve topics incrementally **without scanni
 
 **Status metrics**: `status` reports `wanted_count` and `stale_count` for progress tracking.
 
+### Quality Metrics & Tiering
+
+Topics are automatically assigned a five-tier quality rating (`stub` / `basic` / `standard` / `rich` / `premium`) based on **structural metrics** computed from the markdown body:
+
+**Metrics**:
+- `sections`: count of level-2 to level-6 ATX headings (`##` to `######`), excluding level-1 title
+- `evidence_lines`: count of blockquote lines (starting with `> `)
+- `prose_weight`: script-aware prose measure combining CJK ideographs and Latin words
+  - CJK characters (East Asian Width W/F, Unicode category L/N): weighted ×10
+  - Latin/other word runs: weighted ×16
+  - Ratio calibrated so equivalent-information content in CJK and Latin tier equally
+- `cjk_chars`, `latin_words`: component counts (transparency)
+- `prose_chars`: raw NFC character count (retained for transparency)
+- `has_image`: boolean, true if body contains Obsidian (`![[image.ext]]`) or Markdown (`![](url)`) image embeds
+- `has_lead`: boolean, true if first non-blank line after optional level-1 heading is a paragraph (not heading/list/quote/table/image-only)
+
+**Effective prose with source grounding**:
+`effective_prose = prose_weight + 500 × unique_source_count`
+
+Each deduplicated source reference adds a 500-point grounding bonus, rewarding well-referenced topics.
+
+**Tier gates** (top-down first-match):
+- **premium**: sections ≥ 6 AND effective_prose ≥ 3000 AND evidence_lines ≥ 3
+- **rich**: sections ≥ 4 AND effective_prose ≥ 1500 AND (evidence_lines ≥ 1 OR has_image)
+- **standard**: sections ≥ 2 AND effective_prose ≥ 600
+- **basic**: (effective_prose ≥ 200 AND prose_weight > 0) OR sections ≥ 1
+- **stub**: otherwise
+
+Tiers are **monotonic** in all dimensions (adding prose, sections, evidence, images, or sources never lowers tier). The formula is **deterministic** and **script-fair**: CJK and Latin content of equivalent information density receive the same tier.
+
+**Usage**: `quality` command reports per-topic metrics and tier distribution. `worklist` identifies `stub`/`basic` topics as `stale` candidates for enrichment. `index` recomputes tiers on every rebuild.
+
 ### Authors Backfill
 
 When source notes carry a `作者:` metadata row and topics accumulate too many / duplicate
@@ -217,7 +249,8 @@ Generate a self-contained static site under `wiki/site/` for offline browsing or
 **Determinism & safety**:
 - Byte-identical output for fixed inputs and markdown version; all inline JS/CSS are static literals (no `Date.now`/`Math.random`/`fetch`/network)
 - No wall-clock timestamps — the footer shows the index `generated_at`
-- Injective filenames: `sanitize(stem)-<sha256[:8]>.html` (CJK preserved); a collision raises `site_slug_collision`
+- Clean topic-named filenames: `sanitize(stem).html` with no hash suffix (CJK preserved); collisions are disambiguated with numeric suffixes (`-2`, `-3`, …) in NFC key order
+- Automatic pruning: each `gen-site` run removes orphaned HTML files (from renamed/deleted topics or old naming schemes), keeping only current output
 - Atomic writes, **write-only under `wiki/site/`** — never modifies sources, topics, `.base`, or `.canvas`; `index.html` is written last so `site_stale` stays correct
 
 **Workflow**:
