@@ -8,10 +8,10 @@ def load_dotenv(env_path: Optional[Path] = None) -> bool:
     if env_path:
         search_paths.append(env_path)
     else:
-        script_dir = Path(__file__).resolve().parent.parent
-        search_paths.append(Path.cwd() / ".env")
-        search_paths.append(script_dir / ".env")
-        search_paths.append(script_dir.parent / ".env")
+        # Get grok-search root directory (scripts/groksearch/../..)
+        skill_root = Path(__file__).resolve().parent.parent.parent
+        search_paths.append(skill_root / ".env")
+        search_paths.append(skill_root / "scripts" / ".env")
 
     for path in search_paths:
         if path.exists():
