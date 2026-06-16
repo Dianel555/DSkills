@@ -1,6 +1,6 @@
 """Prompt templates and constants for ACE-Tool CLI."""
 
-USER_AGENT = "augment.cli/0.12.0"
+USER_AGENT = "augment.cli/0.29.0"
 DEFAULT_MODEL = "claude-sonnet-4-5"
 
 # Default models for third-party APIs

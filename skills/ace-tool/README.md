@@ -21,11 +21,33 @@ pip install httpx tenacity
 
 ## Quick Start
 
+### Authentication Setup
+
+**Recommended: Use session.json (compatible with auggie CLI)**
+
 ```bash
-# Set API credentials (optional, enables remote search and indexing)
+# If you have auggie CLI installed, just login:
+auggie login
+
+# This creates ~/.augment/session.json with your credentials
+```
+
+**Alternative: Environment Variable (for CI/CD)**
+
+```bash
+export AUGMENT_SESSION_AUTH='{"accessToken":"your-token","tenantURL":"https://api.example.com/"}'
+```
+
+**Legacy Method (deprecated but still supported)**
+
+```bash
 export ACE_API_URL="https://your-api-endpoint.com"
 export ACE_API_TOKEN="your-token-here"
+```
 
+### Basic Usage
+
+```bash
 # Index project (scan, hash, upload code blobs)
 python scripts/ace_cli.py index -p .
 
@@ -41,7 +63,7 @@ python scripts/ace_cli.py enhance_prompt --no-interactive -p "implement login fe
 # Enhance with codex endpoint
 python scripts/ace_cli.py --endpoint codex enhance_prompt -p "implement feature"
 
-# Show configuration
+# Show configuration (check auth_source to verify authentication method)
 python scripts/ace_cli.py get_config
 ```
 ## CLI Commands
@@ -84,14 +106,16 @@ Options:
 
 ### Supported Endpoints
 
-| Endpoint | API Path | Default Model | Type |
-|----------|----------|---------------|------|
-| `new` | `/prompt-enhancer` | `claude-sonnet-4-5` | Augment |
-| `old` | `/chat-stream` (SSE) | `claude-sonnet-4-5` | Augment |
-| `claude` | `/v1/messages` | `sonnet-4-6-20250929` | Third-party |
-| `openai` | `/v1/chat/completions` | `gpt-5.4` | Third-party |
-| `gemini` | `/v1beta/models/{model}:generateContent` | `gemini-3-flash-preview` | Third-party |
-| `codex` | `/v1/responses` | `gpt-5.4` | Third-party |
+| Endpoint | API Path | Default Model | Type | Status |
+|----------|----------|---------------|------|--------|
+| `new` | `/prompt-enhancer` | `claude-sonnet-4-5` | Augment | ⚠️ Currently unavailable |
+| `old` | `/chat-stream` (SSE) | `claude-sonnet-4-5` | Augment | ⚠️ Currently unavailable |
+| `claude` | `/v1/messages` | `sonnet-4-6-20250929` | Third-party | ✅ Available |
+| `openai` | `/v1/chat/completions` | `gpt-5.4` | Third-party | ✅ Available |
+| `gemini` | `/v1beta/models/{model}:generateContent` | `gemini-3-flash-preview` | Third-party | ✅ Available |
+| `codex` | `/v1/responses` | `gpt-5.4` | Third-party | ✅ Available |
+
+> **Note**: The official Augment endpoints (`new` and `old`) are currently experiencing service issues. Please use third-party endpoints (Claude, OpenAI, Gemini, or Codex) for prompt enhancement features.
 
 ### Endpoint Resolution
 
@@ -119,12 +143,56 @@ All HTTP calls use `build_api_url(base_url, path)` which handles version prefix 
 
 ## Configuration
 
+### Authentication
+
+ACE-Tool supports multiple authentication methods with the following priority:
+
+1. **Constructor parameters** (highest priority, programmatic use only)
+2. **`~/.augment/session.json`** (recommended, created by `auggie login`)
+3. **`AUGMENT_SESSION_AUTH`** (CI/CD and headless environments)
+4. **Legacy `ACE_API_*`** (deprecated, backward compatibility only)
+
+**Method 1: session.json (Recommended)**
+
+Use `auggie login` to create `~/.augment/session.json`:
+```json
+{
+  "accessToken": "your-token-here",
+  "tenantURL": "https://api.example.com/",
+  "scopes": ["email"]
+}
+```
+
+**Method 2: AUGMENT_SESSION_AUTH (CI/CD)**
+
+```bash
+export AUGMENT_SESSION_AUTH='{"accessToken":"your-token","tenantURL":"https://api.example.com/"}'
+```
+
+**Method 3: Legacy Environment Variables (Deprecated)**
+
+```bash
+export ACE_API_URL=https://your-augment-api.com
+export ACE_API_TOKEN=your-augment-token
+```
+
+⚠️ **Note**: `ACE_API_URL` and `ACE_API_TOKEN` are deprecated but still supported for backward compatibility. New projects should use `session.json` or `AUGMENT_SESSION_AUTH`.
+
+**Verify Configuration**
+
+Use `get_config` to check current authentication source:
+```bash
+python scripts/ace_cli.py get_config
+# Output includes: "auth_source": "session.json" | "AUGMENT_SESSION_AUTH" | "ACE_API_TOKEN" | "none"
+```
+
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `ACE_API_URL` | Augment API base URL (required for remote search/indexing) |
-| `ACE_API_TOKEN` | Augment API token |
+| `AUGMENT_SESSION_AUTH` | JSON string with `accessToken` and `tenantURL` (new format, recommended for CI/CD) |
+| `ACE_API_URL` | ⚠️ **Deprecated** - Augment API base URL (use session.json or AUGMENT_SESSION_AUTH instead) |
+| `ACE_API_TOKEN` | ⚠️ **Deprecated** - Augment API token (use session.json or AUGMENT_SESSION_AUTH instead) |
 | `PROMPT_ENHANCER_ENDPOINT` | Endpoint type override (takes precedence over `ACE_ENHANCER_ENDPOINT`) |
 | `ACE_ENHANCER_ENDPOINT` | Legacy endpoint override (fallback) |
 | `PROMPT_ENHANCER_BASE_URL` | Third-party API base URL |
@@ -134,16 +202,16 @@ All HTTP calls use `build_api_url(base_url, path)` which handles version prefix 
 
 ### .env File
 
-Create `.env` in scripts directory:
+Create `.env` in the project root (see `.env.example`):
 
 ```bash
-cp scripts/.env.example scripts/.env
-```
+# Recommended: Use ~/.augment/session.json (created by `auggie login`)
+# or set AUGMENT_SESSION_AUTH for CI/CD
 
-Edit `.env`:
-```bash
-ACE_API_URL=https://your-augment-api.com
-ACE_API_TOKEN=your-augment-token
+# Legacy format (deprecated)
+# ACE_API_URL=https://your-augment-api.com
+# ACE_API_TOKEN=your-augment-token
+
 PROMPT_ENHANCER_ENDPOINT=new
 
 # Third-party API (optional)

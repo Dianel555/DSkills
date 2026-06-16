@@ -21,7 +21,7 @@ try:
         ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
         TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
     )
-    from .utils import get_session_id, is_chinese_text, parse_chat_history, detect_and_read
+    from .utils import get_session_id, is_chinese_text, parse_chat_history, detect_and_read, load_session_auth
     from .indexer import Indexer
 except ImportError:
     from templates import (
@@ -34,7 +34,7 @@ except ImportError:
         ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
         TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
     )
-    from utils import get_session_id, is_chinese_text, parse_chat_history, detect_and_read
+    from utils import get_session_id, is_chinese_text, parse_chat_history, detect_and_read, load_session_auth
     from indexer import Indexer
 
 import logging
@@ -80,8 +80,19 @@ class AceToolClient:
         token: Optional[str] = None,
         endpoint: Optional[str] = None,
     ):
-        self.base_url = (base_url or os.getenv("ACE_API_URL", "")).rstrip("/")
-        self.token = token or os.getenv("ACE_API_TOKEN", "")
+        # Determine auth source priority: constructor params > session auth
+        if base_url is not None or token is not None:
+            # Constructor params provided (full or partial override)
+            self.auth_source = "constructor"
+            loaded_base_url, loaded_token, _ = load_session_auth()
+            self.base_url = (base_url if base_url is not None else loaded_base_url or "").rstrip("/")
+            self.token = token if token is not None else loaded_token or ""
+        else:
+            # No constructor params, use load_session_auth()
+            loaded_base_url, loaded_token, auth_source = load_session_auth()
+            self.base_url = (loaded_base_url or "").rstrip("/")
+            self.token = loaded_token or ""
+            self.auth_source = auth_source
 
         # Endpoint resolution: PROMPT_ENHANCER_ENDPOINT > ACE_ENHANCER_ENDPOINT > constructor arg > "new"
         env_endpoint = (
@@ -624,5 +635,6 @@ class AceToolClient:
             "endpoint_env_ready": bool(self.third_party_base_url and self.third_party_token) if self._is_third_party() else bool(self.base_url and self.token),
             "token_configured": bool(self.token),
             "third_party_configured": bool(self.third_party_base_url and self.third_party_token),
+            "auth_source": self.auth_source,
             "search_context_injection": self._should_include_search_context(),
         }

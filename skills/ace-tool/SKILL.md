@@ -101,13 +101,21 @@ Command Options:
 ```
 
 ### get_config
-Show current configuration status including endpoint resolution, env readiness, and search context injection state.
+Show current configuration status including endpoint resolution, env readiness, authentication source, and search context injection state.
 
 ```bash
 python scripts/ace_cli.py get_config
 ```
 
-Output fields: `base_url`, `endpoint`, `endpoint_effective`, `endpoint_env_ready`, `token_configured`, `third_party_configured`, `search_context_injection`.
+**Output fields:**
+- `base_url` - Currently configured API base URL
+- `endpoint` - Active enhancer endpoint (new/old/claude/openai/gemini/codex)
+- `endpoint_effective` - Resolved endpoint after env variable resolution
+- `endpoint_env_ready` - Whether required endpoint configuration is complete
+- `token_configured` - Whether authentication token is set
+- `third_party_configured` - Whether third-party endpoint config is complete
+- `auth_source` - Authentication source: `constructor` | `session.json` | `AUGMENT_SESSION_AUTH` | `ACE_API_TOKEN` | `none`
+- `search_context_injection` - Whether search context injection is enabled
 ## Interactive Enhancement
 
 Default mode opens web UI with actions:
@@ -126,14 +134,16 @@ Default mode opens web UI with actions:
 
 ### Supported Endpoints
 
-| Endpoint | API Path | Default Model | Auth Header |
-|----------|----------|---------------|-------------|
-| `new` | `/prompt-enhancer` | `claude-sonnet-4-5` | `Bearer ACE_API_TOKEN` |
-| `old` | `/chat-stream` (SSE) | `claude-sonnet-4-5` | `Bearer ACE_API_TOKEN` |
-| `claude` | `/v1/messages` | `sonnet-4-6-20250929` | `x-api-key` |
-| `openai` | `/v1/chat/completions` | `gpt-5.4` | `Bearer PROMPT_ENHANCER_TOKEN` |
-| `gemini` | `/v1beta/models/{model}:generateContent` | `gemini-3-flash-preview` | `x-goog-api-key` |
-| `codex` | `/v1/responses` | `gpt-5.4` | `Bearer PROMPT_ENHANCER_TOKEN` |
+| Endpoint | API Path | Default Model | Auth Header | Status |
+|----------|----------|---------------|-------------|--------|
+| `new` | `/prompt-enhancer` | `claude-sonnet-4-5` | `Bearer ACE_API_TOKEN` | ⚠️ Currently unavailable |
+| `old` | `/chat-stream` (SSE) | `claude-sonnet-4-5` | `Bearer ACE_API_TOKEN` | ⚠️ Currently unavailable |
+| `claude` | `/v1/messages` | `sonnet-4-6-20250929` | `x-api-key` | ✅ Available |
+| `openai` | `/v1/chat/completions` | `gpt-5.4` | `Bearer PROMPT_ENHANCER_TOKEN` | ✅ Available |
+| `gemini` | `/v1beta/models/{model}:generateContent` | `gemini-3-flash-preview` | `x-goog-api-key` | ✅ Available |
+| `codex` | `/v1/responses` | `gpt-5.4` | `Bearer PROMPT_ENHANCER_TOKEN` | ✅ Available |
+
+> **Note**: The official Augment endpoints (`new` and `old`) are currently experiencing service issues. Use third-party endpoints for prompt enhancement.
 
 ### Endpoint Resolution Order
 
@@ -154,10 +164,54 @@ All HTTP calls use `build_api_url(base_url, path)` which handles `/v1/`, `/v1bet
 
 ## Environment Variables
 
+### Authentication (Priority Order)
+
+ACE-Tool supports multiple authentication methods with the following priority:
+
+1. **Constructor parameters** (highest priority, programmatic use only)
+2. **`~/.augment/session.json`** (recommended, created by `auggie login`)
+3. **`AUGMENT_SESSION_AUTH`** (CI/CD and headless environments)
+4. **Legacy `ACE_API_*`** (deprecated, backward compatibility only)
+
 | Variable | Description |
 |----------|-------------|
-| `ACE_API_URL` | ACE API base URL (required for remote search/indexing) |
-| `ACE_API_TOKEN` | ACE API authentication token |
+| `AUGMENT_SESSION_AUTH` | JSON string with `accessToken` and `tenantURL` (new format, recommended for CI/CD) |
+| `ACE_API_URL` | ⚠️ **Deprecated** - ACE API base URL (use session.json or AUGMENT_SESSION_AUTH instead) |
+| `ACE_API_TOKEN` | ⚠️ **Deprecated** - ACE API authentication token (use session.json or AUGMENT_SESSION_AUTH instead) |
+
+**Recommended: Use `~/.augment/session.json`**
+
+Create this file via `auggie login`, or manually with this format:
+```json
+{
+  "accessToken": "your-token-here",
+  "tenantURL": "https://api.example.com/",
+  "scopes": ["email"]
+}
+```
+
+**For CI/CD: Use `AUGMENT_SESSION_AUTH` environment variable**
+```bash
+export AUGMENT_SESSION_AUTH='{"accessToken":"token","tenantURL":"https://api.example.com/"}'
+```
+
+**Migration Guide: Legacy to New Format**
+
+If currently using `ACE_API_URL` and `ACE_API_TOKEN`:
+
+1. **Option A** (Recommended): Use `auggie login` to create `~/.augment/session.json`
+2. **Option B**: Convert to `AUGMENT_SESSION_AUTH`:
+   ```bash
+   export AUGMENT_SESSION_AUTH='{"accessToken":"YOUR_ACE_API_TOKEN","tenantURL":"YOUR_ACE_API_URL"}'
+   ```
+3. Remove old variables (optional, they'll be ignored if new format exists)
+
+Legacy variables continue to work for backward compatibility but are not recommended for new setups.
+
+### Endpoint Configuration
+
+| Variable | Description |
+|----------|-------------|
 | `PROMPT_ENHANCER_ENDPOINT` | Endpoint override: `new`, `old`, `claude`, `openai`, `gemini`, `codex` |
 | `ACE_ENHANCER_ENDPOINT` | Legacy endpoint override (fallback if `PROMPT_ENHANCER_ENDPOINT` not set) |
 | `PROMPT_ENHANCER_BASE_URL` | Third-party API base URL (for claude/openai/gemini/codex endpoints) |

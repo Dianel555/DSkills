@@ -115,3 +115,69 @@ def detect_and_read(file_path: Path, encoding_chain: list[str]) -> Optional[str]
 def sanitize_content(content: str) -> str:
     """Normalize line endings and remove null bytes."""
     return content.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+
+
+def _validate_session_data(data: dict) -> tuple[Optional[str], Optional[str]]:
+    """Validate and extract session data fields.
+
+    Returns (tenant_url, access_token) or (None, None) if invalid.
+    """
+    if not isinstance(data, dict):
+        return None, None
+    access_token = data.get("accessToken", "")
+    tenant_url = data.get("tenantURL", "")
+    if (isinstance(access_token, str) and access_token.strip() and
+        isinstance(tenant_url, str) and tenant_url.strip()):
+        return tenant_url.rstrip("/"), access_token
+    return None, None
+
+
+def load_session_auth() -> tuple[Optional[str], Optional[str], str]:
+    """Load authentication from session.json, AUGMENT_SESSION_AUTH, or legacy env vars.
+
+    Returns:
+        (base_url, token, source) where source is one of:
+        - "session.json"
+        - "AUGMENT_SESSION_AUTH"
+        - "ACE_API_TOKEN"
+        - "none"
+    """
+    import json
+    import logging
+
+    log = logging.getLogger(__name__)
+
+    # Try session.json first
+    session_path = Path.home() / ".augment" / "session.json"
+    if session_path.exists():
+        try:
+            content = session_path.read_text(encoding="utf-8-sig")
+            data = json.loads(content)
+            tenant_url, access_token = _validate_session_data(data)
+            if tenant_url and access_token:
+                log.debug("Auth source: session.json")
+                return tenant_url, access_token, "session.json"
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
+            log.debug("Failed to load session.json: %s", e)
+
+    # Try AUGMENT_SESSION_AUTH env var
+    env_session = os.getenv("AUGMENT_SESSION_AUTH", "")
+    if env_session:
+        try:
+            data = json.loads(env_session)
+            tenant_url, access_token = _validate_session_data(data)
+            if tenant_url and access_token:
+                log.debug("Auth source: AUGMENT_SESSION_AUTH")
+                return tenant_url, access_token, "AUGMENT_SESSION_AUTH"
+        except (json.JSONDecodeError, TypeError) as e:
+            log.debug("Failed to parse AUGMENT_SESSION_AUTH: %s", e)
+
+    # Fallback to legacy env vars
+    legacy_url = os.getenv("ACE_API_URL", "").rstrip("/")
+    legacy_token = os.getenv("ACE_API_TOKEN", "")
+    if legacy_url or legacy_token:
+        log.debug("Auth source: ACE_API_TOKEN (legacy)")
+        return legacy_url or None, legacy_token or None, "ACE_API_TOKEN"
+
+    log.debug("Auth source: none")
+    return None, None, "none"
