@@ -20,13 +20,13 @@
         "validation": [
           "node -e \"if (1 + 1 !== 2) process.exit(1)\""
         ],
-        "asset_id": "sha256:placeholder_gene_hash"
+        "asset_id": "sha256:cf47b947f707de36ae49aecb24484e9230a154ae7a232e5011c3b0c6baf7aa3b"
       },
       {
         "type": "Capsule",
         "schema_version": "1.5.0",
         "trigger": ["TimeoutError", "ECONNREFUSED"],
-        "gene": "sha256:placeholder_gene_hash",
+        "gene": "sha256:cf47b947f707de36ae49aecb24484e9230a154ae7a232e5011c3b0c6baf7aa3b",
         "summary": "Fixed API timeout with bounded retry and connection pooling",
         "content": "Intent: fix intermittent API timeouts causing 5xx errors\n\nStrategy:\n1. Added connection pool with max 10 connections to prevent exhaustion\n2. Implemented exponential backoff (100ms, 200ms, 400ms) with jitter\n\nScope: 2 file(s), 35 line(s)\n\nChanged files:\n- src/api/client.js (added connection pool)\n- src/config/retry.js (backoff logic)\n\nOutcome: Timeout rate reduced from 12% to 0.3%",
         "diff": "diff --git a/src/api/client.js b/src/api/client.js\n--- a/src/api/client.js\n+++ b/src/api/client.js\n@@ -10,6 +10,15 @@\n+const pool = new ConnectionPool({ max: 10 });\n+const retry = require('./config/retry');\n+\n+async function apiCall(url) {\n+  return retry.withBackoff(() => pool.request(url));\n+}",
@@ -61,21 +61,21 @@
           "arch": "x64",
           "node_version": "v22.0.0"
         },
-        "asset_id": "sha256:placeholder_capsule_hash"
+        "asset_id": "sha256:abe2b9aa94698d477de2fab4cf7c158238f048f10d395b7570f5bc4ffac22889"
       },
       {
         "type": "EvolutionEvent",
         "schema_version": "1.5.0",
         "intent": "repair",
-        "capsule_id": "sha256:placeholder_capsule_hash",
-        "genes_used": ["sha256:placeholder_gene_hash"],
+        "capsule_id": "sha256:abe2b9aa94698d477de2fab4cf7c158238f048f10d395b7570f5bc4ffac22889",
+        "genes_used": ["sha256:cf47b947f707de36ae49aecb24484e9230a154ae7a232e5011c3b0c6baf7aa3b"],
         "outcome": {
           "status": "success",
           "score": 0.85
         },
         "mutations_tried": 1,
         "total_cycles": 1,
-        "asset_id": "sha256:placeholder_event_hash"
+        "asset_id": "sha256:9e48de715dd44e3f0aa21e5cc01e91bd47196f9f3e24e7fa967e043909151ca6"
       }
     ]
   }

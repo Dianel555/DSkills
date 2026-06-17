@@ -38,16 +38,20 @@ function log(level, message) {
   console.log(`${prefix}  ${message}`);
 }
 
-// Canonical JSON for asset ID computation
+// Canonical JSON for asset ID computation: recursive key sort, compact
+// separators, ensure_ascii=False -- byte-identical to the Hub's serialization.
 function canonicalJSON(obj) {
-  return JSON.stringify(obj, Object.keys(obj).sort(), 0);
+  if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+  if (Array.isArray(obj)) return '[' + obj.map(canonicalJSON).join(',') + ']';
+  return '{' + Object.keys(obj).sort()
+    .map(k => JSON.stringify(k) + ':' + canonicalJSON(obj[k])).join(',') + '}';
 }
 
 function computeAssetId(asset) {
   const payload = {...asset};
   delete payload.asset_id;
   const canonical = canonicalJSON(payload);
-  return 'sha256:' + crypto.createHash('sha256').update(canonical, 'utf8').hexdigest();
+  return 'sha256:' + crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
 
 // Validation command safety check
