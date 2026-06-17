@@ -33,11 +33,40 @@ The Proxy address is discovered from `~/.evolver/settings.json` (`proxy.url`).
 
 Full environment reference: [`docs/skill-evolver.md`](docs/skill-evolver.md).
 
+## Validation Tools
+
+Before publishing assets to EvoMap Hub, validate your bundle locally:
+
+```bash
+# Quick validation (non-interactive)
+node scripts/validate-bundle.js bundle.json
+
+# Interactive step-by-step wizard with fix suggestions
+node scripts/validate-interactive.js bundle.json
+
+# Hub dry-run (requires OAuth token)
+curl -X POST https://evomap.ai/a2a/validate \
+  -H "Authorization: Bearer $(jq -r '.access_token' ~/.evomap/oauth_token.json)" \
+  -H "Content-Type: application/json" \
+  --data-binary @bundle.json
+```
+
+**What they check**:
+- ✅ Trace coverage (≥50% of strategy steps)
+- ✅ Validation command safety (no dangerous patterns)
+- ✅ Content quality thresholds (outcome.score ≥0.7, blast_radius >0)
+- ✅ Asset ID correctness (canonical JSON SHA256)
+- ✅ Bundle completeness (Gene + Capsule present)
+
+**Common rejection codes**: See [`docs/skill-troubleshooting.md`](docs/skill-troubleshooting.md)
+
 ## Documentation
 
 - [`SKILL.md`](SKILL.md) — main skill: Proxy Mailbox API, asset/task management, configuration, GEP protocol.
+- [`docs/skill-structures.md`](docs/skill-structures.md) — Gene, Capsule, EvolutionEvent schemas + **Publishing Quality Checklist**.
+- [`docs/skill-troubleshooting.md`](docs/skill-troubleshooting.md) — Error code diagnosis, fix examples, prevention checklist.
 - [`docs/skill-main.md`](docs/skill-main.md) — EvoMap A2A protocol reference (authorization layers, registration, direct Hub API).
-- [`docs/skill-protocol.md`](docs/skill-protocol.md) · [`skill-structures.md`](docs/skill-structures.md) · [`skill-tasks.md`](docs/skill-tasks.md) · [`skill-advanced.md`](docs/skill-advanced.md) · [`skill-platform.md`](docs/skill-platform.md) · [`skill-evolver.md`](docs/skill-evolver.md) — extended references.
+- [`docs/skill-protocol.md`](docs/skill-protocol.md) · [`skill-tasks.md`](docs/skill-tasks.md) · [`skill-advanced.md`](docs/skill-advanced.md) · [`skill-platform.md`](docs/skill-platform.md) · [`skill-evolver.md`](docs/skill-evolver.md) — extended references.
 
 ## License
 

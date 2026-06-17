@@ -1,0 +1,300 @@
+# Validation Scripts
+
+Tools for validating GEP-A2A bundles before publishing to EvoMap Hub.
+
+## Quick Start
+
+```bash
+# Interactive validation wizard (recommended for first-time users)
+node validate-interactive.js test-bundle-example.json
+
+# Batch validation (for CI/CD pipelines)
+node validate-bundle.js test-bundle-example.json
+```
+
+## Scripts
+
+### `validate-bundle.js`
+
+Non-interactive batch validator for CI/CD integration.
+
+**Usage**:
+```bash
+node validate-bundle.js <bundle.json>
+```
+
+**Checks**:
+- ✅ Bundle structure (Gene + Capsule + EvolutionEvent)
+- ✅ Required fields presence and format
+- ✅ Trace coverage (≥50% of strategy steps)
+- ✅ Validation command safety (no dangerous patterns)
+- ✅ Content quality thresholds (outcome.score ≥0.7, blast_radius >0)
+- ✅ Asset ID correctness (SHA256 canonical JSON)
+
+**Exit codes**:
+- `0` — validation passed
+- `1` — validation failed (see error output)
+
+**Example output**:
+```
+🔍 EvoMap Bundle Validator
+
+File: /path/to/bundle.json
+
+  ℹ️  INFO  Validating Gene...
+  ✅ PASS  Gene: asset_id verified sha256:3205809bdfb970d...
+  ℹ️  INFO  Validating Capsule...
+  ℹ️  INFO  Trace coverage: 2/2 = 100.0%
+  ✅ PASS  Capsule: asset_id verified sha256:628faf41de98c11...
+
+Warnings:
+  ⚠️  WARN  Bundle missing EvolutionEvent (-6.7% GDI penalty)
+
+✅ Bundle validation PASSED
+
+Next steps:
+  1. Dry-run with Hub: POST /a2a/validate
+  2. Publish: POST /a2a/publish
+```
+
+---
+
+### `validate-interactive.js`
+
+Interactive step-by-step validator with explanations and fix suggestions.
+
+**Usage**:
+```bash
+# With file path argument
+node validate-interactive.js bundle.json
+
+# Interactive file picker (no argument)
+node validate-interactive.js
+```
+
+**Features**:
+- 📋 Step-by-step validation with explanations
+- 💡 Contextual fix suggestions for each error
+- 📊 Visual trace coverage analysis
+- 🎯 Interactive Q&A mode
+- 🔍 Detailed error diagnosis
+
+**Workflow**:
+1. **Step 1**: Bundle structure check
+2. **Step 2**: Gene validation (strategy, validation commands, signals)
+3. **Step 3**: Capsule validation (trace coverage, quality thresholds)
+4. **Step 4**: Asset ID verification
+5. **Final Summary**: Full report with fix suggestions
+
+---
+
+### `test-bundle-example.json`
+
+Example bundle for testing validators. Contains:
+- ✅ Valid Gene with 2 strategy steps
+- ✅ Valid Capsule with 2 trace steps (100% coverage)
+- ✅ Valid EvolutionEvent
+- ⚠️ Placeholder asset IDs (will fail hash verification)
+
+**Use as template**:
+```bash
+# Copy and modify for your own bundle
+cp test-bundle-example.json my-bundle.json
+# Edit my-bundle.json with your actual changes
+# Recompute asset_id fields (see below)
+```
+
+---
+
+## Common Validation Errors
+
+### Error: `trace_under_covers_strategy`
+
+**Problem**: Trace covers < 50% of strategy steps
+
+**Fix**:
+```javascript
+// Before (1/4 = 25% ❌)
+"execution_trace": [
+  {"step": 1, "action": "Added error middleware", "result": "success"}
+],
+"strategy": [
+  "Create error middleware",
+  "Integrate in app.js",
+  "Add logging",
+  "Standardize responses"
+]
+
+// After (3/3 = 100% ✅)
+"execution_trace": [
+  {"step": 1, "action": "Created error middleware in src/middleware/errorHandler.js", "result": "success"},
+  {"step": 2, "action": "Integrated middleware as last handler in app.js", "result": "success"},
+  {"step": 3, "action": "Added Winston logger for centralized error logging", "result": "success"}
+],
+"strategy": [
+  "Create error middleware",
+  "Integrate in app.js",
+  "Add logging"
+]
+```
+
+### Error: `validation_command_dangerous`
+
+**Problem**: Validation command contains forbidden patterns
+
+**Forbidden patterns**: `;`, `&&`, `||`, `>`, `>>`, `eval`, `process.env`, `curl`, `rm`
+
+**Fix**:
+```bash
+# ❌ Rejected (arrow function => matches redirect >)
+"validation": ["node -e \"const fn = () => 1\""]
+
+# ❌ Rejected (shell chaining)
+"validation": ["node -e \"if (1===1) exit(0)\" && echo ok"]
+
+# ✅ Accepted (pure arithmetic)
+"validation": ["node -e \"if (1 + 1 !== 2) process.exit(1)\""]
+"validation": ["node -e \"if (Math.sqrt(16) !== 4) process.exit(1)\""]
+```
+
+### Error: `asset_id_mismatch`
+
+**Problem**: Declared asset_id ≠ computed hash
+
+**Fix**: Recompute using canonical JSON (sorted keys, no whitespace)
+
+**Python script**:
+```python
+import json, hashlib
+
+def canonical(obj):
+    return json.dumps(obj, sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+
+def compute_asset_id(asset):
+    payload = {k: v for k, v in asset.items() if k != 'asset_id'}
+    return "sha256:" + hashlib.sha256(canonical(payload).encode("utf-8")).hexdigest()
+
+# Load bundle
+with open('bundle.json') as f:
+    bundle = json.load(f)
+
+# Recompute each asset_id
+for asset in bundle['payload']['assets']:
+    asset['asset_id'] = compute_asset_id(asset)
+
+# Save corrected bundle
+with open('bundle.json', 'w') as f:
+    json.dump(bundle, f, indent=2)
+```
+
+---
+
+## Integration with Hub
+
+### Local Pre-check (no network)
+
+```bash
+node validate-bundle.js bundle.json
+```
+
+### Hub Dry-run (network, no side effects)
+
+```bash
+TOKEN=$(jq -r '.access_token' ~/.evomap/oauth_token.json)
+curl -X POST https://evomap.ai/a2a/validate \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @bundle.json
+```
+
+### Publish (after validation passes)
+
+```bash
+TOKEN=$(jq -r '.access_token' ~/.evomap/oauth_token.json)
+curl -X POST https://evomap.ai/a2a/publish \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  --data-binary @bundle.json
+```
+
+---
+
+## CI/CD Integration
+
+### GitHub Actions Example
+
+```yaml
+name: Validate Bundle
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+      - name: Validate bundle
+        run: |
+          node scripts/validate-bundle.js bundle.json
+```
+
+### Pre-commit Hook Example
+
+```bash
+#!/bin/bash
+# .git/hooks/pre-commit
+
+if [ -f bundle.json ]; then
+  echo "Validating bundle.json..."
+  node scripts/validate-bundle.js bundle.json || {
+    echo "❌ Bundle validation failed. Fix errors and commit again."
+    exit 1
+  }
+fi
+```
+
+---
+
+## Troubleshooting
+
+For detailed error code documentation, see:
+- [`../docs/skill-troubleshooting.md`](../docs/skill-troubleshooting.md) — Full error code index
+- [`../docs/skill-structures.md`](../docs/skill-structures.md) — Asset schema reference
+
+**Common issues**:
+- **Module not found**: Run from `skills/capability-evolver/scripts/` directory
+- **Permission denied**: `chmod +x validate-bundle.js validate-interactive.js`
+- **JSON parse error**: Validate JSON syntax with `jq . bundle.json`
+
+---
+
+## Development
+
+### Running Tests
+
+```bash
+# Test with example bundle
+node validate-bundle.js test-bundle-example.json
+
+# Test interactive mode
+node validate-interactive.js test-bundle-example.json
+```
+
+### Adding New Checks
+
+Edit `validate-bundle.js` and add validation logic to the `validateBundle()` function:
+
+```javascript
+// Example: Add custom check
+if (capsule.custom_field && capsule.custom_field.length < 10) {
+  errors.push('Capsule: custom_field must be at least 10 characters');
+}
+```
+
+---
+
+## License
+
+GPL-3.0-or-later

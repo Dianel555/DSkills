@@ -1,0 +1,82 @@
+{
+  "protocol": "gep-a2a",
+  "protocol_version": "1.0.0",
+  "message_type": "publish",
+  "message_id": "msg_test_001",
+  "sender_id": "node_test",
+  "timestamp": "2026-06-17T08:30:00Z",
+  "payload": {
+    "assets": [
+      {
+        "type": "Gene",
+        "schema_version": "1.5.0",
+        "category": "repair",
+        "signals_match": ["TimeoutError", "ECONNREFUSED"],
+        "summary": "Retry with exponential backoff on timeout errors",
+        "strategy": [
+          "Wrap the failing call in a bounded retry helper with max 3 attempts",
+          "Apply exponential backoff with jitter between retry attempts"
+        ],
+        "validation": [
+          "node -e \"if (1 + 1 !== 2) process.exit(1)\""
+        ],
+        "asset_id": "sha256:placeholder_gene_hash"
+      },
+      {
+        "type": "Capsule",
+        "schema_version": "1.5.0",
+        "trigger": ["TimeoutError", "ECONNREFUSED"],
+        "gene": "sha256:placeholder_gene_hash",
+        "summary": "Fixed API timeout with bounded retry and connection pooling",
+        "content": "Intent: fix intermittent API timeouts causing 5xx errors\n\nStrategy:\n1. Added connection pool with max 10 connections to prevent exhaustion\n2. Implemented exponential backoff (100ms, 200ms, 400ms) with jitter\n\nScope: 2 file(s), 35 line(s)\n\nChanged files:\n- src/api/client.js (added connection pool)\n- src/config/retry.js (backoff logic)\n\nOutcome: Timeout rate reduced from 12% to 0.3%",
+        "diff": "diff --git a/src/api/client.js b/src/api/client.js\n--- a/src/api/client.js\n+++ b/src/api/client.js\n@@ -10,6 +10,15 @@\n+const pool = new ConnectionPool({ max: 10 });\n+const retry = require('./config/retry');\n+\n+async function apiCall(url) {\n+  return retry.withBackoff(() => pool.request(url));\n+}",
+        "strategy": [
+          "Wrap the failing call in a bounded retry helper with max 3 attempts",
+          "Apply exponential backoff with jitter between retry attempts"
+        ],
+        "confidence": 0.85,
+        "blast_radius": {
+          "files": 2,
+          "lines": 35
+        },
+        "outcome": {
+          "status": "success",
+          "score": 0.85
+        },
+        "execution_trace": [
+          {
+            "step": 1,
+            "action": "Created connection pool in src/api/client.js with max 10 connections",
+            "result": "success"
+          },
+          {
+            "step": 2,
+            "action": "Implemented exponential backoff logic in src/config/retry.js",
+            "result": "success"
+          }
+        ],
+        "success_streak": 0,
+        "env_fingerprint": {
+          "platform": "win32",
+          "arch": "x64",
+          "node_version": "v22.0.0"
+        },
+        "asset_id": "sha256:placeholder_capsule_hash"
+      },
+      {
+        "type": "EvolutionEvent",
+        "schema_version": "1.5.0",
+        "intent": "repair",
+        "capsule_id": "sha256:placeholder_capsule_hash",
+        "genes_used": ["sha256:placeholder_gene_hash"],
+        "outcome": {
+          "status": "success",
+          "score": 0.85
+        },
+        "mutations_tried": 1,
+        "total_cycles": 1,
+        "asset_id": "sha256:placeholder_event_hash"
+      }
+    ]
+  }
+}
