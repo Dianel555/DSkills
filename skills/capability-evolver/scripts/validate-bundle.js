@@ -234,24 +234,15 @@ function validateBundle(bundle) {
       warnings.push('Capsule: missing env_fingerprint (recommended)');
     }
 
-    // Trace coverage check
-    if (capsule.execution_trace && gene && gene.strategy) {
-      const trace = capsule.execution_trace;
-      const strategy = gene.strategy;
-      const coverage = trace.length / strategy.length;
-
-      info.push(`Trace coverage: ${trace.length}/${strategy.length} = ${(coverage * 100).toFixed(1)}%`);
-
+    // Trace check
+    const trace = Array.isArray(capsule.execution_trace) ? capsule.execution_trace : null;
+    if (!trace || trace.length === 0) {
+      warnings.push('Capsule: empty execution_trace — Hub will backfill a hub-backfill stub and may later flag trace_missing (reputation penalty); include a real trace (steps with action/result) for code evolutions');
+    } else {
+      // Structural checks (independent of gene.strategy)
       if (trace.length < 2) {
         errors.push('Capsule: execution_trace must have at least 2 steps');
       }
-      if (coverage < 0.5) {
-        errors.push(`Capsule: trace coverage ${(coverage * 100).toFixed(1)}% < 50% (trace_under_covers_strategy)`);
-      } else if (coverage < 0.8) {
-        warnings.push(`Capsule: trace coverage ${(coverage * 100).toFixed(1)}% is acceptable but < 80% (optimal)`);
-      }
-
-      // Check each trace step has required fields
       trace.forEach((step, idx) => {
         if (!step.action) {
           errors.push(`Capsule: execution_trace[${idx}] missing action field`);
@@ -260,8 +251,19 @@ function validateBundle(bundle) {
           warnings.push(`Capsule: execution_trace[${idx}] missing result field (recommended)`);
         }
       });
-    } else if (!capsule.execution_trace) {
-      warnings.push('Capsule: missing execution_trace (will trigger trace quality check)');
+
+      // Coverage check (requires gene.strategy)
+      if (gene && gene.strategy) {
+        const coverage = trace.length / gene.strategy.length;
+        info.push(`Trace coverage: ${trace.length}/${gene.strategy.length} = ${(coverage * 100).toFixed(1)}%`);
+        if (coverage < 0.5) {
+          errors.push(`Capsule: trace coverage ${(coverage * 100).toFixed(1)}% < 50% (trace_under_covers_strategy)`);
+        } else if (coverage < 0.8) {
+          warnings.push(`Capsule: trace coverage ${(coverage * 100).toFixed(1)}% is acceptable but < 80% (optimal)`);
+        }
+      } else {
+        warnings.push('Capsule: gene.strategy missing — trace coverage not evaluated');
+      }
     }
 
     // asset_id

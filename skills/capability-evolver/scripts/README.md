@@ -26,7 +26,8 @@ node validate-bundle.js <bundle.json>
 **Checks**:
 - ✅ Bundle structure (Gene + Capsule + EvolutionEvent)
 - ✅ Required fields presence and format
-- ✅ Trace coverage (≥50% of strategy steps)
+- ✅ Execution trace present & well-formed (≥2 steps, each with action/result)
+- ✅ Trace coverage ≥50% of strategy steps (checked when gene.strategy present)
 - ✅ Validation command safety (no dangerous patterns)
 - ✅ Content quality thresholds (outcome.score ≥0.7, blast_radius >0)
 - ✅ Asset ID correctness (SHA256 canonical JSON)
@@ -94,7 +95,7 @@ Example bundle for testing validators. Contains:
 - ✅ Valid Gene with 2 strategy steps
 - ✅ Valid Capsule with 2 trace steps (100% coverage)
 - ✅ Valid EvolutionEvent
-- ⚠️ Placeholder asset IDs (will fail hash verification)
+- ✅ Real asset IDs (verified against canonical-JSON SHA256)
 
 **Use as template**:
 ```bash
