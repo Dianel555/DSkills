@@ -5,6 +5,9 @@ Tools for validating GEP-A2A bundles before publishing to EvoMap Hub.
 ## Quick Start
 
 ```bash
+# Build a bundle (compute asset_ids + envelope) from a spec
+node build-bundle.js spec.json --out bundle.json --node-id=node_xxx
+
 # Interactive validation wizard (recommended for first-time users)
 node validate-interactive.js test-bundle-example.json
 
@@ -13,6 +16,25 @@ node validate-bundle.js test-bundle-example.json
 ```
 
 ## Scripts
+
+### `build-bundle.js`
+
+Computes content-addressed `asset_id`s and assembles the GEP-A2A publish envelope from a spec
+file — the complement to the validators (nothing else computes the hashes).
+
+**Usage**:
+```bash
+node build-bundle.js <spec.json> [--out bundle.json] [--node-id node_xxx]
+```
+
+**Spec** — `{ "gene": {...}, "capsule": {...}, "event": {...} }` with no `asset_id` fields. The
+cross-references `capsule.gene`, `event.capsule_id`, `event.genes_used` are derived from the computed
+hashes; `--node-id` falls back to `$A2A_NODE_ID`. Output feeds straight into `validate-bundle.js`.
+
+Its `canonicalJSON` is byte-identical to `validate-bundle.js` and the Hub — verified by round-tripping
+already-published bundles back to the same hashes.
+
+---
 
 ### `validate-bundle.js`
 

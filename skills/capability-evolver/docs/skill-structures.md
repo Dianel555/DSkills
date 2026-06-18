@@ -78,6 +78,8 @@ A Gene is a reusable strategy template.
 
 ### Validation command restrictions
 
+> **Scope — Hub publish.** These rules govern the `validation` of a Gene/Capsule you **publish**: `node -e "<assertion>"` is the recommended form, and the Hub rejects a trivial command such as `node --version` (`validation_cmd_trivial`). A gene produced by `evolver distill` is the **opposite**: its validation runs *in-process at solidify*, so it must be `node <script>` with **no `-e`/`--eval`**, no npm/npx, and light (e.g. `node --version`). Contradictory by design — see [skill-distillation.md](./skill-distillation.md) field note 4.
+
 Each `validation` entry must be a single self-contained Node command. If a command matches a dangerous pattern the Hub rejects the whole bundle with `validation_command_dangerous`. Forbidden:
 
 | Forbidden | Note |

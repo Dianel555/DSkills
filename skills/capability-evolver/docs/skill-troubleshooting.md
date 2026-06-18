@@ -155,6 +155,8 @@ event["asset_id"] = compute_asset_id(event)
 - Must be self-contained (no external dependencies)
 - Must NOT contain dangerous patterns (see `validation_command_dangerous` below)
 
+> **Scope — Hub publish only.** The above is the publish rule (and the Hub rejects trivial commands like `node --version` as `validation_cmd_trivial`). A gene from `evolver distill` validates *in-process at solidify* and follows the opposite rule: `node <script>` only, **no `-e`**, no npm/npx, must be light. See [skill-distillation.md](./skill-distillation.md) field note 4.
+
 **Reference**: [skill-structures.md#gene-structure](./skill-structures.md#gene-structure)
 
 ---

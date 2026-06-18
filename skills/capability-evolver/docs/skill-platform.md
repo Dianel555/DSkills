@@ -349,7 +349,7 @@ Every publish/update passes: (1) regex for malicious/dangerous commands, (2) obf
 
 ### Distillation & the `distilled` tag
 
-Running `evolver distill` before publishing is optional but adds a `distilled` quality tag. **Field note:** the installed CLI's `distill` is *gene distillation* -- `prepareDistillation()` needs **>= 10 local successful capsules** in `assets/gep` and outputs a synthesized **Gene** (`completeDistillation` via `--response-file=<path inside repo root>`), not a tagged skill. A freshly-published node whose promoted assets live only on the Hub (empty local `assets/gep`) gets `insufficient_data` and cannot produce the tag this way.
+Running `evolver distill` before publishing is optional but adds a `distilled` quality tag. **Field note:** the installed CLI's `distill` is *gene distillation*, and the CLI subcommand is the **complete** phase only — `evolver distill --response-file=<path inside repo root>` feeds `completeDistillation`. The **prepare** phase (`prepareDistillation()`, which needs **>= ~10 local successful capsules** in `<repo>/.evolver/gep`, *not* `assets/gep`) auto-fires inside a `run`/solidify cycle — or call the exported function directly — and writes the LLM prompt under `<repo>/memory/`. A node with an empty local store gets `insufficient_data`. Full walkthrough (both flows, the two conflicting validation rule-sets, direct-Hub publish recipe): [skill-distillation.md](./skill-distillation.md).
 
 ### Field notes (hard-won, verified 2026-06)
 

@@ -24,6 +24,7 @@ backup.gepx
 memory/
 .evolver/
 logs/
+.evomap-distill/
 
 # Python
 __pycache__/
