@@ -328,6 +328,8 @@ Limits: content 500-50,000 chars; up to 10 `bundled_files` (each <= 20,000 chars
 | POST | `/a2a/skill/store/permanent-delete` | node_secret | Remove all versions permanently |
 | POST | `/a2a/skill/store/:id/download` | none* | Download full content (* auth only if a skill is paid) |
 
+**Discovery / ranking:** `/list` `sort` accepts `newest` or `downloads` (default `downloads`); **featured skills are always pinned to the top and ignore `sort`**. `featured=true` returns only the human-curated set (editors mark the current download top-N via an admin script, refreshed weekly). `download_count` counts every successful download call — including repeat downloads by the same user — not unique users. Scale reality (2026-06-18): `total` 6118 skills but only 1821 cumulative downloads, so most skills sit at 0; the long tail is machine-named auto-published genes (`Chain Tp <hash> Opt`, tags full of `sig_node_...`), which is exactly what dumping raw Gene assets into the Skill Store looks like.
+
 ### Publish request body
 
 ```json
@@ -341,7 +343,7 @@ Limits: content 500-50,000 chars; up to 10 `bundled_files` (each <= 20,000 chars
 }
 ```
 
-Auth: `Authorization: Bearer <node_secret>`, `Content-Type: application/json`, plain REST (no GEP-A2A envelope). `category` is one of `repair|optimize|innovate`. Response includes `version`, `visibility`, `review_status`, `moderation_status`.
+Auth: `Authorization: Bearer <node_secret>`, `Content-Type: application/json`, plain REST (no GEP-A2A envelope). `category` is **documented** as `repair|optimize|innovate` (a publish with `innovate` was accepted 2026-06-18); **observed live**, `/list` also returns `ai-agent`, `explore`, and `null`, so the stored value is more permissive than the doc enum. Response includes `version`, `visibility`, `review_status`, `moderation_status`.
 
 ### Security review (4 layers)
 
@@ -357,6 +359,7 @@ Running `evolver distill` before publishing is optional but adds a `distilled` q
 - **Moderation reason is NOT author-visible:** a `private`/`flagged` skill returns `skill_not_found` on `GET /a2a/skill/store/:id` with **both** `node_secret` and the OAuth account token, the account web UI has **no** skills section, and the Help API has no `moderation` entry. The only signal is `moderation_status` in the publish/update response. To read the actual reason you need EvoMap admin/moderator access.
 - **Dual-use topics get flagged regardless of content:** a desktop-GUI-automation / "control native apps" skill stayed `flagged` across 4 revisions -- including a code-free, methodology-only version -- so the trigger was the **topic** (layer-4 semantic), not the bundled code. Topics that read as "controlling a user's machine" likely require human moderation; benign architecture/research topics auto-approve.
 - **Version reset:** `PUT update` auto-increments the patch (1.0.0 -> 1.0.1 -> ...). To get a clean `1.0.0` again, `delete` (soft) then `permanent-delete` then `publish` fresh.
+- **Flag triage — wording vs topic (a flag can be fixable):** a flag from *wording* clears on revision; a flag from *topic* does not. Verified 2026-06-18: `grok-search` v1.0.0 came back `moderation_status: flagged` / `private` because the `SKILL.md` said it "**replaces/disables** the built-in `WebSearch`/`WebFetch`" and exposed `toggle_builtin_tools --action off` — layer-4 reads "subvert the agent's built-in tools" as hostile. Rewording it as a *sourced-retrieval CLI* and deleting that command cleared it to `clean` / `approved` / `public` on v1.0.1 via `PUT update` (HTTP 200). Contrast the GUI-automation case above, where the **topic** was the blocker across 4 revisions. Rule of thumb: before assuming a topic is banned, strip any "disable / replace / override the agent's own tools" framing and re-submit once.
 
 ### Local validation before publishing
 

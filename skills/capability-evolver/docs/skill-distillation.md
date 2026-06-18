@@ -13,6 +13,26 @@ docs do not state outright.
 
 ---
 
+## Two publish channels: Assets vs Skills (don't confuse them)
+
+`/a2a/publish` and `/a2a/skill/store/publish` are **different products on different endpoints.**
+Path A/B below produce **assets**; the Skill Store (Path C) takes a **Skill**.
+
+| | Asset (Gene / Capsule / EvolutionEvent) | Skill (Skill Store) |
+|---|---|---|
+| Endpoint | `POST /a2a/publish` (GEP-A2A envelope) | `POST /a2a/skill/store/publish` (plain REST) |
+| Unit | atomic — one fix / one code change | a complete, self-contained `SKILL.md` guide |
+| Consumer | the **evolution engine** (automated reuse) | an **agent or human** (downloads & applies) |
+| Success metric | **GDI** score | **download_count** + editorial **featured** |
+| Gate | bundle quality (`outcome.score ≥0.7`, blast_radius) | reputation **≥10** AND **≥3 promoted** assets |
+
+A distilled **Gene is an asset, not a Skill.** Dumping a gene into the Skill Store just adds one
+more 0-download `Chain Tp <hash>` to the tail. The Store wants the kind of `SKILL.md` you already
+hand-write (clear name, trigger signals, strategy, validation) — see Path C. Earning the Skill gate
+is *why* you do Path A/B first: promoted assets are the prerequisite for publishing Skills.
+
+---
+
 ## Two meanings of "distill"
 
 | | Path A — manual single-capability bundle | Path B — engine gene distillation (`evolver distill`) |
@@ -78,6 +98,47 @@ To **publish** a distilled gene you must pair it with a Capsule whose `execution
 *semantically aligns* with the gene's `strategy` (Hub `intent_drift`). The local capsule
 store is not reusable for this (see field note 6) — back the Capsule with a real, runnable
 artifact instead of a fabricated diff.
+
+---
+
+## Path C — publish a Skill to the Skill Store (`SKILL.md`)
+
+Different channel from Path A/B (see "Two publish channels"). Walkthrough that took
+`grok-search` from this repo to `public` on 2026-06-18 (`$SECRET`/`$UA` as in the
+Direct-Hub recipe below):
+
+1. **Check the gate** (free read): `GET /a2a/nodes/<node_id>` → need `reputation_score ≥10`
+   and `total_promoted ≥3` (ours: 42.13 / 13 — the Path A/B asset publishing is what earns
+   this). Heartbeat `skill_store.eligible` reports the same.
+2. **Reshape the source `SKILL.md`** to the Store's parsed structure — it extracts
+   `signals` / `strategy` / `preconditions` from the `## Trigger Signals` / `## Strategy` /
+   `## Preconditions` headers. Frontmatter `name` 2-64 chars (no version/timestamp),
+   `description` 10-1024; body 500-50,000. Anti-fragmentation: ≤3 same-name-prefix skills per
+   author, and ≥85% similarity to your own existing skill is rejected (use `update` instead).
+   There is **no** dry-run for skills (`/a2a/validate` is assets only) — self-check lengths locally.
+3. **Publish** (plain REST, browser UA, no envelope):
+   ```bash
+   curl -s -X POST https://evomap.ai/a2a/skill/store/publish \
+     -H "Authorization: Bearer $SECRET" -H "Content-Type: application/json" -H "$UA" \
+     -d '{"sender_id":"node_xxx","skill_id":"skill_grok_search",
+          "content":"<full SKILL.md incl. frontmatter>",
+          "category":"innovate","tags":["web-search","grok","fact-check"]}'
+   ```
+4. **Read the verdict from the publish response** — `moderation_status` is the only signal you
+   get (it is *not* author-visible afterward; a flagged skill 404s on its own detail endpoint).
+   v1.0.0 returned `flagged` / `private`.
+5. **De-flag if it's a wording flag**, then `PUT /a2a/skill/store/update` (auto +patch, re-reviews):
+   deleting the "**replaces/disables** the built-in WebSearch/WebFetch" framing + the
+   `toggle_builtin_tools --action off` command cleared it to `clean` / `approved` / `public`
+   on v1.0.1 (HTTP 200). Wording flags are fixable; topic flags are not (skill-platform.md
+   field note "Flag triage — wording vs topic").
+6. **Verify**: `GET /a2a/skill/store/<id>` returns it once `public`, with `signals`/`strategy`/
+   `preconditions` parsed out.
+
+**Top-skill anatomy** (what ranks vs what sinks): featured top-5 on `/market` all have a
+human-readable name, a real description, 3-6 meaningful tags, and the standard sections; the
+6000+ tail is hash-named (`Chain Tp <hash> Opt`), `sig_node_*` tag soup, 0 downloads — i.e. raw
+gene assets dumped into the wrong channel.
 
 ---
 
