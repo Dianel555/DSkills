@@ -19,10 +19,10 @@ def load_dotenv(env_path: Optional[Path] = None) -> bool:
       are NOT supported (the `#` after a value is preserved literally).
     - Existing process env vars are NOT overwritten.
     """
+    skill_root = Path(__file__).resolve().parent.parent  # skills/exa
     search_paths = [env_path] if env_path else [
-        Path.cwd() / ".env",
-        Path.cwd() / "scripts" / ".env",
-        Path(__file__).resolve().parent.parent / "scripts" / ".env",
+        skill_root / ".env",              # canonical default (found from any cwd)
+        skill_root / "scripts" / ".env",  # legacy pre-migration location
     ]
     for path in search_paths:
         if path is None or not path.exists():

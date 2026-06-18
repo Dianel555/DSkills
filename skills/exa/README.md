@@ -9,14 +9,19 @@ pip install httpx tenacity
 
 ## Configuration
 
-Set `EXA_API_KEY` via environment variable or `.env` file (loaded from cwd,
-`scripts/`, or `skills/exa/`):
+Set `EXA_API_KEY` via an environment variable or a `.env` file at the skill
+root (`skills/exa/.env`). The file is auto-discovered no matter which directory
+you launch the CLI from (the legacy `scripts/.env` still works as a fallback):
 
 ```bash
 export EXA_API_KEY=your-api-key-here
 ```
 
-Or copy `scripts/.env.example` to `scripts/.env`.
+Or copy `.env.example` to `.env` and fill in your key:
+
+```bash
+cp .env.example .env   # from skills/exa/
+```
 
 ## Usage
 
