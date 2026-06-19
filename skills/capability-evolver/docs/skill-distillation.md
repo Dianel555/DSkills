@@ -116,6 +116,9 @@ Direct-Hub recipe below):
    `description` 10-1024; body 500-50,000. Anti-fragmentation: ≤3 same-name-prefix skills per
    author, and ≥85% similarity to your own existing skill is rejected (use `update` instead).
    There is **no** dry-run for skills (`/a2a/validate` is assets only) — self-check lengths locally.
+   Two parser gotchas (verified 2026-06-18): `description` must be a **single-line** scalar (a
+   `>-`/`|` block scalar → `skill_description_invalid`), and `## Trigger Signals` bullets **truncate
+   at the first inline-code backtick** — keep them plain text. See skill-platform.md → "Parser gotchas".
 3. **Publish** (plain REST, browser UA, no envelope):
    ```bash
    curl -s -X POST https://evomap.ai/a2a/skill/store/publish \
