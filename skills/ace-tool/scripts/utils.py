@@ -10,27 +10,21 @@ _SESSION_ID: Optional[str] = None
 
 
 def load_env():
-    """Load environment variables from .env file."""
-    env_paths = [
-        Path.cwd() / ".env",
-        Path(__file__).parent / ".env",
-        Path(__file__).parent.parent / ".env",
-    ]
-    for env_path in env_paths:
-        if env_path.exists():
-            with open(env_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        key, value = line.split("=", 1)
-                        value = value.strip()
-                        # Strip inline comments (unquoted # preceded by whitespace)
-                        if value and value[0] not in ('"', "'"):
-                            value = re.split(r'\s+#', value, maxsplit=1)[0].strip()
-                        else:
-                            value = value.strip('"\'')
-                        os.environ.setdefault(key.strip(), value)
-            break
+    """Load environment variables from the skill root .env file."""
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    value = value.strip()
+                    # Strip inline comments (unquoted # preceded by whitespace)
+                    if value and value[0] not in ('"', "'"):
+                        value = re.split(r'\s+#', value, maxsplit=1)[0].strip()
+                    else:
+                        value = value.strip('"\'')
+                    os.environ.setdefault(key.strip(), value)
 
 
 def get_session_id() -> str:
