@@ -52,9 +52,6 @@ python scripts/agent_wiki_cli.py normalize-source-type --vault /path/to/vault
 # Generate Obsidian Bases (.base) views: wiki/index.base + <name>.base master table
 python scripts/agent_wiki_cli.py gen-base --name sources --vault /path/to/vault
 
-# Register an Agent-authored conversation page (wiki/sessions/<name>.md) and tag kind: session
-python scripts/agent_wiki_cli.py save-session <name> --vault /path/to/vault
-
 # Register an Agent-authored research report (wiki/queries/<name>.md) and tag kind: query
 python scripts/agent_wiki_cli.py save-report <name> --vault /path/to/vault
 
@@ -102,7 +99,6 @@ python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 | `index` | Rebuild `wiki/.wiki-index.json` from topic frontmatter (no `.base` written) | vault path | `{"ok": true, "topics": N, "errors": [...]}` |
 | `normalize-source-type` | Rewrite each topic's `source_type` frontmatter to its `sources[]` file format (in place; no-source topics skipped) | vault path | `{"ok": true, "changed": [{"path": "...", "source_type": "..."}], "skipped": N, "errors": [...]}` |
 | `gen-base` | Rebuild the index, then write Obsidian Bases views (index + master table) | vault path, `--name` | `{"ok": true, "prefix": "...", "written": [...]}` |
-| `save-session` | Register an Agent-authored conversation page under `wiki/sessions/`, ensure `kind: session`, log it (page authored by Agent; CLI writes no prose) | name, vault path | `{"ok": true, "path": "sessions/<name>.md", "kind": "session"}` or `{"error": "capture_not_found", "path": "..."}` |
 | `save-report` | Register an Agent-authored research report under `wiki/queries/`, ensure `kind: query`, log it | name, vault path | `{"ok": true, "path": "queries/<name>.md", "kind": "query"}` |
 | `gen-canvas` | Generate per-topic JSON Canvas 1.0 graph(s) under `wiki/graphs/` from the index (topic center + `sources[]` ring + 1-hop neighbor topics) | vault path, `--topic <name>` or `--all` | `{"ok": true, "path": "wiki/graphs/<name>.canvas", "nodes": N, "edges": M}` or `{"ok": true, "written": [...], "count": K}` |
 | `gen-home` | Build/refresh the `wiki/index.md` skeleton + one managed "工作区" block (Dataview card grid when detected, else static list); refreshes **only** the managed block on re-run (agent prose preserved), appends it to an unmarked content-bearing index; never touches `index.base` | vault path, `--cards auto\|on\|off` (default auto), `--no-rest` | `{"ok": true, "path": "wiki/index.md", "cards": bool, "write_via": "rest\|atomic"}` |
@@ -114,6 +110,21 @@ python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 | `gen-site` | Generate self-contained static HTML site under `wiki/site/` (optional; requires `markdown` package; degrades gracefully to escaped plaintext if absent; inline CSS; deterministic injective filenames) | vault path | `{"ok": true, "pages": N, "out": "wiki/site", "degraded": bool}` |
 
 ## Agent Workflow
+
+### Intent Routing
+
+**Before any action, classify the user request into one of two modes. Default to Answer mode.**
+
+| Trigger Signal | Mode | Action | Output |
+|---|---|---|---|
+| User is **asking / seeking explanation / requesting lookup** on a topic ("what is…", "compare…", "help me find…") — and **NOT** requesting wiki building | **Answer (default)** | Follow **Hybrid Retrieval Protocol** to answer → optionally `save-report` as a report | `wiki/queries/<name>.md` (kind: query), **does NOT create/modify topics** |
+| User **explicitly** requests "build / import / ingest / update / maintain wiki", or "create topics from these notes", or points to a vault/directory to be ingested | **Ingest/Maintain** | Follow **Standard / Batched Ingest** or **Bounded Enrichment** | `wiki/topics/<name>.md` (kind: topic) |
+
+**Rules**:
+- **Reports are the default output**. A regular question **never** triggers topic generation — unless the user explicitly requests wiki building/maintenance, or explicitly says "make it a topic page".
+- **Topics (topics) are only produced in Ingest/Maintain mode**: when ingesting source notes, batch ingesting, or maintaining/enriching existing topics.
+- When uncertain which mode applies, treat as **Answer** and produce a report directly; confirm if wiki building is actually needed.
+- Answer mode can **read** topics/index for retrieval (read-only), but **does NOT write** topics.
 
 ### Standard Ingest Loop
 
@@ -206,31 +217,44 @@ authors, normalize them deterministically:
 2. Write the returned lists into each topic's `authors` frontmatter, then rebuild via
    `index`/`gen-base`. Use `extract-authors` to inspect the raw rows when a result looks off.
 
-### Conversation & Report Capture
+### Report Capture (research reports)
 
-Persist valuable Agent conversations and research reports as **first-class, cross-linkable
-wiki nodes**. Capture is **passive**: the Agent authors the page, then registers it — the CLI
-writes no prose (mirroring `cache-put`).
+Persist valuable Agent research reports as **first-class, cross-linkable wiki nodes**. Capture is
+**passive**: the Agent authors the page, then registers it — the CLI writes no prose (mirroring
+`cache-put`). This is the default landing spot for **Answer mode** output (see *Intent Routing*).
 
-1. **Author the page** directly under `wiki/sessions/<name>.md` (a conversation) or
-   `wiki/queries/<name>.md` (a research report), with topic-compatible frontmatter
-   (`title`, `sources` [may be empty], `last_updated`, optional `summary`/`keywords`).
-   Preserve any `[[wikilinks]]`/`![[embeds]]` verbatim.
-2. **Register it**: run `save-session <name>` or `save-report <name>`. The CLI ensures the
-   `kind` discriminator (`session`/`query`, **directory-derived**), force-setting and atomically
-   rewriting only when it is absent or wrong (a correctly-tagged page is left byte-unchanged),
-   appends a `capture | save_session|save_report | <rel>` log entry, and emits the page path.
-   `<name>` is sanitized to its final path component with `.md` ensured.
+1. **Author the page** directly under `wiki/queries/<name>.md` (a research report), with
+   topic-compatible frontmatter (`title`, `sources` [may be empty], `last_updated`, optional
+   `summary`/`keywords`). Preserve any `[[wikilinks]]`/`![[embeds]]` verbatim.
+2. **Register it**: run `save-report <name>`. The CLI ensures the `kind: query` discriminator
+   (**directory-derived**), force-setting and atomically rewriting only when it is absent or wrong
+   (a correctly-tagged page is left byte-unchanged), appends a `capture | save_report | <rel>` log
+   entry, and emits the page path. `<name>` is sanitized to its final path component with `.md` ensured.
 3. **Re-ingest / cross-link**: run `index` (or `gen-base`) to pick the page up into the
-   retrieval index under the `sessions`/`queries` objects (with its `kind` and body `links[]`).
-   To relate a capture to a topic, add a `[[wikilink]]` in either page body — neighbor/backlink
+   retrieval index under the `queries` object (with its `kind` and body `links[]`).
+   To relate a report to a topic, add a `[[wikilink]]` in either page body — neighbor/backlink
    relations are then derivable from the index and surfaced by `gen-canvas`.
 
-The CLI touches only `wiki/sessions/`, `wiki/queries/`, and `wiki/log.md`; an uninitialized wiki
-→ `wiki_not_initialized`, a missing page → `capture_not_found`, and unparseable frontmatter
-fails with no write and no log entry. **Optional** ergonomics (documented, not required): a
-session-stop hook or a slash command that authors the page then calls `save-session`. A stateless
-CLI cannot observe the conversation itself, so this stays an Agent-driven step.
+The CLI touches only `wiki/queries/` and `wiki/log.md`; an uninitialized wiki → `wiki_not_initialized`,
+a missing page → `capture_not_found`, and unparseable frontmatter fails with no write and no log entry.
+
+#### Web Augmentation & Citations (信息不足时补充)
+
+When the vault's existing sources are **insufficient** to answer the question fully, supplement with
+web search instead of leaving the report thin — and **always cite**:
+
+1. **Exhaust the vault first**: route via the Hybrid Retrieval Protocol and ground in `sources[]`.
+   Only when coverage is genuinely incomplete (a gap the vault cannot fill) do you go to the web.
+2. **Search the web**: use the `grok-search` or `exa` skill if available (fall back to other
+   available search tooling otherwise). For pages, prefer `defuddle parse <url> --md` for clean,
+   token-efficient extraction. **Do NOT fetch PDF links** (`.pdf` or `Content-Type: application/pdf`)
+   — record the URL and link text only.
+3. **Cite every external claim**: each web-sourced statement MUST carry an inline citation, and the
+   report MUST end with a `## 参考来源` section listing each source as `- [标题](URL)` (one per line,
+   in citation order). Never present web-derived facts without an attributable URL.
+4. **Mark provenance**: keep vault-grounded content and web-supplemented content distinguishable
+   (e.g. a `> 来源：网络检索` note on web-only sections). Never fabricate — if neither vault nor web
+   yields an answer, say so explicitly.
 
 ### Optional Static HTML Export
 
@@ -285,7 +309,7 @@ managed "工作区" block** delimited by `<!-- agent-wiki:auto start … -->` / 
 semantic prose (regroup topics, fill 范围, author the relationship narrative); the **cards** are the
 one-click scriptable part.
 
-**Cards (Dataview auto-detection)**: the managed block renders captured sessions / reports / graphs
+**Cards (Dataview auto-detection)**: the managed block renders captured reports / graphs
 as a centered, responsive **card grid** via a `dataviewjs` query when Dataview is installed *and* its
 JavaScript Queries are enabled (read from `.obsidian/community-plugins.json` + `dataview/data.json`).
 Otherwise it falls back to a static NFC-sorted Markdown list. `--cards auto` (default) follows
@@ -490,7 +514,6 @@ When source notes **disagree on a fact** (different values, contradictory claims
     ├── log.md               # Append-only log
     ├── topics/              # Topic pages (LLM-written)
     │   └── 量子叠加原理.md
-    ├── sessions/            # Captured conversation pages (kind: session)
     ├── queries/             # Captured research reports (kind: query)
     ├── graphs/              # Generated JSON Canvas graphs (<topic>.canvas)
     ├── _archived/{date}/    # Orphaned topics
@@ -535,9 +558,9 @@ are regenerated from it and are never written back into topic files. The Obsidia
 `.base` views by reading topic frontmatter **directly**, not this JSON.
 
 - Top-level: `version` (int `1`), `generated_at` (UTC ISO-8601 derived from the max page mtime across
-  all three directories, not wall-clock), `topics` (keyed by NFC POSIX path relative to `wiki/topics/`),
-  `sessions` / `queries` (captured pages, keyed by NFC POSIX path relative to `wiki/`, e.g.
-  `sessions/<name>.md`), and `alias_index` (derived NFC alias→topic key map for routing). Topic counts stay clean: `index` reports only the topic count.
+  the topics and queries directories, not wall-clock), `topics` (keyed by NFC POSIX path relative to `wiki/topics/`),
+  `queries` (captured reports, keyed by NFC POSIX path relative to `wiki/`, e.g.
+  `queries/<name>.md`), and `alias_index` (derived NFC alias→topic key map for routing). Topic counts stay clean: `index` reports only the topic count.
 - **Topic entries** include: `path`, `title`, `sources[]`, `last_updated`,
   `year_start` (int|null), `year_end` (int|null), `authors[]`,
   `source_type` (derived), `institutions[]`, `methods[]`, `technical_routes[]`, `research_trends[]`, `summary`
@@ -547,7 +570,7 @@ are regenerated from it and are never written back into topic files. The Obsidia
   - `quality_tier` (string enum) — derived tier (`stub`/`basic`/`standard`/`rich`/`premium`)
   - `featured` (boolean, default `false`) — emphasis flag (strict boolean coercion)
   - `backlinks` (int ≥ 0) — distinct inbound linker count across all pages
-- **Session/query entries** preserve existing schema (no extended fields); they include the same base fields plus `kind` (`session`/`query`).
+- **Query entries** preserve existing schema (no extended fields); they include the same base fields plus `kind` (`query`).
 - Missing fields use null-or-empty defaults; list order is preserved (no dedup/reorder). `year_start`/`year_end` parse a 4-digit run from int or string, else null.
 - `source_type` is **always derived from the source file formats** in `sources[]` (`.md`→`markdown`,
   `.pdf`→`pdf`, `.doc/.docx`→`word`, `.xls/.xlsx/.csv`→`spreadsheet`, `.ppt/.pptx`→`slides`, `.txt`→`text`,
@@ -562,11 +585,10 @@ are regenerated from it and are never written back into topic files. The Obsidia
 
 ### Capture Page Frontmatter Contract
 
-Session/query pages use the **same frontmatter contract as topics** (`title`, `sources` [may be
+Query (report) pages use the **same frontmatter contract as topics** (`title`, `sources` [may be
 empty], `last_updated`, optional `summary`/`keywords`, auto-derived `source_type`) plus a `kind`
-discriminator that the CLI sets from the directory (`session` for `wiki/sessions/`, `query` for
-`wiki/queries/`). They are indexed under the `sessions`/`queries` objects and can be cross-linked
-into topics with body `[[wikilinks]]`.
+discriminator that the CLI sets from the directory (`query` for `wiki/queries/`). They are indexed
+under the `queries` object and can be cross-linked into topics with body `[[wikilinks]]`.
 
 ### Optional Homepage CSS
 
@@ -608,12 +630,12 @@ dark-mode variants keep text contrast at ≥4.5:1.
 
 ### Scope Boundaries
 
-This skill **includes** conversation/report capture (`save-session`/`save-report`) and Obsidian
+This skill **includes** research-report capture (`save-report`) and Obsidian
 Canvas knowledge-graph generation (`gen-canvas`). Two boundaries still hold: the CLI makes **no
 embedded LLM API calls** (all page prose is Agent-authored; the CLI only places, registers, indexes,
 or renders derived artifacts), and classification/visualization **never physically reorganizes**
-topic/session/query files into per-category folders — they stay flat under `wiki/topics/`,
-`wiki/sessions/`, `wiki/queries/`.
+topic/query files into per-category folders — they stay flat under `wiki/topics/`
+and `wiki/queries/`.
 
 
 ## Example: Minimal Ingest

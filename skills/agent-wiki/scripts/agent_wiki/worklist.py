@@ -35,18 +35,12 @@ def compute_worklist(vault: str | Path) -> dict:
 
     # --- WANTED: broken link targets ---
 
-    # Collect all existing page stems (topics, sessions, queries)
+    # Collect all existing page stems (topics, queries)
     existing_stems = set()
 
     for topic_key in data["topics"].keys():
         # Strip .md to get stem
         stem = topic_key[:-3] if topic_key.endswith(".md") else topic_key
-        existing_stems.add(_nfc(stem))
-
-    for session_key in data["sessions"].keys():
-        # sessions/name.md -> name
-        stem = session_key.split("/")[-1]
-        stem = stem[:-3] if stem.endswith(".md") else stem
         existing_stems.add(_nfc(stem))
 
     for query_key in data["queries"].keys():
@@ -60,8 +54,6 @@ def compute_worklist(vault: str | Path) -> dict:
 
     all_entries = [
         (k, v, "topic") for k, v in data["topics"].items()
-    ] + [
-        (k, v, "session") for k, v in data["sessions"].items()
     ] + [
         (k, v, "query") for k, v in data["queries"].items()
     ]

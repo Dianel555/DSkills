@@ -57,7 +57,6 @@ def cmd_init(args) -> None:
         config.topics_dir(vault),
         config.archive_dir(vault),
         config.url_cache_dir(vault),
-        config.sessions_dir(vault),
         config.queries_dir(vault),
         config.graphs_dir(vault),
     ):
@@ -279,10 +278,6 @@ def _capture(args, dir_func, kind: str, action: str) -> None:
     emit({"ok": True, "path": rel, "kind": kind})
 
 
-def cmd_save_session(args) -> None:
-    _capture(args, config.sessions_dir, "session", "save_session")
-
-
 def cmd_save_report(args) -> None:
     _capture(args, config.queries_dir, "query", "save_report")
 
@@ -310,7 +305,7 @@ def _index_stale(vault: Path, index_file: Path) -> bool:
     if not index_file.exists():
         return True
     index_mtime = index_file.stat().st_mtime_ns
-    for root in (config.topics_dir(vault), config.sessions_dir(vault), config.queries_dir(vault)):
+    for root in (config.topics_dir(vault), config.queries_dir(vault)):
         if root.exists() and any(p.stat().st_mtime_ns > index_mtime for p in root.glob("*.md")):
             return True
     return False
@@ -353,10 +348,8 @@ def cmd_status(args) -> None:
     topics = list(topics_root.glob("*.md")) if topics_root.exists() else []
     report_file = batch.report_path(vault)
     archived_topics = [p for p in archive_root.glob("**/*.md") if p != report_file] if archive_root.exists() else []
-    sessions_root = config.sessions_dir(vault)
     queries_root = config.queries_dir(vault)
     graphs_root = config.graphs_dir(vault)
-    sessions_total = len(list(sessions_root.glob("*.md"))) if sessions_root.exists() else 0
     queries_total = len(list(queries_root.glob("*.md"))) if queries_root.exists() else 0
     graphs_count = len(list(graphs_root.glob("*.canvas"))) if graphs_root.exists() else 0
     errors = []
@@ -460,7 +453,6 @@ def cmd_status(args) -> None:
         "topics_total": len(topics),
         "topics_orphaned": orphaned,
         "topics_archived": len(archived_topics),
-        "sessions_total": sessions_total,
         "queries_total": queries_total,
         "graphs_count": graphs_count,
         "graphs_stale": _graphs_stale(vault),

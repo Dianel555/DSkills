@@ -35,7 +35,7 @@ class IndexWriteError(OSError):
 
 
 def empty_schema() -> dict:
-    return {"version": INDEX_VERSION, "generated_at": EPOCH, "topics": {}, "sessions": {}, "queries": {}, "alias_index": {}}
+    return {"version": INDEX_VERSION, "generated_at": EPOCH, "topics": {}, "queries": {}, "alias_index": {}}
 
 
 def _nfc(value: str) -> str:
@@ -113,7 +113,7 @@ def _parse_links(body: str) -> list[str]:
 
 
 def _entry(rel: str, meta: dict, stem: str, kind: str, links: list[str], body: str = "") -> dict:
-    """Build an index entry. Topic entries include extended fields; sessions/queries preserve their current schema."""
+    """Build an index entry. Topic entries include extended fields; query entries preserve their current schema."""
     sources = _sources(meta.get("sources"))
     entry = {
         "path": rel,
@@ -195,23 +195,21 @@ def _index_dir(directory: Path, key_root: Path, kind: str, entries: dict, errors
 
 
 def rebuild(vault: str | Path) -> tuple[dict, list[dict]]:
-    """Build the index from topic, session, and query frontmatter.
+    """Build the index from topic and query frontmatter.
 
-    Topic keys are ``wiki/topics/``-relative (bare ``<name>.md``); session/query
-    keys are ``wiki/``-relative (``sessions/<name>.md``). Returns ``(data,
+    Topic keys are ``wiki/topics/``-relative (bare ``<name>.md``); query
+    keys are ``wiki/``-relative (``queries/<name>.md``). Returns ``(data,
     errors)``. Decode/parse failures are skipped and reported; a normalized-key
     collision within a directory is fatal and raises ``NormalizedPathCollision``.
     """
     wiki = config.wiki_root(vault)
     topics_root = config.topics_dir(vault)
     topics: dict[str, dict] = {}
-    sessions: dict[str, dict] = {}
     queries: dict[str, dict] = {}
     errors: list[dict] = []
     mtimes: list[int] = []
 
     _index_dir(topics_root, topics_root, "topic", topics, errors, mtimes)
-    _index_dir(config.sessions_dir(vault), wiki, "session", sessions, errors, mtimes)
     _index_dir(config.queries_dir(vault), wiki, "query", queries, errors, mtimes)
 
     # Build alias_index from frontmatter aliases + optional .wiki-aliases.json
@@ -281,8 +279,8 @@ def rebuild(vault: str | Path) -> tuple[dict, list[dict]]:
         link = link.split("|")[0]  # Strip alias
         return link.strip()
 
-    # Collect all linkers (topics, sessions, queries)
-    all_entries = list(topics.items()) + list(sessions.items()) + list(queries.items())
+    # Collect all linkers (topics, queries)
+    all_entries = list(topics.items()) + list(queries.items())
 
     for source_key, source_entry in all_entries:
         for link in source_entry.get("links", []):
@@ -305,7 +303,6 @@ def rebuild(vault: str | Path) -> tuple[dict, list[dict]]:
         "version": INDEX_VERSION,
         "generated_at": _iso_utc(max(mtimes)) if mtimes else EPOCH,
         "topics": topics,
-        "sessions": sessions,
         "queries": queries,
         "alias_index": dict(sorted(alias_index.items())),
     }

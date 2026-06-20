@@ -68,11 +68,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_vault(cleanup)
     cleanup.set_defaults(func=commands.cmd_cleanup)
 
-    save_session = sub.add_parser("save-session")
-    save_session.add_argument("name")
-    add_vault(save_session)
-    save_session.set_defaults(func=commands.cmd_save_session)
-
     save_report = sub.add_parser("save-report")
     save_report.add_argument("name")
     add_vault(save_report)
