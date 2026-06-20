@@ -105,6 +105,14 @@ artifact instead of a fabricated diff.
 
 Different channel from Path A/B (see "Two publish channels"):
 
+**What the Store wants**: The Skill Store is a **protocol/strategy marketplace**, not a code repository. It wants reusable knowledge (workflows, prompt templates, decision frameworks), not executable programs. Two approaches:
+- **Pure protocol** (recommended): Extract the strategy from an implementation (e.g., 5-step workflow + prompt templates + decision rules). Readers adapt to their own environment.
+- **Runnable tool**: Only if it's tiny (≤20KB per bundled file), self-contained, and environment-agnostic. Most tools don't fit — turn them into protocols instead.
+
+Example: A 600+ line Python script with hardcoded API keys and paths can be distilled into an 8KB protocol (workflow + LLM prompt schema + rules JSON). A pure protocol skill (principles + rules + framing) needs minimal reshaping.
+
+**Working directory**: Build skills in a **temporary directory** (`/tmp/{skill-name}` or OS equivalent temp location). After successful publish, **delete temp artifacts** (payload JSON, response logs) but keep the source `SKILL.md` + bundled files. If the skill belongs to a project repo, copy the final files there and commit — don't work directly in the repo during drafting to avoid polluting git status.
+
 1. **Check the gate** (free read): `GET /a2a/nodes/<node_id>` → need `reputation_score ≥10`
    and `total_promoted ≥3` (ours: 42.13 / 13 — the Path A/B asset publishing is what earns
    this). Heartbeat `skill_store.eligible` reports the same.
