@@ -299,6 +299,18 @@ Generate a self-contained static site under `wiki/site/` for offline browsing or
   hand-editable artifact and is never written back into topic frontmatter; `status.graphs_stale`
   flags topics newer than (or missing) their canvas. Rebuild the index first so neighbors are current.
 
+### Homepage Layout Templates
+
+Three reference templates are bundled under `templates/home/` in the skill directory. Each provides a complete `index.md` skeleton with a Dataview-managed 工作区 card block — pick one, paste into `wiki/index.md`, and let the agent fill the `_待补充_` placeholders.
+
+| Template | Style | Key Features |
+|----------|-------|-------------|
+| `academic.md` | Formal, citation-focused | Bases embed → grouped topic list → narrative relationship graph |
+| `dashboard.md` | Metrics-first, compact | KPI callout → Bases callouts → table navigation → relationship summary |
+| `magazine.md` | Editorial, visually rich | Quote导语 → Bases embed → callout速览 → quote脉络 |
+
+> **Usage**: Copy a template into `{vault}/wiki/index.md`, replace `_待补充_` with agent-authored prose, and keep the `<!-- agent-wiki:auto … -->` block intact so `gen-home` can refresh cards on re-run without clobbering your content.
+
 ### Homepage Skeleton + Managed Cards
 
 `gen-home` deterministically builds the `wiki/index.md` **skeleton**, not a finished page: an
@@ -511,6 +523,7 @@ When source notes **disagree on a fact** (different values, contradictory claims
 └── wiki/
     ├── index.md             # Homepage skeleton (gen-home); agent fills prose, cards auto-render
     ├── index.base           # Topic overview view (Bases)
+    ├── _home-templates/     # Homepage layout templates (academic / dashboard / magazine)
     ├── log.md               # Append-only log
     ├── topics/              # Topic pages (LLM-written)
     │   └── 量子叠加原理.md
