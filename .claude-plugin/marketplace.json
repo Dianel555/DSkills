@@ -64,6 +64,13 @@
       "source": "./skills/capability-evolver",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "cc-agy",
+      "description": "Delegate coding/research tasks to the Google Antigravity CLI (agy) for external-model execution; replaces collaborating-with-gemini",
+      "source": "./skills/cc-agy",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }

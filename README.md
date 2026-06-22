@@ -1,6 +1,6 @@
 # DSkills
 
-CLI tools skills for AI coding assistants (Claude Code, Codex, Gemini CLI).
+CLI tools skills for AI coding assistants (Claude Code, Codex, Antigravity CLI).
 
 ## Skills
 
@@ -14,6 +14,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Gemini CLI).
 | [ace-tool](skills/ace-tool/) | Semantic code search and AI-powered prompt enhancement |
 | [agent-wiki](skills/agent-wiki/) | Incremental LLM-friendly wiki generator for Obsidian note vaults |
 | [capability-evolver](skills/capability-evolver/) | Self-evolution engine for AI agents (EvoMap A2A, local Proxy mailbox) |
+| [cc-agy](skills/cc-agy/) | Delegate coding/research tasks to Google Antigravity CLI (agy) for external-model execution |
 
 ### Python Skill Dependencies
 
@@ -56,7 +57,7 @@ cp -r DSkills/skills/grok-search ~/.claude/skills/
 |----------|------------------|--------|
 | Claude Code | `~/.claude/skills/` | `.claude-plugin/marketplace.json` |
 | Codex | `~/.codex/skills/` | Copy from `skills/` |
-| Gemini CLI | `~/.gemini/skills/` | Copy from `skills/` |
+| Antigravity CLI (agy) | `~/.gemini/antigravity-cli/builtin/skills/` | `agy plugin import\|install` |
 
 ### Codex Platform
 
@@ -71,18 +72,23 @@ cp -r DSkills/skills/grok-search ~/.codex/skills/
 codex --list-skills
 ```
 
-### Gemini CLI Platform
+### Antigravity CLI (agy) Platform
 
 ```bash
 # Clone repository
 git clone https://github.com/Dianel555/DSkills.git
 
-# Copy skills to Gemini directory
-cp -r DSkills/skills/grok-search ~/.gemini/skills/
+# Import a skill as an agy plugin (supports gemini/claude plugin format)
+agy plugin import DSkills/skills/grok-search
 
-# Verify installation
-gemini --list-skills
+# Or install from a marketplace (plugin@marketplace form)
+agy plugin install grok-search@Dianel555/DSkills
+
+# List imported plugins and verify
+agy plugin list
 ```
+
+Note: agy auto-loads MCP servers from `~/.gemini/antigravity/mcp_config.json` and the memory doc at `~/.gemini/GEMINI.md`. Use the [cc-agy](skills/cc-agy/) skill to drive agy from Claude Code.
 
 ## Directory Structure
 
@@ -97,7 +103,8 @@ DSkills/
 │   ├── serena/
 │   ├── ace-tool/
 │   ├── agent-wiki/
-│   └── capability-evolver/
+│   ├── capability-evolver/
+│   └── cc-agy/
 └── .claude-plugin/
     └── marketplace.json               # Metadata
 ```
