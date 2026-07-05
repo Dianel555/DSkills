@@ -84,3 +84,12 @@ def source_path(vault: str | Path, relpath: str | Path) -> Path:
     path = (Path(vault).expanduser().resolve() / Path(rel)).resolve()
     path.relative_to(Path(vault).expanduser().resolve())
     return path
+
+
+def topic_path(vault: str | Path, relpath: str | Path) -> Path:
+    """Resolve a derived-topic relpath, constrained to wiki/topics (raises ValueError outside)."""
+    rel = normalize_relpath(relpath)
+    root = topics_dir(vault)
+    path = (root / Path(rel)).resolve()
+    path.relative_to(root)
+    return path

@@ -49,6 +49,10 @@ python scripts/agent_wiki_cli.py gen-home --vault /path/to/vault
 python scripts/agent_wiki_cli.py gen-home --cards off --no-rest --vault /path/to/vault
 python scripts/agent_wiki_cli.py extract-authors --vault /path/to/vault
 python scripts/agent_wiki_cli.py aggregate-authors --vault /path/to/vault
+python scripts/agent_wiki_cli.py quality --vault /path/to/vault
+python scripts/agent_wiki_cli.py coverage --vault /path/to/vault
+python scripts/agent_wiki_cli.py worklist --vault /path/to/vault
+python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 ```
 
 | Command | Purpose |
@@ -69,6 +73,10 @@ python scripts/agent_wiki_cli.py aggregate-authors --vault /path/to/vault
 | `gen-home` | Build/refresh the `wiki/index.md` skeleton (overview, Bases embed, topic-nav scaffold, relationship placeholder) plus one managed "工作区" block — a Dataview card grid when Dataview + its JS queries are detected, else a static list (`--cards auto\|on\|off`, default auto). Re-runs refresh **only** the managed block (agent prose preserved); a content-bearing index without markers gets the block appended (never clobbered); prefers the Obsidian Local REST API for `index.md` when configured (else atomic write; `--no-rest` forces atomic); leaves `index.base` untouched |
 | `extract-authors` | Raw `作者:` row per topic source note (read-only) |
 | `aggregate-authors` | Deduplicated first author per topic for frontmatter backfill (read-only) |
+| `quality` | Compute quality tier distribution and per-topic metrics (read-only) |
+| `coverage` | Identify covered sources vs gaps (read-only) |
+| `worklist` | Maintenance worklists: `wanted` (broken links) and `stale` (low-quality/outdated) topics (read-only) |
+| `gen-site` | Generate self-contained static HTML site under `wiki/site/` (optional `markdown` package; degrades to escaped plaintext; skipped topics reported under `errors`) |
 
 All command outputs are JSON.
 

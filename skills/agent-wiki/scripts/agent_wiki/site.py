@@ -562,7 +562,7 @@ def _atomic_write(site_dir: Path, name: str, content: str) -> None:
 def generate_site(vault: str | Path) -> dict:
     """Generate a self-contained static HTML site under wiki/site/.
 
-    Returns ``{"ok": True, "pages": int, "out": str, "degraded": bool}``.
+    Returns ``{"ok": True, "pages": int, "out": str, "degraded": bool, "errors": list}``.
     Raises ``ValueError("wiki_not_initialized")`` if the wiki is absent.
     """
     vault = Path(vault)
@@ -570,7 +570,7 @@ def generate_site(vault: str | Path) -> dict:
     if not wiki_root.exists():
         raise ValueError("wiki_not_initialized")
 
-    data, _ = wiki_index.rebuild(vault)
+    data, index_errors = wiki_index.rebuild(vault)
     topics = data["topics"]
     alias_index = data.get("alias_index", {})
     generated_at = data.get("generated_at", wiki_index.EPOCH)
@@ -588,14 +588,20 @@ def generate_site(vault: str | Path) -> dict:
     topics_dir = config.topics_dir(vault)
 
     pages_written = 0
+    errors: list[dict] = list(index_errors)
     for key, entry in topics.items():
         topic_path = topics_dir / key
         if not topic_path.exists():
             continue
         try:
             text = topic_path.read_text(encoding="utf-8-sig")
+        except (UnicodeDecodeError, OSError):
+            errors.append({"path": key, "error": "topic_decode_failed"})
+            continue
+        try:
             _meta, body = frontmatter.parse(text)
-        except Exception:
+        except frontmatter.FrontmatterError:
+            errors.append({"path": key, "error": "frontmatter_parse_failed"})
             continue
         body_html, toc = _render_body_and_toc(body, topic_keys, alias_index, slug_map)
         page = _article_page(
@@ -619,4 +625,5 @@ def generate_site(vault: str | Path) -> dict:
         "pages": pages_written,
         "out": str(site_dir),
         "degraded": not MARKDOWN_AVAILABLE,
+        "errors": errors,
     }

@@ -177,7 +177,13 @@ def cmd_cache_put(args) -> None:
     if before != after:
         fail({"error": "source_changed_during_hash", "path": rel}, 1)
 
-    cache.upsert(data, rel, sha, after[0], after[1], _parse_topics(args.topics))
+    topics = _parse_topics(args.topics)
+    for topic_rel in topics:
+        try:
+            config.topic_path(vault, topic_rel)
+        except ValueError:
+            fail({"error": "invalid_topic_path", "path": topic_rel}, 1)
+    cache.upsert(data, rel, sha, after[0], after[1], topics)
     try:
         cache.save(vault, data, expected_signature=signature)
     except cache.CacheNotWritableError:
@@ -211,7 +217,12 @@ def cmd_cleanup(args) -> None:
             continue
         source_cleaned = True
         for topic_rel in entry.get("derived_topics", []):
-            topic = config.topics_dir(vault) / config.normalize_relpath(topic_rel)
+            try:
+                topic = config.topic_path(vault, topic_rel)
+            except ValueError:
+                source_cleaned = False
+                errors.append({"path": config.normalize_relpath(topic_rel), "error": "invalid_topic_path"})
+                continue
             if not topic.exists():
                 continue
             try:
@@ -383,6 +394,7 @@ def cmd_status(args) -> None:
     try:
         _index_data, index_errors = wiki_index.rebuild(vault)
     except wiki_index.NormalizedPathCollision as exc:
+        _index_data = {}
         index_errors = [{"path": exc.path, "error": "normalized_path_collision"}]
 
     # Compute quality metrics from in-memory rebuild
@@ -604,7 +616,10 @@ def cmd_quality(args) -> None:
             continue
 
         metrics = quality.compute_metrics(body)
-        tier = quality.compute_tier(body)
+        sources = meta.get("sources")
+        items = sources if isinstance(sources, list) else [] if sources is None else [sources]
+        unique_sources = len({config.normalize_relpath(str(item)) for item in items})
+        tier = quality.compute_tier(body, source_count=unique_sources)
 
         tiers[rel] = {"tier": tier, "metrics": metrics}
         distribution[tier] += 1

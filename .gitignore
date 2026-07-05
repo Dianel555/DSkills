@@ -70,3 +70,6 @@ Thumbs.db
 
 # Test Files
 tests/
+
+# agent-wiki runtime artifacts (test leftovers)
+skills/agent-wiki/wiki/
