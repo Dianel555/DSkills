@@ -1,0 +1,68 @@
+{
+  "themes": {
+    "🤖 AI/LLM": {
+      "priority": 1,
+      "keywords": [
+        "ai", "llm", "gpt", "agent", "rag", "embedding", "model", "ml",
+        "deep learning", "transformer", "inference", "token", "prompt",
+        "voice", "tts", "vtuber", "lmm", "chatbot", "neural", "openai"
+      ]
+    },
+    "📊 数据/分析": {
+      "priority": 2,
+      "keywords": [
+        "data", "sql", "database", "analytics", "dashboard", "chart",
+        "visuali", "jupyter", "notebook", "trading", "finance", "etl",
+        "warehouse", "pipeline", "postgres", "mysql", "redis"
+      ]
+    },
+    "🔒 安全": {
+      "priority": 3,
+      "keywords": [
+        "security", "vuln", "hack", "pentest", "encrypt", "auth",
+        "firewall", "exploit", "malware", "password", "cert", "ssl",
+        "tls", "zero-trust", "sso", "oauth"
+      ]
+    },
+    "🛠️ 开发工具": {
+      "priority": 4,
+      "keywords": [
+        "cli", "terminal", "editor", "vscode", "git", "debug", "lint",
+        "format", "build", "deploy", "ci", "cd", "scrape", "crawl",
+        "convert", "markdown", "devtool", "compiler", "bundler"
+      ]
+    },
+    "🎮 前端/UI": {
+      "priority": 5,
+      "keywords": [
+        "ui", "react", "vue", "css", "tailwind", "component", "web",
+        "frontend", "app", "svelte", "angular", "nextjs", "responsive",
+        "animation", "theme", "design system"
+      ]
+    },
+    "📚 教育/学习": {
+      "priority": 6,
+      "keywords": [
+        "course", "learn", "tutorial", "education", "book", "awesome",
+        "guide", "roadmap", "interview", "example", "study", "practice"
+      ]
+    },
+    "☁️ 基础设施": {
+      "priority": 7,
+      "keywords": [
+        "kubernetes", "docker", "cloud", "server", "infra", "monitor",
+        "deploy", "aws", "k8s", "container", "orchestration", "terraform",
+        "ansible", "prometheus", "grafana", "nginx"
+      ]
+    },
+    "🌐 其他": {
+      "priority": 99,
+      "keywords": []
+    }
+  },
+  "classification_rules": [
+    "Match project name and description against keywords (case-insensitive)",
+    "First matching theme by priority wins",
+    "If no match, assign to '🌐 其他'"
+  ]
+}
