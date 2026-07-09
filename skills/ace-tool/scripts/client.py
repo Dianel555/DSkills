@@ -154,7 +154,7 @@ class AceToolClient:
         if not project_root:
             raise ValueError("project_root is required when search context injection is enabled")
         if not self.base_url or not self.token:
-            raise ValueError("ACE_API_URL and ACE_API_TOKEN required for search context injection")
+            raise ValueError("No authentication configured for search context injection. Set up session.json, AUGMENT_SESSION_AUTH, or ACE_API_URL/ACE_API_TOKEN")
         result = self._remote_search(project_root, prompt)
         raw_ctx = result.get("results", "")
         ctx = self._normalize_search_context(raw_ctx)

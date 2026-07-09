@@ -65,13 +65,11 @@ def cmd_get_config(args):
 
 def cmd_index(args):
     """Handle index command."""
-    import os
-    base_url = (args.api_url or os.getenv("ACE_API_URL", "")).rstrip("/")
-    token = args.token or os.getenv("ACE_API_TOKEN", "")
-    if not base_url or not token:
-        print(json.dumps({"error": "ACE_API_URL and ACE_API_TOKEN required for indexing"}), file=sys.stderr)
+    client = AceToolClient(args.api_url, args.token, args.endpoint)
+    if not client.base_url or not client.token:
+        print(json.dumps({"error": "No authentication configured for indexing. Set up session.json, AUGMENT_SESSION_AUTH, or ACE_API_URL/ACE_API_TOKEN"}), file=sys.stderr)
         sys.exit(1)
-    indexer = Indexer(args.project_root, base_url, token)
+    indexer = Indexer(args.project_root, client.base_url, client.token)
     blob_names = indexer.get_blob_names()
     result = {
         "total_blobs": len(blob_names),
