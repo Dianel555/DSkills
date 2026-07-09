@@ -78,6 +78,13 @@
       "source": "./skills/github-trending-analyzer",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "context7",
+      "description": "Fetch up-to-date library/framework/API documentation from Context7, bypassing training-cutoff limits; two-skill split (main + forked fetcher) minimizes token use on API calls",
+      "source": "./skills/context7",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }
