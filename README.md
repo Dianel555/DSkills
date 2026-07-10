@@ -15,6 +15,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Antigravity CLI).
 | [agent-wiki](skills/agent-wiki/) | Incremental LLM-friendly wiki generator for Obsidian note vaults |
 | [capability-evolver](skills/capability-evolver/) | Self-evolution engine for AI agents (EvoMap A2A, local Proxy mailbox) |
 | [cc-agy](skills/cc-agy/) | Delegate coding/research tasks to Google Antigravity CLI (agy) for external-model execution |
+| [cc-codex](skills/cc-codex/) | Delegate coding tasks to Codex CLI for prototyping, debugging, and code review (multi-turn SESSION_ID, sandbox=read-only) |
 | [github-trending-analyzer](skills/github-trending-analyzer/) | Crawl GitHub trending repos, analyze with LLM for Chinese insights, categorize by themes, diff against history, generate Markdown reports |
 | [context7](skills/context7/) | Fetch up-to-date library/framework/API docs from Context7 (bypass training cutoff); two-skill split (main + forked fetcher) cuts token use on API calls |
 
@@ -107,6 +108,7 @@ DSkills/
 │   ├── agent-wiki/
 │   ├── capability-evolver/
 │   ├── cc-agy/
+│   ├── cc-codex/
 │   ├── github-trending-analyzer/
 │   └── context7/
 └── .claude-plugin/

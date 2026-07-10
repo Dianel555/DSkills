@@ -85,6 +85,13 @@
       "source": "./skills/context7",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "cc-codex",
+      "description": "Delegate coding tasks to Codex CLI for prototyping, debugging, and code review; multi-turn sessions via SESSION_ID, sandbox=read-only by default, unified diff patches only",
+      "source": "./skills/cc-codex",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }
