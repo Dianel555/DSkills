@@ -12,6 +12,42 @@ Evolver is the recommended open-source client for maintaining an EvoMap connecti
 
 ---
 
+## Evolution Memory Loop
+
+The automatic memory loop is what makes Evolver useful session-to-session. Three
+hooks run without being invoked; you only act on the result:
+
+1. **Recall (SessionStart).** A summary of recent **successful** outcomes for
+   *this workspace* (score ≥ 0.5, < 7 days, max 3) is injected as context before
+   you start. If a recent success matches the task, reuse that approach; if a
+   recent failure matches, avoid repeating it. Memory is workspace-scoped via a
+   forge-resistant `.evolver/workspace-id`, so one project's outcomes never leak
+   into another.
+2. **Detect (PostToolUse, Write/Edit).** Your edits are scanned for the seven
+   improvement signals (`log_error`, `perf_bottleneck`, `capability_gap`,
+   `user_feature_request`, `test_failure`, `deployment_issue`,
+   `recurring_error`); see the signal vocabulary in [SKILL.md](../SKILL.md#signal-vocabulary).
+   On a hit, you are nudged to consider recording the outcome.
+3. **Record (Stop).** At task end the git diff is classified (success/failed,
+   score 0.8/0.3), deduped by diff hash, and appended to the memory graph at
+   `~/.evolver/memory/evolution/memory_graph.jsonl` — or the project's
+   `memory/evolution/` inside an evolver-managed repo. With no detectable
+   signal it records `stable_success_plateau`. Optionally also posts to the Hub
+   when `EVOMAP_HUB_URL`/`EVOMAP_API_KEY`/`EVOMAP_NODE_ID` are set.
+
+The memory the hooks write is what the engine pipeline consumes. To run the
+full review-and-solidify cycle (collect signals → select/mutate a gene → propose
+changes), run `evolver run` (one cycle) or `evolver --loop` (continuous) — see
+[Running Modes](#running-modes). **Solidify** persists working-tree changes into
+a durable gene with rollback safety (`EVOLVER_ROLLBACK_MODE`); **distill** turns
+a reusable conversation into a gene/capsule — see
+[skill-distillation.md](./skill-distillation.md).
+
+The hooks degrade gracefully: with no Proxy and no engine installed, local
+recall/record still works; only the network search/publish tools are inert.
+
+---
+
 ## Installation
 
 ```bash
@@ -146,6 +182,31 @@ On successful startup, Evolver prints:
 ```
 
 If you see `401 node_secret_required`, your `A2A_NODE_SECRET` is missing or stale. Delete `~/.evomap/node_secret` and restart to re-register, or set the correct value via environment variable.
+
+### Full health check
+
+When the user asks "is Evolver working?" / "connected?", report four items in
+plain language (never echo internal terms like `node_secret`, `stake`,
+`hub_rotate`):
+
+1. **Proxy / MCP** — is the local Proxy up? It starts when you run `evolver`
+   once in a git repo. If `~/.evomap/claim_url` exists, the node is registered
+   but not yet claimed — tell the user to sign in to evomap.ai and open that URL
+   (the only step, no id/secret to find). HTTP 402 on a network call means
+   network features need credits (https://evomap.ai/pricing); local memory keeps
+   working regardless.
+2. **Evolution memory** — does the graph exist and how many outcomes?
+   `~/.evolver/memory/evolution/memory_graph.jsonl` (or the project's
+   `memory/evolution/`).
+3. **Workspace id** — the forge-resistant scoping key (only in a git repo): is
+   `$REPO_ROOT/.evolver/workspace-id` present?
+4. **Full engine (optional)** — is the `@evomap/evolver` CLI installed?
+   `command -v evolver && evolver --version`; otherwise note `npm i -g
+   @evomap/evolver` unlocks `evolver run` / solidify / distill.
+
+Finish with one line on overall readiness. (When the standalone evolver plugin
+is installed, `/evolver:status` runs this checklist; here we document the
+procedure itself.)
 
 ---
 

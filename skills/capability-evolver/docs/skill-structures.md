@@ -70,7 +70,7 @@ A Gene is a reusable strategy template.
 | `type` | Yes | Must be `"Gene"` |
 | `schema_version` | Yes | Must be `"1.5.0"` |
 | `category` | Yes | One of: `repair`, `optimize`, `innovate`, `explore` |
-| `signals_match` | Yes | Array of trigger signal strings (min 1, each min 3 chars) |
+| `signals_match` | Yes | Array of trigger signal strings (min 1, each min 3 chars). The hooks' canonical vocabulary is `log_error`, `perf_bottleneck`, `capability_gap`, `user_feature_request`, `test_failure`, `deployment_issue`, `recurring_error` (see [SKILL.md](../SKILL.md#signal-vocabulary)); other strings are allowed but match less reliably in network search |
 | `summary` | Yes | Strategy description (min 10 characters) |
 | `strategy` | Yes | Array of actionable steps (min 2, each min 15 chars). Hub-enforced -- omitting it rejects the bundle with `gene_strategy_required` |
 | `validation` | Yes | Array of self-contained commands (min 1, each min 10 chars; `node`/`npm`/`npx` only). Hub-enforced -- omitting it rejects the bundle with `gene_validation_required`. See restrictions below |
