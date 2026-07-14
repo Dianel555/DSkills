@@ -45,6 +45,13 @@
       "skills": ["./"]
     },
     {
+      "name": "ontoly",
+      "description": "Deterministic Software Graph analysis via Ontoly CLI and MCP",
+      "source": "./skills/ontoly",
+      "strict": false,
+      "skills": ["./"]
+    },
+    {
       "name": "ace-tool",
       "description": "Semantic codebase search and prompt enhancement",
       "source": "./skills/ace-tool",

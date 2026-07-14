@@ -11,6 +11,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Antigravity CLI).
 | [exa](skills/exa/) | High-precision semantic search via Exa API |
 | [time](skills/time/) | Time and timezone utilities |
 | [Serena](skills/serena/) | Semantic code understanding with IDE-like symbol operations |
+| [ontoly](skills/ontoly/) | Deterministic Software Graph analysis via Ontoly CLI and MCP |
 | [ace-tool](skills/ace-tool/) | Semantic code search and AI-powered prompt enhancement |
 | [agent-wiki](skills/agent-wiki/) | Incremental LLM-friendly wiki generator for Obsidian note vaults |
 | [capability-evolver](skills/capability-evolver/) | Self-evolution engine for AI agents (EvoMap A2A, local Proxy mailbox) |
@@ -104,6 +105,7 @@ DSkills/
 │   ├── exa/
 │   ├── time/
 │   ├── serena/
+│   ├── ontoly/
 │   ├── ace-tool/
 │   ├── agent-wiki/
 │   ├── capability-evolver/
