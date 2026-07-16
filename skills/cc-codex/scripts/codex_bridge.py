@@ -322,7 +322,11 @@ def cmd_run(args) -> None:
             item = line_dict.get("item", {})
             item_type = item.get("type", "")
             if item_type == "agent_message":
-                agent_messages = agent_messages + item.get("text", "")
+                # codex emits one agent_message per preamble between tool calls
+                # plus a final one; only the last non-empty text is the answer
+                # (same semantics as --output-last-message). Concatenating them
+                # pollutes the result with intermediate narration.
+                agent_messages = item.get("text", "") or agent_messages
             if line_dict.get("thread_id") is not None:
                 thread_id = line_dict.get("thread_id")
             if line_dict.get("_bridge_fatal"):
