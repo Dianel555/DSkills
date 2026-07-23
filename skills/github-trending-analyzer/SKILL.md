@@ -1,11 +1,11 @@
 ---
 name: GitHub Trending Analyzer
-description: Crawl GitHub trending repositories, analyze with LLM for Chinese insights, categorize by themes, compute diffs against history, and generate briefing plus detailed reports in Markdown. Supports incremental gap-filling and selective re-analysis with caching.
+description: Crawl GitHub trending repositories, analyze with LLM for Chinese insights, categorize by themes, compute diffs against history, and generate Markdown reports. Default brief mode stops at trend analysis; optional detailed mode appends per-project analysis. Supports incremental gap-filling and selective re-analysis with caching.
 ---
 
 # GitHub Trending Analyzer
 
-A workflow protocol for tracking GitHub trending repositories with LLM-powered analysis. Fetches trending projects, enriches each with structured Chinese insights (what/analogy/help/who), classifies by themes, compares against historical snapshots, and generates dual-format reports (briefing + detailed).
+A workflow protocol for tracking GitHub trending repositories with LLM-powered analysis. Fetches trending projects, enriches each with structured Chinese insights (what/analogy/help/who), classifies by themes, compares against historical snapshots, and generates reports in two modes — a compact brief (default) or a detailed report with per-project analysis (opt-in).
 
 ## Trigger Signals
 
@@ -112,67 +112,20 @@ Compare current repos against the latest entry with the same `since` value:
 
 ### Step 5: Generate reports
 
-#### Briefing (compact, for quick scan)
+Two report modes, driven by the bundled templates:
 
-Structure:
-```markdown
-# GitHub 热门趋势简报 - {date}
+- **Brief (default)**: `report_template_brief.md` — stops at "💡 Trend Analysis". Always emitted.
+- **Detailed (opt-in)**: `report_template_detailed.md` — the brief content plus a per-project "📋 Project Details" section with the 4-field analysis. Emitted only when the user asks for detail (or when `deep` analysis was run).
 
-> 生成日期: {date}
-> 来源: github.com/trending?since={since}
-> 对比基准: {baseline_date}
-
-## 🔥 新上榜
-| 排名 | 项目 | 语言 | ⭐ Stars | 📈 今日新增 | 一句话说明 |
-
-## ⭐ 持续热门
-| 项目 | 语言 | ⭐ Stars | 📈 今日新增 | 为什么值得关注 |
-
-## 📉 掉出榜单
-| 项目 | 可能意味着什么 |
-
-## 🎯 趋势主题
-**{theme}** (N个): repo1(+stars), repo2(+stars), ...
-
-## 💡 趋势解读
-{LLM-generated trend insight based on all "what" summaries}
-```
-
-**Trend insight prompt**:
+**Trend insight prompt** (used in the "Trend Analysis" section of both modes):
 ```
 基于以下GitHub Trending项目摘要，用3-5句话分析当前最强技术趋势和驱动力：
 {list of "name: what" for all projects}
 ```
 
-#### Detailed (one section per project)
+Save to date-stamped files (e.g. `trending_briefing_2026-06-19.md`, `trending_detailed_2026-06-19.md`). Overwrite on same-day re-runs.
 
-Structure:
-```markdown
-# GitHub 详细分析 - {date}
-
-## {Project Name}
-
-**Stars**: {total} (+{increment})  
-**Language**: {lang}  
-**URL**: {github_url}
-
-### 这是什么
-{analysis.what}
-
-### 生活化类比
-{analysis.analogy}
-
-### 它能帮你做什么
-1. {analysis.help[0]}
-2. {analysis.help[1]}
-
-### 谁需要它
-{analysis.who}
-
----
-```
-
-Save both to files with date-stamped names (e.g. `trending_briefing_2026-06-19.md`).
+**Empty tables**: when a section (new/hot/dropped) has no rows, render the table header followed by a single `*none*` row; keep "Theme Breakdown" and "Trend Analysis" only if there are classified projects. On a first run (no memory baseline), omit the "Dropped Off" section rather than showing it empty.
 
 ## Constraints
 
@@ -199,18 +152,18 @@ Implementation hint: `detect_gaps(repos)` returns `[r for r in repos if not r.ge
 
 ## Output Protocol
 
-Emit two Markdown files to a reports directory:
+Emit Markdown files to a reports directory, based on mode:
 
-1. **Briefing** (`trending_briefing_{date}.md`): 4 sections (new/hot/dropped/themes) + trend insight.
-2. **Detailed** (`trending_detailed_{date}.md`): One block per project with 4-field analysis.
+1. **Brief (default)** (`trending_briefing_{date}.md`): sections new/hot/dropped/themes + trend insight. Stops at "Trend Analysis" — no per-project blocks.
+2. **Detailed (opt-in)** (`trending_detailed_{date}.md`): brief content followed by one "📋 Project Details" block per project with the 4-field analysis. Only when the user requests detail.
 
 Overwrite if file exists (same-day re-runs replace prior reports).
 
 **Console output** during execution:
 - "Fetching {since} trending..." → "Got {N} projects"
 - "LLM batch {i}/{total}..." → "✅ Batch complete: {n} items"
-- "📄 Briefing saved: {path}"
-- "📄 Detailed saved: {path}"
+- "📄 Brief saved: {path}"
+- "📄 Detailed saved: {path}" (only when detailed mode runs)
 - (Gap-fill) "Coverage: {covered}/{total} ({pct}%)"
 
 ## Validation

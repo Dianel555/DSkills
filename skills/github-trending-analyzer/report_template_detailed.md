@@ -1,3 +1,9 @@
+<!--
+  Detailed report = the full brief report (report_template_brief.md,
+  through "Trend Analysis") FOLLOWED BY the per-project blocks below.
+  Do NOT emit the detailed blocks without the brief header above them.
+-->
+
 # GitHub Trending Report - {date}
 
 > Generated: {date}
@@ -36,32 +42,30 @@ Current wave: {dominant_theme} projects surge due to {driver}. Notable shift fro
 
 ---
 
-# Detailed Report
+## 📋 Project Details
 
-## {Project Name}
+### {Project Name}
 
-**Stars**: {total_stars} (+{today_increment})  
-**Language**: {primary_language}  
+**Stars**: {total_stars} (+{today_increment})
+**Language**: {primary_language}
 **URL**: {github_url}
 
-### What
-
+#### 这是什么
 {what_description}
 
-### Life Analogy
-
+#### 生活化类比
 {analogy_sentence}
 
-### What It Helps You Do
-
+#### 它能帮你做什么
 1. {help_point_1}
 2. {help_point_2}
 3. {help_point_3}
 
-### Who Needs It
-
+#### 谁需要它
 {who_description}
 
 ---
 
-*Repeat above block for each project*
+<!-- Repeat the block above for each project. In deep mode, help may
+     carry 3 items; otherwise use the first 2. Field labels stay Chinese
+     to match the SKILL.md 4-field analysis schema (what/analogy/help/who). -->

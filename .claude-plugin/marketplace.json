@@ -74,7 +74,7 @@
     },
     {
       "name": "github-trending-analyzer",
-      "description": "Crawl GitHub trending repositories, analyze with LLM for Chinese insights, categorize by themes, compute diffs against history, and generate briefing plus detailed Markdown reports with caching",
+      "description": "Crawl GitHub trending repositories, analyze with LLM for Chinese insights, categorize by themes, compute diffs against history, and generate Markdown reports; default brief mode or opt-in detailed per-project analysis, with caching",
       "source": "./skills/github-trending-analyzer",
       "strict": false,
       "skills": ["./"]
