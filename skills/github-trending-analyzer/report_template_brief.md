@@ -40,7 +40,6 @@
 Current wave: {dominant_theme} projects surge due to {driver}. Notable shift from {previous_trend}.
 
 <!--
-  Brief report ends here. To produce a detailed report, use
-  report_template_detailed.md which appends a 'Project Details'
-  section with the 4-field analysis (what / analogy / help / who).
+  Boundary marker: brief mode ends here. Do not append per-project
+  blocks; for the detailed mode use report_template_detailed.md.
 -->
