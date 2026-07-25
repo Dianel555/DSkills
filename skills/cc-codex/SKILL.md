@@ -1,7 +1,7 @@
 ---
 name: cc-codex
 description: |
-  Delegates coding tasks to Codex CLI for prototyping, debugging, and code review. Use when: (1) Backend/logic implementation, (2) Algorithm design and optimization, (3) Bug analysis and debugging, (4) API/database code generation, (5) Code quality review and refactoring. Triggers: "implement algorithm", "debug", "analyze code", "backend task", "API implementation", "optimize performance", "refactor", "generate prototype", "code review". IMPORTANT: Always use sandbox="read-only" and request unified diff patches only. Supports multi-turn sessions via SESSION_ID.
+  Delegates coding tasks to Codex CLI for prototyping, debugging, and code review. Use when: (1) Backend/logic implementation, (2) Algorithm design and optimization, (3) Bug analysis and debugging, (4) API/database code generation, (5) Code quality review and refactoring. Triggers: "implement algorithm", "debug", "analyze code", "backend task", "API implementation", "optimize performance", "refactor", "generate prototype", "code review". IMPORTANT: Default sandbox="read-only" (analysis/review/patch generation); use sandbox="workspace-write" only when codex must run tests/builds to verify. Always request unified diff patches only. Supports multi-turn sessions via SESSION_ID.
 ---
 
 ## Quick Start
@@ -11,6 +11,8 @@ python scripts/codex_bridge.py --cd "/path/to/project" --PROMPT "Your task"
 ```
 
 **Output:** JSON with `success`, `SESSION_ID`, `agent_messages`, `stream_file` (path to the raw JSONL stream persisted line-by-line), optional `stderr`, and optional `error`.
+
+Approvals are always disabled (`--ask-for-approval never` is passed automatically, except under `--yolo`): exec runs headless with stdin detached, so an approval prompt could never be answered.
 
 ## Parameters
 
@@ -88,6 +90,12 @@ python scripts/codex_bridge.py plugin list
 ```bash
 python scripts/codex_bridge.py --cd "/project" --PROMPT "Generate unified diff to add logging"
 ```
+
+**Verification (codex must run tests/builds — read-only blocks them):**
+```bash
+python scripts/codex_bridge.py --cd "/project" --sandbox workspace-write --PROMPT "Run pytest, fix the failure, output a unified diff patch"
+```
+Keep requesting patch text; audit afterwards with `git status && git diff`.
 
 **Debug with full trace:**
 ```bash

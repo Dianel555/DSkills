@@ -276,6 +276,11 @@ def build_exec_cmd(args) -> List[str]:
 
     if args.yolo:
         cmd.append("--yolo")
+    else:
+        # exec runs headless (stdin=DEVNULL); an approval prompt could never
+        # be answered, so approvals stay disabled for read-only/workspace-write.
+        # Skipped under --yolo, which already bypasses approvals and sandbox.
+        cmd.extend(["--ask-for-approval", "never"])
 
     if args.skip_git_repo_check:
         cmd.append("--skip-git-repo-check")
@@ -301,6 +306,7 @@ def cmd_run(args) -> None:
     success = True
     err_message = ""
     thread_id = None
+    turn_completed = False
     timed_out = False
     stderr_sink: List[str] = []
 
@@ -335,6 +341,8 @@ def cmd_run(args) -> None:
             # Error/reconnect events appear either top-level (codex <= 0.130) or
             # item-level (codex 0.136: item.completed + item.type == "error").
             top_type = line_dict.get("type", "")
+            if top_type == "turn.completed":
+                turn_completed = True
             err_text = ""
             if "fail" in top_type:
                 err_text = (line_dict.get("error") or {}).get("message", "") or line_dict.get("message", "")
@@ -345,7 +353,9 @@ def cmd_run(args) -> None:
             if err_text:
                 is_reconnecting = bool(re.match(r'^Reconnecting\.\.\.\s+\d+/\d+(\s|$)', err_text))
                 if not is_reconnecting:
-                    success = False if len(agent_messages) == 0 else success
+                    # Unconditional: the final reconciliation restores success
+                    # only for turns that actually completed.
+                    success = False
                     err_message += "\n\n[codex error] " + err_text
 
         except json.JSONDecodeError:
@@ -354,7 +364,7 @@ def cmd_run(args) -> None:
 
         except Exception as error:
             err_message += "\n\n[unexpected error] " + f"Unexpected error: {error}. Line: {line!r}"
-            success = False if len(agent_messages) == 0 else success
+            success = False
             continue
 
     stream_fp.close()
@@ -376,7 +386,20 @@ def cmd_run(args) -> None:
     if len(agent_messages) == 0:
         success = False
         err_message = "Failed to get `agent_messages` from the codex session. \n\n You can try to set `return_all_messages` to `True` to get the full reasoning information. " + err_message
-    elif thread_id is not None and not timed_out:
+
+    if not turn_completed:
+        # turn.failed / stream cut short: codex only emits the final answer
+        # right before `turn.completed`, so every agent_message captured here
+        # is an intermediate preamble. Hard failures (e.g. 429 retry
+        # exhaustion) must surface instead of being masked by a preamble.
+        success = False
+        err_message = (
+            "Codex turn did not complete: no `turn.completed` event was observed; "
+            "any captured agent_message is intermediate narration, not the final answer. "
+            "Inspect `stream_file` for details."
+            + ("\n\n" + err_message.lstrip() if err_message else "")
+        )
+    elif len(agent_messages) > 0 and thread_id is not None and not timed_out:
         # Turn completed with both thread_id and agent_messages → transient errors
         # mid-stream (reconnects, decode noise) must not bury the final answer.
         # A hard idle timeout (timed_out) is exempt: never report it as success.

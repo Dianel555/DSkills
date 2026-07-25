@@ -1,6 +1,7 @@
 .ace-tool/
 .serena/
 TESTING.md
+.pre-commit-config.yaml
 
 #Claude-mem Files
 CLAUDE.local.md
