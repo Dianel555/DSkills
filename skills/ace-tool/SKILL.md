@@ -59,7 +59,7 @@ python scripts/ace_cli.py get_config
 ## Command Reference
 
 ### index
-Index project files for remote codebase retrieval. Scans, hashes, chunks large files, and uploads to the ACE batch-upload API. Uses incremental indexing with gzip JSON cache at `.ace-tool/index.json.gz`. Respects both `.gitignore` and `.aceignore` patterns.
+Index project files for remote codebase retrieval. Scans, hashes, chunks large files, and uploads to the ACE batch-upload API. Uses incremental indexing with gzip JSON cache at `.ace-tool/index.json.gz`. Respects both `.gitignore` and `.aceignore` patterns. If a parent directory already has a `.ace-tool` cache (lookup stops before home / filesystem root), it is reused as the effective index root; child caches in subtrees covered by the root's scan are absorbed (deleted) after a successful index save. Concurrent runs need no locks: a save interrupted by a concurrent absorption abandons persistence (the next run inherits the ancestor root), and absorption skips caches it cannot delete, retrying on the next run. A 400 `unknown blobs` response during remote search triggers an automatic index rebuild, re-upload, and a single retry.
 
 ```bash
 python scripts/ace_cli.py index -p <project_root>
@@ -291,5 +291,3 @@ enhance_prompt -p "optimize query performance" --project-root .  # With cloud co
 | Use exact match for conceptual search | Use natural language query |
 | Always use non-interactive mode | Use interactive mode for review |
 | Skip `--project-root` for enhance | Include it for cloud-based code context |
-
-

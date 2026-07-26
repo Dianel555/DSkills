@@ -8,6 +8,29 @@ from typing import Optional
 
 _SESSION_ID: Optional[str] = None
 
+_VERSION_SUFFIX_RE = re.compile(r"/v\d[A-Za-z0-9_-]*$")
+_VERSION_PREFIX_RE = re.compile(r"^/v\d[A-Za-z0-9_-]*(?=/|$)")
+
+
+def _has_version_suffix(url: str) -> tuple[bool, int]:
+    match = _VERSION_SUFFIX_RE.search(url.rstrip("/"))
+    return (True, match.start()) if match else (False, -1)
+
+
+def _strip_version_prefix(path: str) -> str:
+    return _VERSION_PREFIX_RE.sub("", path, count=1)
+
+
+def build_api_url(base_url: str, path: str) -> str:
+    base_url = base_url.rstrip("/")
+    if not path.startswith("/"):
+        path = "/" + path
+    has_ver, ver_idx = _has_version_suffix(base_url)
+    if has_ver:
+        stripped = _strip_version_prefix(path)
+        return base_url + stripped
+    return base_url + path
+
 
 def load_env():
     """Load environment variables from the skill root .env file."""

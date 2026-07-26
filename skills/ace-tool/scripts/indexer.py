@@ -5,6 +5,8 @@ import gzip
 import hashlib
 import json
 import logging
+import os
+import shutil
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -19,7 +21,7 @@ try:
         MAX_BATCH_SIZE, INDEX_DIR, INDEX_FILE, ENCODING_CHAIN,
         USER_AGENT,
     )
-    from .utils import get_session_id, detect_and_read, sanitize_content
+    from .utils import build_api_url, get_session_id, detect_and_read, sanitize_content
 except ImportError:
     from templates import (
         TEXT_EXTENSIONS, EXCLUDE_PATTERNS, BINARY_EXTENSIONS,
@@ -27,9 +29,13 @@ except ImportError:
         MAX_BATCH_SIZE, INDEX_DIR, INDEX_FILE, ENCODING_CHAIN,
         USER_AGENT,
     )
-    from utils import get_session_id, detect_and_read, sanitize_content
+    from utils import build_api_url, get_session_id, detect_and_read, sanitize_content
 
 log = logging.getLogger(__name__)
+
+
+class IndexRebuildError(ValueError):
+    """Forced re-upload failed. Subclasses ValueError so tenacity-wrapped callers do not retry the full re-upload."""
 
 
 @dataclass
@@ -48,13 +54,30 @@ class ProjectIndex:
 
 class Indexer:
     def __init__(self, project_root: str, base_url: str, token: str):
-        self.root = Path(project_root).resolve()
+        self.root = self._resolve_root(project_root)
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.index_path = self.root / INDEX_DIR / INDEX_FILE
         self._index: Optional[ProjectIndex] = None
         self._gitignore_patterns: list[str] = []
+        self._child_cache_dirs: set[Path] = set()
         self._load_ignore_patterns()
+
+    @staticmethod
+    def _resolve_root(project_root: str) -> Path:
+        """Use the nearest ancestor with an existing index cache as the effective root."""
+        requested = Path(project_root).resolve()
+        if (requested / INDEX_DIR / INDEX_FILE).is_file():
+            return requested
+        home = Path.home().resolve()
+        for parent in requested.parents:
+            # Home and filesystem-root caches are too broad to inherit implicitly.
+            if parent == home or parent.parent == parent:
+                break
+            if (parent / INDEX_DIR / INDEX_FILE).is_file():
+                log.info("Inheriting index cache from ancestor: %s", parent)
+                return parent
+        return requested
 
     def get_blob_names(self) -> list[str]:
         """Main entry: load/build index, upload pending, return blob_names."""
@@ -63,10 +86,49 @@ class Indexer:
         changed = self._scan_and_update()
         if changed:
             if self._upload_pending():
-                self._save_index()
+                if self._save_index():
+                    self._absorb_child_caches()
             else:
                 self._index.entries = old_entries
+        elif self.index_path.is_file():
+            self._absorb_child_caches()
         return list(self._index.entries.keys())
+
+    def force_rebuild(self) -> list[str]:
+        """Discard local index state, re-upload every blob (server lost our data)."""
+        self._index = ProjectIndex()
+        self._scan_and_update()
+        if not self._upload_pending():
+            raise IndexRebuildError("Failed to re-upload blobs after index rebuild")
+        if self._save_index():
+            self._absorb_child_caches()
+        return list(self._index.entries.keys())
+
+    def _absorb_child_caches(self):
+        """Delete child .ace-tool caches superseded by this root's index."""
+        own = self.index_path.parent
+        for cache_dir in self._child_cache_dirs:
+            if cache_dir == own or cache_dir.is_symlink():
+                continue
+            if not self._covered_by_scan(cache_dir.parent):
+                continue
+            try:
+                cache_dir.resolve().relative_to(self.root)
+                if not (cache_dir / INDEX_FILE).is_file():
+                    continue
+                shutil.rmtree(cache_dir)
+                log.info("Absorbed child cache: %s", cache_dir)
+            except (OSError, ValueError) as e:
+                log.warning("Failed to remove child cache %s: %s", cache_dir, e)
+
+    def _covered_by_scan(self, owner: Path) -> bool:
+        """True if the cache owner's subtree is included in this root's scan."""
+        rel_parts = owner.relative_to(self.root).parts
+        if any(p in EXCLUDE_PATTERNS for p in rel_parts):
+            return False
+        if any(part.startswith(".") for part in rel_parts):
+            return False
+        return not self._is_gitignored(owner)
 
     # --- Index persistence ---
 
@@ -84,21 +146,40 @@ class Indexer:
                 log.warning("Failed to load index, rebuilding: %s", e)
         self._index = ProjectIndex()
 
-    def _save_index(self):
+    def _save_index(self) -> bool:
         self._index.last_indexed = time.time()
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.index_path.with_suffix(".tmp")
+        # Per-process tmp: concurrent same-root writers each publish a fully
+        # written file, so a torn index can never be renamed into place.
+        tmp = self.index_path.parent / f"{INDEX_FILE}.{os.getpid()}.tmp"
         data = {
             "entries": {k: asdict(v) for k, v in self._index.entries.items()},
             "last_indexed": self._index.last_indexed,
         }
-        with gzip.open(tmp, "wt", encoding="utf-8") as f:
-            json.dump(data, f)
-        tmp.replace(self.index_path)
+        try:
+            self.index_path.parent.mkdir(parents=True, exist_ok=True)
+            with gzip.open(tmp, "wt", encoding="utf-8") as f:
+                json.dump(data, f)
+            for attempt in range(3):
+                try:
+                    tmp.replace(self.index_path)
+                    break
+                except PermissionError:
+                    # Windows refuses to replace a target a concurrent reader
+                    # briefly holds open; genuine ACL errors still propagate.
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.05 * (2 ** attempt))
+        except FileNotFoundError as e:
+            # A concurrent ancestor index absorbed this cache dir mid-write.
+            # Abandon persistence; the next run here inherits the ancestor root.
+            log.warning("Index dir vanished during save (absorbed by ancestor?): %s", e)
+            return False
+        return True
 
     # --- Scanning ---
 
     def _scan_and_update(self) -> bool:
+        self._child_cache_dirs = set()
         current_files: dict[str, Path] = {}
         for fp in self._walk_files():
             rel = fp.relative_to(self.root).as_posix()
@@ -152,6 +233,8 @@ class Indexer:
             except OSError:
                 continue
             rel_parts = fp.relative_to(self.root).parts
+            if fp.name == INDEX_FILE and fp.parent.name == INDEX_DIR:
+                self._child_cache_dirs.add(fp.parent)
             if any(p in EXCLUDE_PATTERNS for p in rel_parts):
                 continue
             if any(part.startswith(".") and part != "." for part in rel_parts):
@@ -269,7 +352,7 @@ class Indexer:
         return batches
 
     def _upload_batch_with_retry(self, headers: dict, payload: dict, max_retries: int = 3) -> bool:
-        url = f"{self.base_url}/batch-upload"
+        url = build_api_url(self.base_url, "/batch-upload")
         for attempt in range(max_retries):
             try:
                 with httpx.Client(timeout=httpx.Timeout(60.0, connect=15.0)) as client:

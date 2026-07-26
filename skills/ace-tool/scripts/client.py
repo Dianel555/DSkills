@@ -21,7 +21,7 @@ try:
         ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
         TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
     )
-    from .utils import get_session_id, is_chinese_text, parse_chat_history, detect_and_read, load_session_auth
+    from .utils import build_api_url, get_session_id, is_chinese_text, parse_chat_history, detect_and_read, load_session_auth
     from .indexer import Indexer
 except ImportError:
     from templates import (
@@ -34,41 +34,19 @@ except ImportError:
         ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
         TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
     )
-    from utils import get_session_id, is_chinese_text, parse_chat_history, detect_and_read, load_session_auth
+    from utils import build_api_url, get_session_id, is_chinese_text, parse_chat_history, detect_and_read, load_session_auth
     from indexer import Indexer
 
 import logging
 
 log = logging.getLogger(__name__)
 
-_VERSION_SUFFIX_RE = re.compile(r"/v\d[A-Za-z0-9_-]*$")
-_VERSION_PREFIX_RE = re.compile(r"^/v\d[A-Za-z0-9_-]*(?=/|$)")
 _ENHANCED_PROMPT_RE = re.compile(
     r"<augment-enhanced-prompt(?:\s+[^>]*)?>\s*(.*?)\s*</augment-enhanced-prompt\s*>",
     re.DOTALL,
 )
 _THIRD_PARTY_ENDPOINTS = frozenset({"claude", "openai", "gemini", "codex"})
 _TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
-
-
-def _has_version_suffix(url: str) -> tuple[bool, int]:
-    match = _VERSION_SUFFIX_RE.search(url.rstrip("/"))
-    return (True, match.start()) if match else (False, -1)
-
-
-def _strip_version_prefix(path: str) -> str:
-    return _VERSION_PREFIX_RE.sub("", path, count=1)
-
-
-def build_api_url(base_url: str, path: str) -> str:
-    base_url = base_url.rstrip("/")
-    if not path.startswith("/"):
-        path = "/" + path
-    has_ver, ver_idx = _has_version_suffix(base_url)
-    if has_ver:
-        stripped = _strip_version_prefix(path)
-        return base_url + stripped
-    return base_url + path
 
 
 class AceToolClient:
@@ -575,6 +553,7 @@ class AceToolClient:
         indexer = Indexer(project_root, self.base_url, self.token)
         blob_names = indexer.get_blob_names()
 
+        url = build_api_url(self.base_url, "/agents/codebase-retrieval")
         payload = {
             "information_request": query,
             "blobs": {"checkpoint_id": None, "added_blobs": blob_names, "deleted_blobs": []},
@@ -583,12 +562,19 @@ class AceToolClient:
             "disable_codebase_retrieval": False,
             "enable_commit_retrieval": False,
         }
+        timeout = httpx.Timeout(RETRIEVAL_TIMEOUT, connect=15.0)
 
-        data = self._post_json(
-            build_api_url(self.base_url, "/agents/codebase-retrieval"),
-            payload, headers=self._get_headers(),
-            timeout=httpx.Timeout(RETRIEVAL_TIMEOUT, connect=15.0),
-        )
+        try:
+            data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
+        except httpx.HTTPStatusError as e:
+            # Server lost blobs the local index marked as uploaded: rebuild, re-upload, retry once.
+            if e.response.status_code != 400 or "unknown blob" not in e.response.text.lower():
+                raise
+            log.warning("Server reports unknown blobs; rebuilding index and retrying once")
+            blob_names = indexer.force_rebuild()
+            payload["blobs"]["added_blobs"] = blob_names
+            data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
+
         return {
             "results": data.get("formatted_retrieval", ""),
             "query": query,

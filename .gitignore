@@ -17,6 +17,9 @@ AGENTS.md
 CLAUDE.md
 .claudeignore
 
+# Codex Files
+.codex/
+
 #Antigravity Files
 .agents/
 
@@ -68,9 +71,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
-
-# Test Files
-tests/
 
 # agent-wiki runtime artifacts (test leftovers)
 skills/agent-wiki/wiki/

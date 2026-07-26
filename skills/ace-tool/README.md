@@ -261,6 +261,9 @@ The `index` command performs incremental indexing:
 - **Hash**: `SHA-256(path_bytes + content_bytes)` per blob
 - **Chunk**: Files >800 lines split as `file.py#chunk1of3` format
 - **Cache**: Incremental via `mtime + size` check; stored as `.ace-tool/index.json.gz`
+- **Hierarchy**: Nearest ancestor `.ace-tool` cache (lookup stops before home / filesystem root) is reused as the index root; child caches in subtrees covered by the root's scan are deleted after a successful index save
+- **Concurrency**: Lock-free tolerate-and-converge — a save interrupted by a concurrent absorption abandons persistence (the next run inherits the ancestor root); absorption skips child caches it cannot delete and retries on the next run
+- **Self-heal**: HTTP 400 `unknown blobs` on remote search triggers a full index rebuild + re-upload, then a single retry
 - **Upload**: Batch upload (≤30 blobs, ≤1MB per batch) to `POST /batch-upload` with retry (429 Retry-After, 5xx exponential backoff, 401/403 abort)
 - **Rollback**: Upload failure prevents index save, preserving previous valid state
 - **Encoding**: Multi-encoding detection chain (`utf-8 → gbk → gb18030 → cp1252`)
@@ -310,4 +313,3 @@ skills/ace-tool/
 ## Acknowledgments
 
 - Based on [missdeer/ace-tool-rs](https://github.com/missdeer/ace-tool-rs)
-
