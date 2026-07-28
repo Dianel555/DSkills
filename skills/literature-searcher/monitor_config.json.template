@@ -1,0 +1,18 @@
+{
+  "queries": [],
+  "platforms": ["crossref", "openalex", "pubmed", "semantic_scholar"],
+  "limit": 20,
+  "year_from": null,
+  "year_to": null,
+  "state_file": "data/monitor_state.json",
+  "output_file": "data/monitor_results.json",
+  "report_file": "data/monitor_report.md",
+  "translation": {
+    "enabled": true,
+    "provider": "deeplx",
+    "target_lang": "ZH",
+    "endpoint": "",
+    "model": "",
+    "translate_abstract": false
+  }
+}
