@@ -18,7 +18,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Antigravity CLI).
 | [cc-codex](skills/cc-codex/) | Delegate coding tasks to Codex CLI for prototyping, debugging, and code review (multi-turn SESSION_ID, sandbox=read-only) |
 | [codex-cc](skills/codex-cc/) | Delegate coding tasks from Codex to local Claude Code while preserving Claude runtime customizations by default |
 | [github-trending-analyzer](skills/github-trending-analyzer/) | Crawl GitHub trending repos, analyze with LLM for Chinese insights, categorize by themes, diff against history; default brief report or opt-in detailed per-project report |
-| [context7](skills/context7/) | Fetch up-to-date library/framework/API docs from Context7 (bypass training cutoff); two-skill split (main + forked fetcher) cuts token use on API calls |
+| [context7](skills/context7/) | Fetch up-to-date library/framework/API docs from Context7 (bypass training cutoff); the co-located CLI normalizes current API payloads and an optional helper can run the same command in an isolated worker |
 
 ### Python Skill Dependencies
 
