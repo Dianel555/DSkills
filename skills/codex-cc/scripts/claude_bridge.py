@@ -9,12 +9,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
+import time
 import uuid
 from pathlib import Path
-from typing import List, Sequence
+from typing import Iterator, List, Sequence
 
 
 PERMISSION_MODES = [
@@ -145,7 +149,15 @@ def build_claude_cmd(args) -> tuple[List[str], str]:
     workspace = str(_normalize_workspace(args.cd))
     session_id = args.SESSION_ID or str(uuid.uuid4())
 
-    cmd = ["claude", "-p", "--add-dir", workspace]
+    cmd = [
+        "claude",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--add-dir",
+        workspace,
+    ]
 
     if args.model:
         cmd.extend(["--model", args.model])
@@ -169,6 +181,102 @@ def _coerce_stream_text(value) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", "replace")
     return str(value)
+
+
+def _stop_process(process: subprocess.Popen) -> None:
+    """Stop a bridge-owned process without waiting indefinitely."""
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def _stream_claude_output(
+    popen_cmd,
+    workspace: str,
+    env: dict,
+    timeout: float | None,
+    stderr_sink: List[str],
+) -> Iterator[str]:
+    """Yield Claude JSONL records while draining stderr concurrently."""
+    process = subprocess.Popen(
+        popen_cmd,
+        shell=False,
+        cwd=workspace,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    stdout_queue: queue.Queue[str | None] = queue.Queue()
+
+    def read_stdout() -> None:
+        assert process.stdout is not None
+        try:
+            for line in process.stdout:
+                stdout_queue.put(line.rstrip("\r\n"))
+        finally:
+            stdout_queue.put(None)
+
+    def read_stderr() -> None:
+        assert process.stderr is not None
+        for line in process.stderr:
+            text = line.rstrip("\r\n")
+            if text:
+                stderr_sink.append(text)
+
+    stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+    stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+    stdout_thread.start()
+    stderr_thread.start()
+    deadline = time.monotonic() + timeout if timeout is not None else None
+
+    try:
+        while True:
+            wait_for = None
+            if deadline is not None:
+                wait_for = deadline - time.monotonic()
+                if wait_for <= 0:
+                    raise subprocess.TimeoutExpired(popen_cmd, timeout)
+            try:
+                line = stdout_queue.get(timeout=wait_for)
+            except queue.Empty as exc:
+                raise subprocess.TimeoutExpired(popen_cmd, timeout) from exc
+            if line is None:
+                break
+            yield line
+
+        process.wait()
+        stderr_thread.join(timeout=1)
+    except (KeyboardInterrupt, subprocess.TimeoutExpired):
+        _stop_process(process)
+        raise
+    finally:
+        if process.poll() is None:
+            _stop_process(process)
+
+
+def _create_stream_file(requested_path: str) -> Path:
+    if requested_path:
+        return Path(requested_path).expanduser().resolve()
+    descriptor, path = tempfile.mkstemp(prefix="claude_stream_", suffix=".jsonl")
+    os.close(descriptor)
+    return Path(path)
+
+
+def _event_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return json.dumps(value, ensure_ascii=False)
 
 
 def run_passthrough(subcommand: str, extra: List[str], timeout: float = 120.0) -> None:
@@ -242,54 +350,114 @@ def cmd_run(args) -> None:
     env = os.environ.copy()
     _augment_path_env(env)
     popen_cmd = _prepare_popen_cmd(cmd, env)
+    try:
+        stream_file = _create_stream_file(getattr(args, "stream_file", ""))
+        stream = stream_file.open("w", encoding="utf-8", newline="\n")
+    except OSError as exc:
+        emit({"success": False, "error": f"Could not open Claude stream file: {exc}"})
+        return
+    stderr_lines: List[str] = []
+    all_messages: List[dict] = []
+    parse_errors: List[str] = []
+    result_seen = False
+    result_success = False
+    result_text = ""
 
     try:
-        cp = subprocess.run(
-            popen_cmd,
-            shell=False,
-            cwd=str(workspace),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=args.timeout,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-        )
+        with stream:
+            for line in _stream_claude_output(
+                popen_cmd,
+                str(workspace),
+                env,
+                args.timeout,
+                stderr_lines,
+            ):
+                stream.write(f"{line}\n")
+                stream.flush()
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    parse_errors.append(f"line {exc.lineno}: {exc.msg}")
+                    continue
+                if not isinstance(event, dict):
+                    parse_errors.append("stream record was not a JSON object")
+                    continue
+                all_messages.append(event)
+                event_session_id = event.get("session_id")
+                if isinstance(event_session_id, str) and event_session_id:
+                    session_id = event_session_id
+                if event.get("type") == "result":
+                    result_seen = True
+                    result_success = event.get("subtype") == "success" and not event.get("is_error", False)
+                    result_text = _event_text(event.get("result"))
     except subprocess.TimeoutExpired as exc:
         result = {
             "success": False,
+            "SESSION_ID": session_id,
             "error": f"claude timed out after {args.timeout}s",
+            "stream_file": str(stream_file),
         }
-        stderr = _coerce_stream_text(getattr(exc, "stderr", None)).strip()
+        stderr = "\n".join(stderr_lines).strip()
+        if not stderr:
+            stderr = _coerce_stream_text(getattr(exc, "stderr", None)).strip()
+        if getattr(args, "return_all_messages", False):
+            result["all_messages"] = all_messages
         if stderr:
             result["stderr"] = stderr
+        emit(result)
+        return
+    except KeyboardInterrupt:
+        result = {
+            "success": False,
+            "SESSION_ID": session_id,
+            "error": "claude interrupted",
+            "stream_file": str(stream_file),
+        }
+        if getattr(args, "return_all_messages", False):
+            result["all_messages"] = all_messages
         emit(result)
         return
     except FileNotFoundError:
-        emit({"success": False, "error": "claude binary not found in PATH"})
+        emit(
+            {
+                "success": False,
+                "error": "claude binary not found in PATH",
+                "stream_file": str(stream_file),
+            }
+        )
         return
 
-    stdout = (cp.stdout or "").strip()
-    stderr = (cp.stderr or "").strip()
-
-    if cp.returncode == 0 and stdout:
+    stderr = "\n".join(stderr_lines).strip()
+    if result_seen and result_success and result_text:
         result = {
             "success": True,
             "SESSION_ID": session_id,
-            "agent_messages": stdout,
+            "agent_messages": result_text,
+            "stream_file": str(stream_file),
         }
+        if getattr(args, "return_all_messages", False):
+            result["all_messages"] = all_messages
         if stderr:
             result["stderr"] = stderr
         emit(result)
         return
 
-    if cp.returncode != 0:
-        error = stderr or stdout or f"claude exited with returncode {cp.returncode}"
+    if result_seen:
+        error = result_text or "Claude result contained no assistant text."
     else:
-        error = "Claude returned no assistant text."
-    result = {"success": False, "error": error}
+        error = "Claude stream ended without a result event."
+        if parse_errors:
+            error += f" Parse errors: {'; '.join(parse_errors)}"
+    result = {
+        "success": False,
+        "SESSION_ID": session_id,
+        "error": error,
+        "stream_file": str(stream_file),
+    }
+    if getattr(args, "return_all_messages", False):
+        result["all_messages"] = all_messages
     if stderr:
         result["stderr"] = stderr
     emit(result)
@@ -321,8 +489,18 @@ def main() -> None:
     parser.add_argument(
         "--timeout",
         type=float,
-        default=600.0,
-        help="Hard timeout in seconds for the delegated Claude print-mode call.",
+        default=None,
+        help="Bridge-level timeout in seconds. Omit to wait without a bridge deadline.",
+    )
+    parser.add_argument(
+        "--stream-file",
+        default="",
+        help="Path for raw Claude stream-json records. Omit to create a temporary JSONL file.",
+    )
+    parser.add_argument(
+        "--return-all-messages",
+        action="store_true",
+        help="Include parsed stream-json records in the returned JSON envelope.",
     )
 
     sub = parser.add_subparsers(dest="subcommand")

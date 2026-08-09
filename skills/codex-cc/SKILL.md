@@ -10,13 +10,15 @@ description: |
 python scripts/claude_bridge.py --cd "/path/to/project" --PROMPT "Analyze auth flow"
 ```
 
-**Output:** JSON with `success`, `SESSION_ID`, `agent_messages`, and optional `stderr` or `error`.
+**Output:** JSON with `success`, `SESSION_ID`, `agent_messages`, `stream_file`
+(the raw Claude JSONL stream), and optional `all_messages`, `stderr`, or `error`.
 
 ## Runtime Contract
 
 - Default execution uses `claude -p` and does **not** force `--safe-mode`, `--bare`, `--disable-slash-commands`, or `--strict-mcp-config`.
 - Claude Code therefore keeps its normal loading path for trusted-workspace customizations such as `CLAUDE.md`, skills, plugins, MCP servers, custom commands, and rules.
 - `claude -p` skips the interactive trust dialog and silently ignores invalid settings files, so use this only in workspaces you already trust and whose `.claude` settings already validate.
+- The bridge requests `stream-json`, persists each record immediately, and only treats Claude's final `result` record as a completed answer. Intermediate `assistant` records never mask a failed or incomplete turn.
 
 ## Parameters
 
@@ -25,6 +27,7 @@ usage: claude_bridge.py [-h] --PROMPT PROMPT --cd CD [--SESSION_ID SESSION_ID]
                         [--model MODEL]
                         [--permission-mode {,acceptEdits,auto,bypassPermissions,manual,dontAsk,plan}]
                         [--dangerously-skip-permissions] [--timeout TIMEOUT]
+                        [--stream-file STREAM_FILE] [--return-all-messages]
                         {mcp,plugin} ...
 
 options:
@@ -34,7 +37,9 @@ options:
   --model MODEL                  Claude model override.
   --permission-mode ...          Claude permission mode override.
   --dangerously-skip-permissions Bypass Claude permission checks.
-  --timeout TIMEOUT              Hard timeout in seconds for the print-mode call.
+  --timeout TIMEOUT              Bridge-level timeout in seconds. Omit for no bridge deadline.
+  --stream-file STREAM_FILE      Raw Claude stream-json JSONL destination.
+  --return-all-messages          Include parsed stream records in the result.
 
 subcommands:
   mcp                            Thin passthrough to `claude mcp`.

@@ -27,6 +27,10 @@ def _run_main(monkeypatch, capsys, argv):
     return json.loads(capsys.readouterr().out)
 
 
+def _stream_event(event):
+    return json.dumps(event, ensure_ascii=False)
+
+
 def test_build_claude_cmd_new_session_generates_uuid(monkeypatch, tmp_path):
     fixed_uuid = uuid.UUID("11111111-1111-1111-1111-111111111111")
     monkeypatch.setattr(cb.uuid, "uuid4", lambda: fixed_uuid)
@@ -43,7 +47,15 @@ def test_build_claude_cmd_new_session_generates_uuid(monkeypatch, tmp_path):
     cmd, session_id = cb.build_claude_cmd(args)
 
     workspace = str(tmp_path.resolve())
-    assert cmd[:4] == ["claude", "-p", "--add-dir", workspace]
+    assert cmd[:7] == [
+        "claude",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--add-dir",
+        workspace,
+    ]
     assert cmd[cmd.index("--session-id") + 1] == str(fixed_uuid)
     assert cmd[-1] == "Analyze auth"
     assert session_id == str(fixed_uuid)
@@ -81,11 +93,11 @@ def test_build_claude_cmd_resume_preserves_session_and_opt_in_flags(tmp_path):
 def test_missing_workspace_fails_without_launch(monkeypatch, capsys, tmp_path):
     launched = {"value": False}
 
-    def fake_run(*args, **kwargs):
+    def fake_stream(*args, **kwargs):
         launched["value"] = True
-        raise AssertionError("subprocess.run should not be called")
+        raise AssertionError("Claude should not be called")
 
-    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
     args = SimpleNamespace(
         PROMPT="Analyze auth",
         cd=tmp_path / "missing",
@@ -107,20 +119,34 @@ def test_missing_workspace_fails_without_launch(monkeypatch, capsys, tmp_path):
 def test_success_envelope_and_workspace_coherence(monkeypatch, capsys, tmp_path):
     fixed_uuid = uuid.UUID("33333333-3333-3333-3333-333333333333")
     captured = {}
+    stream_file = tmp_path / "claude-stream.jsonl"
 
-    def fake_prepare(cmd, env):
-        captured["cmd"] = cmd
-        captured["env"] = env
-        return cmd
-
-    def fake_run(popen_cmd, **kwargs):
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
         captured["popen_cmd"] = popen_cmd
-        captured["cwd"] = kwargs["cwd"]
-        return SimpleNamespace(returncode=0, stdout="final answer\n", stderr="warning\n")
+        captured["workspace"] = workspace
+        captured["timeout"] = timeout
+        stderr_sink.append("warning")
+        yield _stream_event({"type": "system", "subtype": "init", "session_id": str(fixed_uuid)})
+        yield _stream_event(
+            {
+                "type": "assistant",
+                "session_id": str(fixed_uuid),
+                "message": {"content": [{"type": "text", "text": "intermediate"}]},
+            }
+        )
+        yield _stream_event(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": str(fixed_uuid),
+                "result": "final answer",
+            }
+        )
 
     monkeypatch.setattr(cb.uuid, "uuid4", lambda: fixed_uuid)
-    monkeypatch.setattr(cb, "_prepare_popen_cmd", fake_prepare)
-    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    monkeypatch.setattr(cb, "_prepare_popen_cmd", lambda cmd, env: cmd)
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
     args = SimpleNamespace(
         PROMPT="Analyze auth",
         cd=tmp_path,
@@ -129,6 +155,8 @@ def test_success_envelope_and_workspace_coherence(monkeypatch, capsys, tmp_path)
         permission_mode="",
         dangerously_skip_permissions=False,
         timeout=600.0,
+        stream_file=str(stream_file),
+        return_all_messages=True,
     )
 
     cb.cmd_run(args)
@@ -138,17 +166,68 @@ def test_success_envelope_and_workspace_coherence(monkeypatch, capsys, tmp_path)
     assert out["success"] is True
     assert out["SESSION_ID"] == str(fixed_uuid)
     assert out["agent_messages"] == "final answer"
+    assert out["stream_file"] == str(stream_file)
+    assert [item["type"] for item in out["all_messages"]] == ["system", "assistant", "result"]
     assert out["stderr"] == "warning"
-    assert captured["cwd"] == workspace
-    assert captured["cmd"][captured["cmd"].index("--add-dir") + 1] == workspace
+    assert captured["workspace"] == workspace
+    assert captured["popen_cmd"][captured["popen_cmd"].index("--add-dir") + 1] == workspace
+    assert stream_file.read_text(encoding="utf-8").count("\n") == 3
+
+
+def test_result_error_is_not_masked_by_assistant_message(monkeypatch, capsys, tmp_path):
+    session_id = "33333333-3333-3333-3333-333333333333"
+
+    def fake_stream(*args, **kwargs):
+        yield _stream_event(
+            {
+                "type": "assistant",
+                "session_id": session_id,
+                "message": {"content": [{"type": "text", "text": "Working on it"}]},
+            }
+        )
+        yield _stream_event(
+            {
+                "type": "result",
+                "subtype": "error_during_execution",
+                "is_error": True,
+                "session_id": session_id,
+                "result": "upstream failed",
+            }
+        )
+
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
+    args = SimpleNamespace(
+        PROMPT="Analyze auth",
+        cd=tmp_path,
+        SESSION_ID=session_id,
+        model="",
+        permission_mode="",
+        dangerously_skip_permissions=False,
+        timeout=None,
+        stream_file="",
+        return_all_messages=False,
+    )
+
+    cb.cmd_run(args)
+    out = json.loads(capsys.readouterr().out)
+
+    assert out["success"] is False
+    assert out["SESSION_ID"] == session_id
+    assert out["error"] == "upstream failed"
+    assert "agent_messages" not in out
+    assert Path(out["stream_file"]).is_file()
 
 
 def test_timeout_failure_is_not_reported_as_success(monkeypatch, capsys, tmp_path):
-    def fake_run(popen_cmd, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=popen_cmd, timeout=5, output="partial answer", stderr="still running")
+    fixed_uuid = uuid.UUID("44444444-4444-4444-4444-444444444444")
 
-    monkeypatch.setattr(cb, "_prepare_popen_cmd", lambda cmd, env: cmd)
-    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
+        yield _stream_event({"type": "system", "subtype": "init", "session_id": str(fixed_uuid)})
+        stderr_sink.append("still running")
+        raise subprocess.TimeoutExpired(cmd=popen_cmd, timeout=5, stderr="still running")
+
+    monkeypatch.setattr(cb.uuid, "uuid4", lambda: fixed_uuid)
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
     args = SimpleNamespace(
         PROMPT="Analyze auth",
         cd=tmp_path,
@@ -162,16 +241,72 @@ def test_timeout_failure_is_not_reported_as_success(monkeypatch, capsys, tmp_pat
     cb.cmd_run(args)
     out = json.loads(capsys.readouterr().out)
     assert out["success"] is False
+    assert out["SESSION_ID"] == str(fixed_uuid)
     assert "timed out" in out["error"]
     assert "agent_messages" not in out
+    assert Path(out["stream_file"]).read_text(encoding="utf-8").count("\n") == 1
+
+
+def test_omitted_timeout_disables_bridge_deadline(monkeypatch, capsys, tmp_path):
+    captured = {}
+
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
+        captured["timeout"] = timeout
+        session_id = popen_cmd[popen_cmd.index("--session-id") + 1]
+        yield _stream_event(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": session_id,
+                "result": "done",
+            }
+        )
+
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
+
+    out = _run_main(
+        monkeypatch,
+        capsys,
+        ["--PROMPT", "Analyze auth", "--cd", str(tmp_path)],
+    )
+
+    assert captured["timeout"] is None
+    assert out["success"] is True
+
+
+def test_interrupt_preserves_resume_session_id(monkeypatch, capsys, tmp_path):
+    session_id = "55555555-5555-5555-5555-555555555555"
+
+    def fake_stream(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
+    args = SimpleNamespace(
+        PROMPT="Continue",
+        cd=tmp_path,
+        SESSION_ID=session_id,
+        model="",
+        permission_mode="plan",
+        dangerously_skip_permissions=False,
+        timeout=None,
+    )
+
+    cb.cmd_run(args)
+    out = json.loads(capsys.readouterr().out)
+
+    assert out["success"] is False
+    assert out["SESSION_ID"] == session_id
+    assert out["error"] == "claude interrupted"
+    assert Path(out["stream_file"]).is_file()
 
 
 def test_empty_stdout_is_a_failure(monkeypatch, capsys, tmp_path):
-    def fake_run(popen_cmd, **kwargs):
-        return SimpleNamespace(returncode=0, stdout="\n", stderr="")
+    def fake_stream(*args, **kwargs):
+        if False:
+            yield ""
 
-    monkeypatch.setattr(cb, "_prepare_popen_cmd", lambda cmd, env: cmd)
-    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
     args = SimpleNamespace(
         PROMPT="Analyze auth",
         cd=tmp_path,
@@ -185,8 +320,10 @@ def test_empty_stdout_is_a_failure(monkeypatch, capsys, tmp_path):
     cb.cmd_run(args)
     out = json.loads(capsys.readouterr().out)
     assert out["success"] is False
-    assert "no assistant text" in out["error"].lower()
+    assert uuid.UUID(out["SESSION_ID"])
+    assert "without a result event" in out["error"].lower()
     assert "agent_messages" not in out
+    assert Path(out["stream_file"]).is_file()
 
 
 @pytest.mark.parametrize(

@@ -66,7 +66,9 @@ python scripts/claude_bridge.py plugin marketplace list
 | `--model` | No | Claude model override |
 | `--permission-mode` | No | Claude permission mode override |
 | `--dangerously-skip-permissions` | No | Opt-in permission bypass |
-| `--timeout` | No | Hard timeout in seconds for the bridge call |
+| `--timeout` | No | Bridge-level timeout in seconds; omit it to wait without a bridge deadline |
+| `--stream-file` | No | Raw Claude `stream-json` JSONL destination; omit it to create a temporary file |
+| `--return-all-messages` | No | Include all parsed stream records in the returned envelope |
 
 `*` Not required for `mcp` / `plugin` passthrough invocations.
 
@@ -79,16 +81,24 @@ Successful task execution:
   "success": true,
   "SESSION_ID": "uuid",
   "agent_messages": "Claude response text",
+  "stream_file": "/tmp/claude_stream_....jsonl",
   "stderr": "optional diagnostic text"
 }
 ```
+
+The bridge reads Claude's streaming output incrementally and treats the final
+`result` record as the authoritative completion message. Intermediate
+`assistant` records remain available in `stream_file` and, when
+`--return-all-messages` is set, in `all_messages`.
 
 Failed task execution:
 
 ```json
 {
   "success": false,
+  "SESSION_ID": "uuid-if-claude-was-launched",
   "error": "Failure reason",
+  "stream_file": "/tmp/claude_stream_....jsonl",
   "stderr": "optional diagnostic text"
 }
 ```
