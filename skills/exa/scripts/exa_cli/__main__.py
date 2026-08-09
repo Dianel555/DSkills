@@ -1,4 +1,4 @@
-"""argparse routing for exa_cli with global options + 4 subcommands."""
+"""argparse routing for the Exa CLI."""
 
 from __future__ import annotations
 
@@ -7,13 +7,12 @@ import asyncio
 import os
 import sys
 
-from .commands import (
-    cmd_get_config_info,
-    cmd_web_fetch_exa,
-    cmd_web_search_advanced_exa,
-    cmd_web_search_exa,
-)
+from .advanced import cmd_web_search_advanced_exa
+from .agent import AGENT_EFFORTS, AGENT_PROVIDERS, cmd_agent_run, run_id_arg
 from .config import Config, load_dotenv
+from .config_info import cmd_get_config_info
+from .fetch import cmd_web_fetch_exa
+from .search import cmd_web_search_exa
 
 
 def _add_global_options(parser: argparse.ArgumentParser) -> None:
@@ -41,6 +40,20 @@ def _positive_int(value: str) -> int:
     if n <= 0:
         raise argparse.ArgumentTypeError("must be a positive integer")
     return n
+
+
+def _non_negative_int(value: str) -> int:
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return n
+
+
+def _run_id(value: str) -> str:
+    try:
+        return run_id_arg(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _build_search_parser(sub) -> None:
@@ -90,6 +103,23 @@ def _build_config_info_parser(sub) -> None:
     p.add_argument("--no-test", action="store_true", help="Skip connectivity probe")
 
 
+def _build_agent_parser(sub) -> None:
+    p = sub.add_parser("agent_run", help="Create or resume an Exa Agent run")
+    mode = p.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--query", help="Research objective for a new run")
+    mode.add_argument("--run-id", type=_run_id, help="Existing Agent run ID")
+    p.add_argument("--system-prompt")
+    p.add_argument("--output-schema", metavar="FILE")
+    p.add_argument("--input-data", metavar="FILE")
+    p.add_argument("--input-exclusion", metavar="FILE")
+    p.add_argument("--data-source", action="append", choices=AGENT_PROVIDERS)
+    p.add_argument("--previous-run-id", type=_run_id)
+    p.add_argument("--effort", choices=AGENT_EFFORTS, default=None)
+    p.add_argument("--wait-seconds", type=_non_negative_int, default=750)
+    p.add_argument("--poll-interval", type=_positive_int, default=4)
+    p.add_argument("--out", "-o", help="Write the normalized result to a file")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="exa_cli",
@@ -101,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     _build_fetch_parser(sub)
     _build_advanced_parser(sub)
     _build_config_info_parser(sub)
+    _build_agent_parser(sub)
     return parser
 
 
@@ -109,6 +140,7 @@ COMMAND_DISPATCH = {
     "web_fetch_exa": cmd_web_fetch_exa,
     "web_search_advanced_exa": cmd_web_search_advanced_exa,
     "get_config_info": cmd_get_config_info,
+    "agent_run": cmd_agent_run,
 }
 
 

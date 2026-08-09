@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import httpx
 
-from ..client import ExaClient
-from ..config import Config
-from ..output import output_json
+from .client import ExaClient
+from .config import Config
+from .output import output_json
 
 
 async def cmd_get_config_info(args) -> None:
@@ -16,14 +16,14 @@ async def cmd_get_config_info(args) -> None:
     if not args.no_test:
         test_result = {"status": "Not tested", "message": ""}
         try:
-            client = ExaClient(
+            async with ExaClient(
                 cfg.exa_api_url,
                 cfg.exa_api_key,
                 max_retry_wait=cfg.max_retry_wait,
                 debug=cfg.debug_enabled,
                 auth_scheme=cfg.auth_scheme,
-            )
-            await client.search({"query": "test", "numResults": 1})
+            ) as client:
+                await client.search({"query": "test", "numResults": 1})
             test_result["status"] = "OK"
             test_result["message"] = "API connection successful"
         except ValueError as exc:

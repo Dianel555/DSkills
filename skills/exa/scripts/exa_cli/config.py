@@ -9,6 +9,10 @@ from typing import Optional
 DEFAULT_API_URL = "https://api.exa.ai"
 
 
+def skill_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
 def load_dotenv(env_path: Optional[Path] = None) -> bool:
     """Load .env using a documented subset:
 
@@ -19,10 +23,10 @@ def load_dotenv(env_path: Optional[Path] = None) -> bool:
       are NOT supported (the `#` after a value is preserved literally).
     - Existing process env vars are NOT overwritten.
     """
-    skill_root = Path(__file__).resolve().parent.parent  # skills/exa
+    root = skill_root()
     search_paths = [env_path] if env_path else [
-        skill_root / ".env",              # canonical default (found from any cwd)
-        skill_root / "scripts" / ".env",  # legacy pre-migration location
+        root / ".env",              # canonical default (found from any cwd)
+        root / "scripts" / ".env",  # legacy pre-migration location
     ]
     for path in search_paths:
         if path is None or not path.exists():

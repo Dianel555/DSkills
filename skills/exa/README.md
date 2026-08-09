@@ -47,6 +47,12 @@ python scripts/exa_cli.py web_search_advanced_exa --query "machine learning" \
 # Configuration + connectivity probe
 python scripts/exa_cli.py get_config_info
 
+# Create an Agent run, then resume the same retained run if needed
+python scripts/exa_cli.py agent_run \
+  --query "Build an evidence-backed company list" \
+  --effort low --wait-seconds 750 --out agent.json
+python scripts/exa_cli.py agent_run --run-id agent_run_123
+
 # Third-party endpoint with Bearer authentication
 export EXA_API_URL=https://pool.example.com
 export EXA_AUTH_SCHEME=bearer
@@ -62,6 +68,42 @@ python scripts/exa_cli.py web_search_exa --query "AI research"
 | `web_search_advanced_exa` | Filtered search (`--type auto/fast/instant`, repeatable domain/text flags) |
 | `web_fetch_exa` | Batch URL extraction via `/contents` (`--urls` repeatable) |
 | `get_config_info` | Show config + optional connectivity probe |
+| `agent_run` | Create, wait for, resume, or continue an Exa Agent run |
+
+## Agent Runs
+
+Create mode requires `--query`; resume mode requires `--run-id`. The two modes
+are mutually exclusive. Create mode additionally supports:
+
+- `--system-prompt`
+- UTF-8 JSON files via `--output-schema`, `--input-data`, and `--input-exclusion`
+- up to five unique repeatable `--data-source` values
+- `--previous-run-id` for a follow-up to a completed run
+- `--effort minimal|low|medium|high|xhigh|auto` (default `low`)
+- `--wait-seconds` (default 750), `--poll-interval` (default 4), and `--out`
+
+`--run-id` resumes the same unfinished run using GET only. In contrast,
+`--previous-run-id` is supplied with a new query and creates a new ID using a
+completed run as context. Never create a replacement for a queued/running run.
+
+The CLI always performs at least one GET, including when `--wait-seconds 0`.
+Lifecycle results are normalized as follows:
+
+| Status | Result | Exit |
+|--------|--------|------|
+| `completed` | `success=true`, `outputReady=true`, output plus optional usage/cost | 0 |
+| queued/running/unknown at deadline | `status="running"`, same ID, resume command | 0 |
+| `failed` | `success=false`, same ID and upstream error | 1 |
+| `cancelled` | `success=false`, same ID | 1 |
+| Ctrl-C | stderr resume event when ID is known | 130 |
+
+Agent create is non-idempotent and is attempted exactly once. Network errors,
+408, 429, or 5xx responses are not retried because an upstream run may already
+exist without a recoverable ID. GET polling retains the four-attempt bounded
+retry policy. The standalone CLI does not support ZDR streaming.
+
+See [exa-agent.md](exa-agent.md) for objective/schema definition, coverage and
+evidence validation, deterministic batch routing, and safe resume/continuation.
 
 ## Global Options
 
@@ -80,6 +122,9 @@ Place before the subcommand.
 JSON is printed to stdout (`ensure_ascii=False`, indent 2). Use `--out <file>`
 to write JSON to a file; stdout then becomes `{"status":"ok","file":"<file>"}`.
 Errors go to stderr as `{"error":"<message>"}` with a non-zero exit.
+Agent create/interruption progress events also use stderr, leaving stdout as one
+machine-readable JSON result. Failed/cancelled Agent results still exit 1 when
+the full result is successfully written with `--out`.
 
 ## References
 

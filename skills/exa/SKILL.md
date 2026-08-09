@@ -46,6 +46,10 @@ python scripts/exa_cli.py web_search_advanced_exa --query "transformer" \
 
 # Configuration / connectivity probe (omit --no-test to run a numResults=1 ping)
 python scripts/exa_cli.py get_config_info [--no-test]
+
+# Create an Agent run or resume the same retained run
+python scripts/exa_cli.py agent_run --query "Research an evidence-backed market map" [--effort low]
+python scripts/exa_cli.py agent_run --run-id agent_run_123 [--wait-seconds 750]
 ```
 
 ## Tool Capability Matrix
@@ -56,6 +60,7 @@ python scripts/exa_cli.py get_config_info [--no-test]
 | `web_fetch_exa` | `--urls` (repeatable, ≥1) | `--max-chars` (default 3000), `--out` | `/contents` response JSON |
 | `web_search_advanced_exa` | `--query` | `--type`, `--category`, repeatable `--include-domains`/`--exclude-domains`/`--include-text`/`--exclude-text`, `--start-date`, `--end-date`, `--num-results`, `--max-age-hours`, `--text`, `--highlights`, `--summary`, `--max-chars`, `--out` | Filtered search results JSON |
 | `get_config_info` | – | `--no-test` | Config + (default) `connection_test` |
+| `agent_run` | exactly one of `--query` / `--run-id` | schema/input files, data sources, prior-run continuation, effort, wait controls, `--out` | Normalized retained-run lifecycle JSON |
 
 ## Global Options
 
@@ -78,6 +83,8 @@ Place before the subcommand:
 | Domain or date-bounded research | **exa** (`web_search_advanced_exa`) |
 | Read full content of one or more URLs | **exa** (`web_fetch_exa`) |
 | Academic papers, technical docs | **exa** (`web_search_advanced_exa --include-domains arxiv.org ...`) |
+| Open-ended discovery, multi-hop research, structured list building, prior-run follow-up | [exa-agent](exa-agent.md) (`agent_run`) |
+| Homogeneous enrichment over known rows | Deterministic script with bounded concurrency, backoff, checkpoint, and stable output file |
 
 ## Workflow Patterns
 
@@ -114,6 +121,10 @@ python scripts/exa_cli.py --auth-scheme bearer --api-url https://pool.example.co
   web_search_exa --query "AI agents"
 ```
 
+### Pattern 5: Exa Agent
+
+Read [exa-agent.md](exa-agent.md) before creating a run. It defines objective/schema/coverage checks, `--run-id` versus `--previous-run-id`, evidence validation, and ZDR limits without duplicating that workflow here.
+
 ## References
 
 The `references/` directory carries 11 prompt-engineering guides. Open them on demand when crafting queries:
@@ -137,7 +148,9 @@ The `references/` directory carries 11 prompt-engineering guides. Open them on d
 | Error | Recovery |
 |-------|----------|
 | `EXA_API_KEY not configured` | Set environment variable or pass `--api-key` |
-| HTTP 408/429/5xx | Automatic retry with exponential backoff (max 4 attempts, capped by `--max-retry-wait`) |
+| Search/fetch HTTP 408/429/5xx | Automatic retry with exponential backoff (max 4 attempts, capped by `--max-retry-wait`) |
+| Agent create network/408/429/5xx | Single attempt; report uncertain upstream state and do not create a duplicate |
+| Agent running deadline | Resume the same ID with `agent_run --run-id ...` |
 | HTTP 401 | Verify API key |
 | Timeout | Reduce `--num-results` or retry |
 
@@ -147,3 +160,6 @@ All commands print JSON (`ensure_ascii=False`, indent 2) to stdout. With `--out
 <file>`, the response JSON is written to that path and stdout becomes
 `{"status":"ok","file":"<file>"}`. Errors go to stderr as
 `{"error":"<message>"}` with non-zero exit.
+
+Agent creation and interruption additionally emit one-line JSON progress events
+to stderr so the retained run ID remains recoverable without corrupting stdout.

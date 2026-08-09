@@ -1,18 +1,21 @@
-"""HTTP client with retry + Retry-After cap for Exa API."""
+"""HTTP client with bounded retry and Retry-After support."""
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import httpx
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt
 from tenacity.wait import wait_base, wait_random_exponential
 
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+RUN_ID_RE = re.compile(r"^agent_run_[A-Za-z0-9_-]+$")
 
 
 def _is_retryable_exception(exc: BaseException) -> bool:
@@ -74,38 +77,91 @@ class _WaitWithRetryAfter(wait_base):
 class ExaClient:
     """Async client wrapping POST/GET to Exa API with retry + Retry-After cap."""
 
-    def __init__(self, api_url: str, api_key: str, max_retry_wait: int = 60, debug: bool = False, auth_scheme: str = "x-api-key"):
+    def __init__(
+        self,
+        api_url: str,
+        api_key: str,
+        max_retry_wait: int = 60,
+        debug: bool = False,
+        auth_scheme: str = "x-api-key",
+        transport: Optional[httpx.AsyncBaseTransport] = None,
+        retry_sleep=None,
+    ):
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self.max_retry_wait = max_retry_wait
         self.debug = debug
         self.auth_scheme = auth_scheme
         self.timeout = httpx.Timeout(connect=15.0, read=60.0, write=15.0, pool=None)
+        client_args = {
+            "timeout": self.timeout,
+            "follow_redirects": True,
+        }
+        if transport is not None:
+            client_args["transport"] = transport
+        self._client = httpx.AsyncClient(**client_args)
+        self._retry_sleep = retry_sleep
+
+    async def __aenter__(self) -> "ExaClient":
+        await self._client.__aenter__()
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback) -> None:
+        await self._client.__aexit__(exc_type, exc, traceback)
+
+    @property
+    def is_closed(self) -> bool:
+        return bool(getattr(self._client, "is_closed", False))
+
+    def _headers(self, *, agent: bool = False) -> Dict[str, str]:
+        if self.auth_scheme == "bearer":
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+        else:
+            headers = {
+                "x-api-key": self.api_key,
+                "Content-Type": "application/json",
+            }
+        if agent:
+            headers["Exa-Beta"] = "agent-2026-05-07"
+        return headers
+
+    async def _send_json(
+        self, method: str, path: str, json_body: Optional[Dict] = None,
+        *, agent: bool = False,
+    ) -> Dict[str, Any]:
+        url = f"{self.api_url}{path}"
+        upper_method = method.upper()
+        if self.debug:
+            _debug_log({"event": "request", "method": upper_method, "url": url})
+        if upper_method == "GET":
+            response = await self._client.get(url, headers=self._headers(agent=agent))
+        else:
+            response = await self._client.post(
+                url, headers=self._headers(agent=agent), json=json_body or {}
+            )
+        response.raise_for_status()
+        return response.json()
 
     async def _request_json(
-        self, method: str, path: str, json_body: Optional[Dict] = None
+        self, method: str, path: str, json_body: Optional[Dict] = None,
+        *, agent: bool = False,
     ) -> Dict[str, Any]:
-        if self.auth_scheme == "bearer":
-            headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        else:
-            headers = {"x-api-key": self.api_key, "Content-Type": "application/json"}
-        url = f"{self.api_url}{path}"
-        if self.debug:
-            _debug_log({"event": "request", "method": method.upper(), "url": url})
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-            async for attempt in AsyncRetrying(
-                stop=stop_after_attempt(4),
-                wait=_WaitWithRetryAfter(self.max_retry_wait, debug=self.debug),
-                retry=retry_if_exception(_is_retryable_exception),
-                reraise=True,
-            ):
-                with attempt:
-                    if method.upper() == "GET":
-                        response = await client.get(url, headers=headers)
-                    else:
-                        response = await client.post(url, headers=headers, json=json_body or {})
-                    response.raise_for_status()
-                    return response.json()
+        retry_args = {
+            "stop": stop_after_attempt(4),
+            "wait": _WaitWithRetryAfter(self.max_retry_wait, debug=self.debug),
+            "retry": retry_if_exception(_is_retryable_exception),
+            "reraise": True,
+        }
+        if self._retry_sleep is not None:
+            retry_args["sleep"] = self._retry_sleep
+        async for attempt in AsyncRetrying(**retry_args):
+            with attempt:
+                return await self._send_json(
+                    method, path, json_body, agent=agent
+                )
 
     async def search(self, body: Dict[str, Any]) -> Dict[str, Any]:
         return await self._request_json("POST", "/search", body)
@@ -116,3 +172,14 @@ class ExaClient:
         if extras:
             body.update(extras)
         return await self._request_json("POST", "/contents", body)
+
+    async def agent_create(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        return await self._send_json("POST", "/agent/runs", body, agent=True)
+
+    async def agent_get(self, run_id: str) -> Dict[str, Any]:
+        if not RUN_ID_RE.fullmatch(run_id):
+            raise ValueError("run ID must match ^agent_run_[A-Za-z0-9_-]+$")
+        encoded_id = quote(run_id, safe="")
+        return await self._request_json(
+            "GET", f"/agent/runs/{encoded_id}", agent=True
+        )

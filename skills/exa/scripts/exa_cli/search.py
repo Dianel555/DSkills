@@ -7,9 +7,9 @@ from typing import Optional, Tuple
 
 import httpx
 
-from ..client import ExaClient
-from ..config import Config
-from ..output import output_error, output_json
+from .client import ExaClient
+from .config import Config
+from .output import output_error, output_json
 
 # Mirrors upstream webSearch.ts:47 — note the spec restricts to 5 values.
 _CATEGORY_RE = re.compile(
@@ -33,22 +33,22 @@ def extract_category(query: str) -> Tuple[str, Optional[str]]:
 async def cmd_web_search_exa(args) -> None:
     cfg = Config()
     try:
-        client = ExaClient(
+        async with ExaClient(
             cfg.exa_api_url,
             cfg.exa_api_key,
             max_retry_wait=cfg.max_retry_wait,
             debug=cfg.debug_enabled,
             auth_scheme=cfg.auth_scheme,
-        )
-        cleaned_query, category = extract_category(args.query)
-        body = {
-            "query": cleaned_query,
-            "numResults": args.num_results,
-            "contents": {"highlights": True},
-        }
-        if category is not None:
-            body["category"] = category
-        result = await client.search(body)
+        ) as client:
+            cleaned_query, category = extract_category(args.query)
+            body = {
+                "query": cleaned_query,
+                "numResults": args.num_results,
+                "contents": {"highlights": True},
+            }
+            if category is not None:
+                body["category"] = category
+            result = await client.search(body)
         output_json(result)
     except ValueError as exc:
         output_error(str(exc))

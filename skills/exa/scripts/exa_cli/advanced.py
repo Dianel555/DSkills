@@ -6,9 +6,9 @@ from typing import Any, Dict
 
 import httpx
 
-from ..client import ExaClient
-from ..config import Config
-from ..output import output_error, output_json, output_warning
+from .client import ExaClient
+from .config import Config
+from .output import output_error, output_json, output_warning
 
 
 def _build_payload(args) -> Dict[str, Any]:
@@ -54,15 +54,15 @@ def _build_payload(args) -> Dict[str, Any]:
 async def cmd_web_search_advanced_exa(args) -> None:
     cfg = Config()
     try:
-        client = ExaClient(
+        async with ExaClient(
             cfg.exa_api_url,
             cfg.exa_api_key,
             max_retry_wait=cfg.max_retry_wait,
             debug=cfg.debug_enabled,
             auth_scheme=cfg.auth_scheme,
-        )
-        body = _build_payload(args)
-        result = await client.search(body)
+        ) as client:
+            body = _build_payload(args)
+            result = await client.search(body)
         output_json(result, args.out)
     except ValueError as exc:
         output_error(str(exc))

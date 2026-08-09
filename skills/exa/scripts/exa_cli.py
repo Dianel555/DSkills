@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Shim launcher for exa_cli package.
-
-If cwd is not skills/exa, chdir there so .env discovery & relative paths
-behave the same regardless of where the user invokes the script from.
-"""
+"""Working-directory-independent launcher for the sibling exa_cli package."""
 import os
 import sys
 from pathlib import Path
 
-_SKILL_DIR = Path(__file__).resolve().parent.parent
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+_SKILL_DIR = _SCRIPTS_DIR.parent
 if Path(os.getcwd()).resolve() != _SKILL_DIR:
     os.chdir(_SKILL_DIR)
-sys.path.insert(0, str(_SKILL_DIR))
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from exa_cli.__main__ import main  # noqa: E402
 
