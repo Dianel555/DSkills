@@ -16,6 +16,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Antigravity CLI).
 | [capability-evolver](skills/capability-evolver/) | Self-evolution engine for AI agents (EvoMap A2A, local Proxy mailbox) |
 | [cc-agy](skills/cc-agy/) | Delegate coding/research tasks to Google Antigravity CLI (agy) for external-model execution |
 | [cc-codex](skills/cc-codex/) | Delegate coding tasks to Codex CLI for prototyping, debugging, and code review (multi-turn SESSION_ID, sandbox=read-only) |
+| [codex-cc](skills/codex-cc/) | Delegate coding tasks from Codex to local Claude Code while preserving Claude runtime customizations by default |
 | [github-trending-analyzer](skills/github-trending-analyzer/) | Crawl GitHub trending repos, analyze with LLM for Chinese insights, categorize by themes, diff against history; default brief report or opt-in detailed per-project report |
 | [context7](skills/context7/) | Fetch up-to-date library/framework/API docs from Context7 (bypass training cutoff); two-skill split (main + forked fetcher) cuts token use on API calls |
 
@@ -75,6 +76,8 @@ cp -r DSkills/skills/grok-search ~/.codex/skills/
 codex --list-skills
 ```
 
+Use [codex-cc](skills/codex-cc/) when Codex needs to delegate a turn to local Claude Code. The bridge preserves Claude's normal runtime loading by default, so trusted-workspace `CLAUDE.md`, skills, plugins, MCP servers, custom commands, and rules remain active unless you explicitly override Claude behavior.
+
 ### Antigravity CLI (agy) Platform
 
 ```bash
@@ -109,6 +112,7 @@ DSkills/
 │   ├── capability-evolver/
 │   ├── cc-agy/
 │   ├── cc-codex/
+│   ├── codex-cc/
 │   ├── github-trending-analyzer/
 │   └── context7/
 └── .claude-plugin/

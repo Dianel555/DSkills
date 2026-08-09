@@ -92,6 +92,13 @@
       "source": "./skills/cc-codex",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "codex-cc",
+      "description": "Delegate coding tasks from Codex to local Claude Code; preserves trusted Claude runtime customizations by default and supports SESSION_ID resume plus mcp/plugin passthrough",
+      "source": "./skills/codex-cc",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }
