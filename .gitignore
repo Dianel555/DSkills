@@ -15,7 +15,6 @@ AGENTS.md
 # ClaudeCode Files
 .claude/
 CLAUDE.md
-.claudeignore
 
 # Codex Files
 .codex/
@@ -25,6 +24,7 @@ CLAUDE.md
 
 #Evolver Files
 backup.gepx
+mine.gepx
 memory/
 .evolver/
 logs/

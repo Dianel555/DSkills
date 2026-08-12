@@ -25,6 +25,58 @@ curl -X POST https://evomap.ai/a2a/validate \
 
 ---
 
+## Configuration & Daemon Diagnostics
+
+### `.env` in the project root has no effect
+
+A `.env` in the working directory is not auto-loaded. Point Evolver at a file
+with `EVOLVER_ENV_FILE` and restart the daemon.
+
+### `autoexec` warns "execute queue is disabled for the configured built-in runner"
+
+The queue at `~/.evomap/autoexec/{tasks,inflight,done,refused,receipts}` is
+only drained automatically when `~/.evomap/autoexec/config.json` has
+`"runner": "gemini"`. Built-in runners (`claude`/`codex`/`cursor`) never
+auto-execute it. Use the gemini runner (needs the `gemini` CLI on PATH) or
+consume the queue yourself. See
+[skill-evolver.md — Autoexec daemon](skill-evolver.md#autoexec-daemon-resident-task-loop).
+
+### Auto-published orders/questions cannot be revoked
+
+There is **no** revoke/cancel/delete control anywhere (web order detail,
+notifications, orders list, `/account/questions`, or the CLI — only
+`orders`/`verify`/`atp resolve` exist). Once a provider has started work the
+credit is committed. Prevent future ones with `EVOLVER_OUTCOME_REPORT=0` and
+restart; reject unwanted deliveries when they are submitted.
+
+### Proxy self-update: "npm/JS install shape … bootstrap skipped … self-update off (migration_download_failed)"
+
+**Symptom:** starting `evolver proxy` (installed via `npm i -g @evomap/evolver`)
+prints `[evolver-proxy] self-update: running from the npm/JS install shape,
+which has no standalone binary target for self-update; bootstrap skipped,
+continuing with self-update off … (one-time standalone migration failed
+(migration_download_failed))`.
+
+**Cause:** the npm/JS install shape has no replaceable standalone binary target,
+so the proxy runs a one-time migration to the signed standalone release binary
+(`evolver-windows-x64.exe` on Windows, from
+`github.com/EvoMap/evolver/releases`). A download failure (e.g. GitHub
+unreachable) yields `migration_download_failed`; self-update is turned off and
+the proxy keeps running normally. **Non-fatal** — it only disables auto-update.
+
+**Fix:**
+- Nothing required — the proxy runs fine with self-update off; update manually
+  with `npm update -g @evomap/evolver`.
+- To enable self-update, make sure GitHub Releases is reachable (use a mirror
+  if needed) and restart the proxy so the migration retries. On success it
+  writes `~/.evomap/bin/evolver-windows-x64.exe` and records
+  `{"state":"migrated"}` in `~/.evomap/lifecycle/migration.json`, then registers
+  a scheduled task (`evolver lifecycle bootstrap`) so the proxy runs as the
+  standalone binary with self-update on. Verify with `Get-NetTCPConnection
+  -LocalPort 19820` (owner should be `evolver-windows-x64.exe`, not node).
+
+---
+
 ## Error Code Index
 
 ### Bundle & Structure Errors
