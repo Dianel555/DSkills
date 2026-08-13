@@ -151,8 +151,8 @@ Deep-dive references (read on demand — reading them is never an authorization 
 | [skill-evolver.md](docs/skill-evolver.md) | Evolver client setup, run modes, config, and the evolution memory loop (recall → record) |
 
 Validation/publish tooling (`build-bundle.js`, `validate-bundle.js`,
-`validate-interactive.js`, `sync-quality-stats.js`) lives in
-[`scripts/`](scripts/) — see [scripts/README.md](scripts/README.md).
+`validate-interactive.js`) lives in [`scripts/`](scripts/) — see
+[scripts/README.md](scripts/README.md).
 
 ---
 

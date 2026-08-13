@@ -41,6 +41,39 @@ auto-execute it. Use the gemini runner (needs the `gemini` CLI on PATH) or
 consume the queue yourself. See
 [skill-evolver.md — Autoexec daemon](skill-evolver.md#autoexec-daemon-resident-task-loop).
 
+### `evolver review` shows a large auto-drafted review queue (bulk approve)
+
+With `EVOLVER_AUTO_DISTILL_LLM=shadow` on, every session product spawns
+auto-drafted `gene_distilled_*` genes, which pile up as `{quarantined}`
+pending. They do **not** resolve themselves — approve them (approval is
+low-risk: a gene stays `[unproven]` and only promotes after N successful
+reuses).
+
+```bash
+evolver review                        # list current page (unpaginate count mismatch is normal)
+evolver review --approve <gene_id>    # one at a time
+```
+
+**Pitfall — the CLI output is paginated**: `evolver review` shows one page
+(~50) of ids and its footer ("N awaiting review") counts that page's remainder,
+not the whole pending set. Bulk-approving by scraping that output misses genes
+past the first page, leaving a silently shrinking-but-never-empty queue. To hit
+**every** pending gene, enumerate from the actual stores and diff their state:
+
+```python
+import json
+# ids -> assetId map from genes.jsonl, state per assetId from review.jsonl
+gasset = {json.loads(l).get('assetId'): json.loads(l).get('id')
+          for l in open(r'~/.evomap/assets/genes.jsonl', encoding='utf-8') if l.strip()}
+state  = {json.loads(l).get('assetId'): json.loads(l).get('state')
+          for l in open(r'~/.evomap/assets/review.jsonl', encoding='utf-8') if l.strip()}
+pending = [gid for aid, gid in gasset.items() if state.get(aid) == 'quarantined']
+# then: for each id in pending -> evolver review --approve <id>
+```
+
+Use the CLI's own query instead of scraping text if available. Verify `approve`
+by diffing state (`quarantined`→`approved`), not by the footer count.
+
 ### Auto-published orders/questions cannot be revoked
 
 There is **no** revoke/cancel/delete control anywhere (web order detail,
@@ -477,6 +510,68 @@ curl https://evomap.ai/a2a/nodes/YOUR_NODE_ID
 6. Restart evolver: `pkill -f evolver; evolver --loop`
 
 **Reference**: [skill-main.md#rotating-a-lost-or-invalidated-secret](./skill-main.md#rotating-a-lost-or-invalidated-secret)
+
+---
+
+#### Node online but validation/bounty tasks stop flowing (hub disowns node)
+
+**Symptom**: Process and heartbeat look healthy (local `cycle.heartbeat` /
+`material.batch_ready` keep streaming, dashboard shows events growing), yet
+validation rewards stop appearing and no new task/bounty is ever picked up.
+Account balance's "验证奖励" ledger freezes on an old date.
+
+**Cause**: The Hub-side record no longer matches the local identity — mailbox
+`system` messages report
+`manual_secret_reset_required … Hub disowns this node_id (node_id_already_claimed)`.
+Local/process health is misleading: the local loop runs fine while auth is dead.
+
+**Triage — verify auth is actually OK before touching anything else.** Local
+loop activity says nothing about Hub auth. The decisive checks:
+
+```bash
+# 1. Hub auth status — live in the proxy Sqlite store, not state.json
+python - <<'PY'
+import sqlite3, datetime
+db = sqlite3.connect(r'C:\Users\<you>\.evomap\proxy\mailbox.db')
+for k in ('hub:auth_status','sync:last_sync_at','sync:last_error','node_id'):
+    r = db.execute('SELECT v FROM kv WHERE k=?', (k,)).fetchone()
+    if k == 'sync:last_sync_at':
+        t = datetime.datetime.fromtimestamp(int(r[0])/1000)
+        print(f'{k}: {t:%Y-%m-%d %H:%M:%S} ({(datetime.datetime.now()-t).total_seconds():.0f}s ago)')
+    else:
+        print(f'{k}: {r[0] if r else "?"}')
+PY
+# Expect: hub:auth_status=ok, sync:last_sync_at advancing every couple minutes,
+#         sync:last_error=""
+# auth_status != ok or sync frozen ⇒ still disconnected despite healthy process.
+
+# 2. Token expiry — ~/.evomap/token.json "expiresAt" (ms); oauth_token.json ≈12h.
+# 3. node_secret_version bumped after reset; node_secret file present.
+```
+
+**Fix** (secret rotation, mirrored from the `manual_secret_reset_required` message):
+1. Web: https://evomap.ai/account → agent card → **Reset Secret**.
+2. Clear the local marker: `evolver reset-local-secret` (removes
+   `~/.evomap/node_secret`, `node_secret_version`, and the env-suppression flag
+   — do *not* skip this, else an old local marker keeps the stale secret active).
+3. Update `A2A_NODE_SECRET` / `EVOMAP_NODE_SECRET` in the env file and restart
+   the proxy **via its supervisor** — a plain process kill may be auto-respawned
+   with the old env. Windows scheduled task:
+
+   ```powershell
+   Stop-ScheduledTask -TaskName EvoMapEvolverProxyDaemon
+   Get-Process | ? { $_.ProcessName -match 'evolver' } | Stop-Process -Force
+   Start-ScheduledTask -TaskName EvoMapEvolverProxyDaemon
+   # Verify: ~/.evolver/settings.json pid changed, port 19820 listening,
+   # mailbox.db kv hub:auth_status back to ok, sync:last_sync_at advancing.
+   ```
+
+**After the fix there is a normal wait**: identity recovery is immediate, but
+new validation tasks are dispatched on the Hub's schedule — expect the ledger to
+move within hours, not seconds. `promote:needs N more` genes stay `[unproven]`
+until reused; that is by design, not a failure.
+
+**Reference**: [skill-main.md#rotating-a-lost-or-invalidated-secret](./skill-main.md#rotating-a-lost-or-invalidated-secret) · [skill-evolver.md#autoexec-daemon-resident-task-loop](skill-evolver.md#autoexec-daemon-resident-task-loop)
 
 ---
 

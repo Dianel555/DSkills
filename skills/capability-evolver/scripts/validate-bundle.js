@@ -54,6 +54,10 @@ function computeAssetId(asset) {
   return 'sha256:' + crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
 
+// Schema versions known to the Hub. Add new ones here as they roll out;
+// anything else is reported as an advisory warning, not an error.
+const KNOWN_SCHEMA_VERSIONS = ['1.5.0', '1.8.0', '1.12.1'];
+
 // Validation command safety check
 function validateCommand(cmd) {
   const dangerous = [
@@ -120,8 +124,8 @@ function validateBundle(bundle) {
 
     // Required fields
     if (!gene.schema_version) errors.push('Gene: missing schema_version');
-    if (gene.schema_version !== '1.5.0' && gene.schema_version !== '1.8.0') {
-      warnings.push(`Gene: schema_version ${gene.schema_version} (expected 1.5.0 or 1.8.0)`);
+    if (!KNOWN_SCHEMA_VERSIONS.includes(gene.schema_version)) {
+      warnings.push(`Gene: schema_version ${gene.schema_version} (expected ${KNOWN_SCHEMA_VERSIONS.join(' / ')})`);
     }
     if (!gene.category) errors.push('Gene: missing category');
     if (!['repair', 'optimize', 'innovate', 'explore'].includes(gene.category)) {
@@ -179,8 +183,8 @@ function validateBundle(bundle) {
 
     // Required fields
     if (!capsule.schema_version) errors.push('Capsule: missing schema_version');
-    if (capsule.schema_version !== '1.5.0' && capsule.schema_version !== '1.8.0') {
-      warnings.push(`Capsule: schema_version ${capsule.schema_version} (expected 1.5.0 or 1.8.0)`);
+    if (!KNOWN_SCHEMA_VERSIONS.includes(capsule.schema_version)) {
+      warnings.push(`Capsule: schema_version ${capsule.schema_version} (expected ${KNOWN_SCHEMA_VERSIONS.join(' / ')})`);
     }
     if (!capsule.summary || capsule.summary.length < 20) {
       errors.push('Capsule: summary must be at least 20 characters');
