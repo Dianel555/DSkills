@@ -262,8 +262,14 @@ def build_exec_cmd(args) -> List[str]:
     last_fd, last_msg_path = tempfile.mkstemp(prefix="codex_last_", suffix=".txt")
     os.close(last_fd)
 
-    cmd = ["codex", "exec", "--sandbox", args.sandbox, "--cd", args.cd, "--json",
-           "--output-last-message", last_msg_path]
+    cmd = ["codex"]
+    if not args.yolo:
+        # This is a global Codex option, so it must precede the `exec`
+        # subcommand. Headless runs cannot answer approval prompts.
+        cmd.extend(["--ask-for-approval", "never"])
+
+    cmd.extend(["exec", "--sandbox", args.sandbox, "--cd", args.cd, "--json",
+                "--output-last-message", last_msg_path])
 
     if args.image:
         cmd.extend(["--image", ",".join(args.image)])
@@ -276,11 +282,6 @@ def build_exec_cmd(args) -> List[str]:
 
     if args.yolo:
         cmd.append("--yolo")
-    else:
-        # exec runs headless (stdin=DEVNULL); an approval prompt could never
-        # be answered, so approvals stay disabled for read-only/workspace-write.
-        # Skipped under --yolo, which already bypasses approvals and sandbox.
-        cmd.extend(["--ask-for-approval", "never"])
 
     if args.skip_git_repo_check:
         cmd.append("--skip-git-repo-check")

@@ -191,7 +191,7 @@ def test_ignore_user_config_and_hook_trust_flags_in_cmd(monkeypatch, capsys):
     assert out["success"] is True
     assert "--ignore-user-config" in captured["cmd"]
     assert "--dangerously-bypass-hook-trust" in captured["cmd"]
-    assert captured["cmd"][:2] == ["codex", "exec"]
+    assert captured["cmd"][:4] == ["codex", "--ask-for-approval", "never", "exec"]
 
 
 def test_build_exec_cmd_default_omits_isolation_flags():
@@ -212,7 +212,10 @@ def test_build_exec_cmd_default_omits_isolation_flags():
     assert "--ignore-user-config" not in cmd
     assert "--dangerously-bypass-hook-trust" not in cmd
     assert "--skip-git-repo-check" in cmd
-    assert cmd[cmd.index("--ask-for-approval") + 1] == "never"
+    approval_index = cmd.index("--ask-for-approval")
+    assert cmd[approval_index + 1] == "never"
+    assert approval_index < cmd.index("exec")
+    assert "--approval-policy" not in cmd
     Path(last).unlink(missing_ok=True)
 
 
