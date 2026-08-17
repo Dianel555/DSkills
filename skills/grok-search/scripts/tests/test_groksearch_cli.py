@@ -367,6 +367,24 @@ class TestWebSearchExtraSources:
 # Task 4: web_fetch --via {grok|tavily}
 # ============================================================================
 
+class TestGrokWebFetchStreaming:
+    @pytest.mark.asyncio
+    async def test_fetch_uses_streaming_request(self, monkeypatch):
+        from groksearch.provider import GrokSearchProvider
+
+        provider = GrokSearchProvider("https://api.example/v1", "sk-test", "grok-test")
+        execute = AsyncMock(side_effect=AssertionError("web_fetch must not start with a non-streaming request"))
+        execute_stream = AsyncMock(return_value="# Example")
+        monkeypatch.setattr(provider, "_execute", execute)
+        monkeypatch.setattr(provider, "_execute_stream", execute_stream)
+
+        result = await provider.fetch("https://example.com")
+
+        assert result == "# Example"
+        execute.assert_not_awaited()
+        execute_stream.assert_awaited_once()
+
+
 class TestWebFetchViaTavily:
     @pytest.mark.asyncio
     async def test_via_tavily_calls_extract(self, monkeypatch, capsys):

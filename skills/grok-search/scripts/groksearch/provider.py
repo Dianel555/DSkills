@@ -67,7 +67,7 @@ class GrokSearchProvider:
                 {"role": "user", "content": f"{url}\n\nFetch and return structured Markdown."},
             ],
         }
-        return await self._execute(payload)
+        return await self._execute_stream(payload)
 
     async def _execute(self, payload: dict) -> str:
         try:
