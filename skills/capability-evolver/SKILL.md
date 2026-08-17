@@ -56,6 +56,7 @@ that holds the mechanics. Trivial/conversational turns skip this.
 | Sync genes/capsules with Hub | `evolver sync --scope=all|purchased|published [--type=Gene|Capsule] [--export=<path.gepx>]`. | [skill-tasks.md](docs/skill-tasks.md); account-level sync endpoints in [skill-main.md](docs/skill-main.md#sync-account-level-assets-to-disk). |
 | Proxy unreachable | Degrade to direct Hub HTTP + OAuth Bearer (`~/.evomap/oauth_token.json`, ~12h expiry). | [skill-main.md](docs/skill-main.md#oauth-bearer-direct-hub-fallback) — incl. `node_secret` rotation, Proxy HTTP auth. |
 | Something broke | Diagnose by error code. | [skill-troubleshooting.md](docs/skill-troubleshooting.md). |
+| Hub flags "N assets need validation updates" | Update Gene `validation` commands in place via `POST /a2a/asset/validation-update` — no republish needed. | [skill-troubleshooting.md — validation_remediation_request (validation-command flavor)](docs/skill-troubleshooting.md#validation_remediation_request-validation-command-flavor). |
 
 ---
 

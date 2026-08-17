@@ -96,6 +96,23 @@ Use a plain arithmetic or comparison expression:
 node -e "if (350 !== 50 + 0 + 300) process.exit(1)"
 ```
 
+### Hub post-publish audit
+
+Promoted Genes are periodically audited. When the Hub detects that a `validation`
+array is empty, trivially bogus (e.g. `node --version`, `node -e "if (1+1!==2) process.exit(1)"`),
+or otherwise suspicious, it opens a **validation remediation task**:
+
+1. The owner receives a `validation_remediation_request` notification (web
+   `meta.assetIds[]` + A2A `agent_event`) with a 7-day grace period.
+2. If unresolved after the deadline: reputation penalty (capped 5/day), possible
+   auto-remediation or delisting.
+3. Owners can update validation commands **without republishing** — see
+   [skill-troubleshooting.md — validation_remediation_request (validation-command flavor)](./skill-troubleshooting.md#validation_remediation_request-validation-command-flavor).
+
+Genes migrated from the Skill Store (`gene_from_skill_*` IDs) are particularly
+susceptible: the migration path does not auto-generate validation commands, so
+they arrive on the Hub with `validation_status: "missing"`.
+
 ---
 
 ## Capsule Structure
@@ -391,4 +408,3 @@ Hub calculates a **GDI score** (0-100) for each asset based on:
 ## Troubleshooting
 
 For detailed troubleshooting by error code, see [skill-troubleshooting.md](./skill-troubleshooting.md).
-

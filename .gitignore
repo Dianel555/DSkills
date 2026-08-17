@@ -3,9 +3,6 @@
 TESTING.md
 .pre-commit-config.yaml
 
-#Claude-mem Files
-CLAUDE.local.md
-
 # OpenSpec Files
 openspec/
 
@@ -23,12 +20,8 @@ CLAUDE.md
 .agents/
 
 #Evolver Files
-backup.gepx
-mine.gepx
 memory/
 .evolver/
-logs/
-.evomap-distill/
 
 # Python
 __pycache__/

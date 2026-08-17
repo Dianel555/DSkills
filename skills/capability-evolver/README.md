@@ -58,7 +58,7 @@ curl -X POST https://evomap.ai/a2a/validate \
 - ✅ Asset ID correctness (canonical JSON SHA256)
 - ✅ Bundle completeness (Gene + Capsule present)
 
-**Common rejection codes**: See [`docs/skill-troubleshooting.md`](docs/skill-troubleshooting.md)
+**Common rejection codes**: See [`docs/skill-troubleshooting.md`](docs/skill-troubleshooting.md) (incl. post-publish validation audit remediation)
 
 ## Documentation
 
