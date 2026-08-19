@@ -1,5 +1,5 @@
 ---
-name: GitHub Trending Analyzer
+name: github-trending-analyzer
 description: Crawl GitHub trending repositories, analyze with LLM for Chinese insights, categorize by themes, compute diffs against history, and generate Markdown reports. Default brief mode stops at trend analysis; optional detailed mode appends per-project analysis. Supports incremental gap-filling and selective re-analysis with caching.
 ---
 
@@ -92,7 +92,7 @@ Result: `{theme_name: [projects...]}` dictionary.
 
 ### Step 4: Compute diff (optional)
 
-If you maintain a memory cache (JSON file storing past runs):
+Load `memory.json` from the workspace root (see Output Protocol). Schema:
 ```json
 [
   {
@@ -104,7 +104,7 @@ If you maintain a memory cache (JSON file storing past runs):
 ]
 ```
 
-Compare current repos against the latest entry with the same `since` value:
+Compare current repos against the latest entry with the same `since` (and same `lang` filter):
 - **new**: projects in current but not in last
 - **hot**: projects in both
 - **dropped**: projects in last but not in current
@@ -123,7 +123,7 @@ Two report modes, driven by the bundled templates:
 {list of "name: what" for all projects}
 ```
 
-Save to date-stamped files (e.g. `trending_briefing_2026-06-19.md`, `trending_detailed_2026-06-19.md`). Overwrite on same-day re-runs.
+Save under `reports/YYYY-MM-DD/` with a `{since}` suffix (`daily` / `weekly` / `monthly`), e.g. `trending_briefing_weekly.md`. Same-day re-runs of the same `since`+`lang` overwrite that report.
 
 **Empty tables**: when a section (new/hot/dropped) has no rows, render the table header followed by a single `*none*` row; keep "Theme Breakdown" and "Trend Analysis" only if there are classified projects. On a first run (no memory baseline), omit the "Dropped Off" section rather than showing it empty.
 
@@ -135,12 +135,12 @@ Save to date-stamped files (e.g. `trending_briefing_2026-06-19.md`, `trending_de
 2. **JSON-only LLM output**. The prompt explicitly forbids explanatory text. Parse defensively (strip fences, clean commas).
 3. **Name matching is fuzzy**. Match by suffix (`org/repo` vs `repo`) and case-insensitive substring.
 4. **Theme priority matters**. A project matching both "AI" and "Dev Tools" gets classified as "AI" (priority 1 < 4).
-5. **Memory is append-only list**. Each run appends one entry. Keep last 30 to prevent unbounded growth.
+5. **Memory and daily repo JSON are upserted, not blindly overwritten or appended.** Key is `(date, since, lang)`. Same-key re-runs merge; other keys are added. Retain the 30 most recent distinct dates.
 
 ### Incremental modes (optional)
 
-- **Gap-fill mode**: Load the latest memory entry → detect repos without `analysis` field → re-run LLM only for those → merge back → regenerate reports.
-- **Selective re-analysis**: User specifies project names (comma-separated, partial match) → find matching repos in memory → re-run LLM with optional deep mode → update memory → regenerate reports.
+- **Gap-fill mode**: Load the matching memory entry (same `date`+`since`+`lang`, else latest with same `since`+`lang`) → detect repos without `analysis` → re-run LLM only for those → merge back into both `memory.json` and `repos/YYYY-MM-DD_repos.json` → regenerate reports.
+- **Selective re-analysis**: User specifies project names (comma-separated, partial match) → find matching repos in memory → re-run LLM with optional deep mode → merge into memory and the day's repos JSON → regenerate reports.
 
 Implementation hint: `detect_gaps(repos)` returns `[r for r in repos if not r.get('analysis')]`.
 
@@ -152,16 +152,65 @@ Implementation hint: `detect_gaps(repos)` returns `[r for r in repos if not r.ge
 
 ## Output Protocol
 
-Emit Markdown files to a reports directory, based on mode:
+Write all artifacts under the **current working directory** (the consuming workspace). Never write into the skill package.
 
-1. **Brief (default)** (`trending_briefing_{date}.md`): sections new/hot/dropped/themes + trend insight. Stops at "Trend Analysis" — no per-project blocks.
-2. **Detailed (opt-in)** (`trending_detailed_{date}.md`): brief content followed by one "📋 Project Details" block per project with the 4-field analysis. Only when the user requests detail.
+```
+<cwd>/
+├── repos/YYYY-MM-DD_repos.json
+├── reports/YYYY-MM-DD/trending_briefing_{since}[_{lang}].md
+├── reports/YYYY-MM-DD/trending_detailed_{since}[_{lang}].md   # opt-in
+└── memory.json
+```
 
-Overwrite if file exists (same-day re-runs replace prior reports).
+`{since}` is `daily` | `weekly` | `monthly`. Append `_{lang}` only when a language filter was used (`python`, `go`, …). Date lives in the reports folder — do not repeat it in the report filename.
+
+Create `repos/` and `reports/YYYY-MM-DD/` if missing. Same-day re-runs of the same `since`+`lang` overwrite that report file.
+
+### `repos/YYYY-MM-DD_repos.json`
+
+Day-level crawl cache. Incremental merge on every run:
+
+```json
+{
+  "date": "2026-08-19",
+  "updated_at": "2026-08-19T16:45:00+08:00",
+  "snapshots": [
+    {
+      "since": "daily",
+      "lang": "",
+      "fetched_at": "2026-08-19T16:45:00+08:00",
+      "repos": [{"name":"...","url":"...","desc":"...","lang":"...","stars":0,"today_stars":0,"analysis":{}}]
+    }
+  ]
+}
+```
+
+Merge rules:
+1. Load the file if it exists; otherwise start `{date, updated_at, snapshots: []}`.
+2. Upsert the snapshot whose `(since, lang)` matches this run (`lang` is `""` when unfiltered).
+3. Matching repos (case-insensitive `name`): overwrite crawl fields (`url`, `desc`, `lang`, `stars`, `today_stars`); keep existing `analysis` unless this run produced a new one.
+4. Repos only in the new fetch are appended; repos only in the old snapshot are kept (a later `since` on the same day must not wipe another window).
+5. Write atomically (temp file in the same directory, then replace).
+
+### `memory.json`
+
+Workspace-root history used by Step 4 diffs and gap-fill. Incremental merge:
+
+1. Load the array if the file exists; missing or empty → first run (no diff / no Dropped Off).
+2. Upsert by `(date, since, lang)`. Same key: apply the same per-repo merge as the day cache. New key: append.
+3. After upsert, keep entries whose `date` is among the 30 most recent distinct dates (so one day with daily+weekly+monthly does not evict history).
+4. Write atomically.
+
+### Reports
+
+1. **Brief (default)** (`reports/{date}/trending_briefing_{since}[_{lang}].md`): new/hot/dropped/themes + trend insight. Stops at "Trend Analysis" — no per-project blocks.
+2. **Detailed (opt-in)** (`reports/{date}/trending_detailed_{since}[_{lang}].md`): brief content followed by one "📋 Project Details" block per project with the 4-field analysis. Only when the user requests detail.
 
 **Console output** during execution:
 - "Fetching {since} trending..." → "Got {N} projects"
 - "LLM batch {i}/{total}..." → "✅ Batch complete: {n} items"
+- "💾 Repos merged: {path}"
+- "💾 Memory merged: {path}"
 - "📄 Brief saved: {path}"
 - "📄 Detailed saved: {path}" (only when detailed mode runs)
 - (Gap-fill) "Coverage: {covered}/{total} ({pct}%)"
@@ -173,8 +222,8 @@ Before emitting reports, confirm:
 - All repos have `name`, `url`, `desc`, `lang`, `stars`, `today_stars` fields.
 - At least one theme contains projects (not all "其他").
 - LLM analysis covers ≥50% of projects (log warning if lower).
-- Both report files are valid UTF-8 Markdown.
-- Memory JSON is valid (can be reloaded without error).
+- Emitted report files are valid UTF-8 Markdown at the paths above.
+- `YYYY-MM-DD_repos.json` and `memory.json` reload without error after the merge.
 
 ## Adapting and Extending
 
