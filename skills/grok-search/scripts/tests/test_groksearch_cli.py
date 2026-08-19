@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch, AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 SCRIPTS_DIR = Path(__file__).parent.parent
@@ -367,22 +368,77 @@ class TestWebSearchExtraSources:
 # Task 4: web_fetch --via {grok|tavily}
 # ============================================================================
 
-class TestGrokWebFetchStreaming:
+class TestGrokStreamingPreference:
+    @pytest.mark.asyncio
+    async def test_search_uses_streaming_request(self, monkeypatch):
+        from groksearch.provider import GrokSearchProvider
+
+        provider = GrokSearchProvider("https://api.example/v1", "sk-test", "grok-test")
+        execute_stream = AsyncMock(return_value="# Example")
+        execute_non_stream = AsyncMock(side_effect=AssertionError("search must not start with a non-streaming request"))
+        monkeypatch.setattr(provider, "_execute_stream", execute_stream)
+        monkeypatch.setattr(provider, "_execute_non_stream", execute_non_stream)
+
+        result = await provider.search("example")
+
+        assert result == "# Example"
+        execute_stream.assert_awaited_once()
+        execute_non_stream.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_fetch_uses_streaming_request(self, monkeypatch):
         from groksearch.provider import GrokSearchProvider
 
         provider = GrokSearchProvider("https://api.example/v1", "sk-test", "grok-test")
-        execute = AsyncMock(side_effect=AssertionError("web_fetch must not start with a non-streaming request"))
         execute_stream = AsyncMock(return_value="# Example")
-        monkeypatch.setattr(provider, "_execute", execute)
+        execute_non_stream = AsyncMock(side_effect=AssertionError("fetch must not start with a non-streaming request"))
         monkeypatch.setattr(provider, "_execute_stream", execute_stream)
+        monkeypatch.setattr(provider, "_execute_non_stream", execute_non_stream)
 
         result = await provider.fetch("https://example.com")
 
         assert result == "# Example"
-        execute.assert_not_awaited()
         execute_stream.assert_awaited_once()
+        execute_non_stream.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stream_failure_falls_back_to_non_stream(self, monkeypatch):
+        from groksearch.provider import GrokSearchProvider
+
+        provider = GrokSearchProvider("https://api.example/v1", "sk-test", "grok-test")
+        calls = []
+
+        async def execute_stream(payload):
+            calls.append("stream")
+            raise httpx.ReadTimeout("stream failed")
+
+        async def execute_non_stream(payload):
+            calls.append("non-stream")
+            return "fallback"
+
+        monkeypatch.setattr(provider, "_execute_stream", execute_stream)
+        monkeypatch.setattr(provider, "_execute_non_stream", execute_non_stream)
+
+        result = await provider.fetch("https://example.com")
+
+        assert result == "fallback"
+        assert calls == ["stream", "non-stream"]
+
+    @pytest.mark.asyncio
+    async def test_empty_stream_falls_back_to_non_stream(self, monkeypatch):
+        from groksearch.provider import GrokSearchProvider
+
+        provider = GrokSearchProvider("https://api.example/v1", "sk-test", "grok-test")
+        execute_stream = AsyncMock(return_value="")
+        execute_non_stream = AsyncMock(return_value="fallback")
+        monkeypatch.setattr(provider, "_execute_stream", execute_stream)
+        monkeypatch.setattr(provider, "_execute_non_stream", execute_non_stream)
+
+        result = await provider.search("example")
+
+        assert result == "fallback"
+        execute_stream.assert_awaited_once()
+        execute_non_stream.assert_awaited_once()
 
 
 class TestWebFetchViaTavily:

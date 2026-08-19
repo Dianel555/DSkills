@@ -67,15 +67,18 @@ class GrokSearchProvider:
                 {"role": "user", "content": f"{url}\n\nFetch and return structured Markdown."},
             ],
         }
-        return await self._execute_stream(payload)
+        return await self._execute(payload)
 
     async def _execute(self, payload: dict) -> str:
         try:
-            return await self._execute_non_stream(payload)
-        except (httpx.HTTPStatusError, json.JSONDecodeError) as e:
+            content = await self._execute_stream(payload)
+            if not content:
+                raise ValueError("Streaming response returned empty content")
+            return content
+        except Exception as e:
             if config.debug_enabled:
-                print(f"[DEBUG] Non-streaming failed: {e}, falling back to streaming", file=sys.stderr)
-            return await self._execute_stream(payload)
+                print(f"[DEBUG] Streaming failed: {e}, falling back to non-streaming", file=sys.stderr)
+            return await self._execute_non_stream(payload)
 
     async def _execute_non_stream(self, payload: dict) -> str:
         payload_copy = {**payload, "stream": False}
