@@ -1,6 +1,6 @@
 # cc-agy
 
-A Claude Code **Agent Skill** that bridges Claude with the Google Antigravity CLI (`agy`) for external-model delegation. Replaces the broken `collaborating-with-gemini` skill (Gemini CLI stopped working).
+A Claude Code **Agent Skill** that bridges Claude with the Google Antigravity CLI (`agy`) for external-model delegation(Gemini CLI stopped working for person).
 
 ## Overview
 

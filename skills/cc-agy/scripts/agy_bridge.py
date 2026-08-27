@@ -16,6 +16,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -50,6 +51,13 @@ MODEL_ALIASES = {
 CANONICAL_MODELS = set(MODEL_ALIASES.values())
 
 INSTALL_HINT = "install with: curl -fsSL https://antigravity.google/cli/install.sh | bash"
+
+OUTPUT_PROTOCOL = (
+    "\n\nOUTPUT PROTOCOL: The complete deliverable (full code, analysis, or "
+    "report) MUST appear in your final text reply. Tool receipts, status "
+    "messages like 'WROTE <n>', and brief acknowledgements alone are NOT "
+    "valid final answers."
+)
 
 
 # --- protobuf parsing (verified against agy v1.0.10 conversation DBs) ---
@@ -93,21 +101,40 @@ def scan_protobuf(b: bytes) -> List[Tuple[int, int, object]]:
     return out
 
 
-def extract_answer(db_path: Path, include_reasoning: bool = False
+def max_agent_step_idx(db_path: Path) -> int:
+    """Return the latest step_type=15 idx in a DB, or -1 when absent."""
+    if not db_path.is_file():
+        return -1
+    con = sqlite3.connect(str(db_path))
+    try:
+        row = con.execute(
+            "SELECT MAX(idx) FROM steps WHERE step_type=15"
+        ).fetchone()
+    finally:
+        con.close()
+    return row[0] if row and row[0] is not None else -1
+
+
+def extract_answer(db_path: Path, include_reasoning: bool = False,
+                   after_idx: int = -1
                    ) -> Tuple[str, str, List[dict]]:
     """Return (answer, reasoning, all_messages) from an agy conversation DB.
 
-    The assistant's final reply is the last non-empty f20.f1 across all
-    step_type=15 rows. Earlier type=15 steps hold reasoning (f3) with empty f1.
+    Only step_type=15 rows with idx > after_idx belong to this run; the
+    assistant's reply is ALL non-empty f20.f1 fragments of the run joined
+    with blank lines (agy may split a deliverable across several steps and
+    end with a short closing line; last-wins would drop the deliverable).
     """
     con = sqlite3.connect(str(db_path))
     cur = con.cursor()
     rows = cur.execute(
-        "SELECT idx, step_payload FROM steps WHERE step_type=15 ORDER BY idx"
+        "SELECT idx, step_payload FROM steps "
+        "WHERE step_type=15 AND idx > ? ORDER BY idx",
+        (after_idx,),
     ).fetchall()
     con.close()
 
-    answer = ""
+    answers = []
     reasoning = ""
     all_msgs = []
     for idx, blob in rows:
@@ -129,11 +156,11 @@ def extract_answer(db_path: Path, include_reasoning: bool = False
                 elif fn == 3:
                     f3 = s
         if f1:
-            answer = f1  # last non-empty f1 wins
+            answers.append(f1)
         if f3:
             reasoning = f3
         all_msgs.append({"idx": idx, "answer": f1, "reasoning": f3})
-    return answer, reasoning, all_msgs
+    return "\n\n".join(answers), reasoning, all_msgs
 
 
 # --- agy binary resolution ---
@@ -209,6 +236,14 @@ def parse_timeout_to_seconds(s: str) -> int:
 
 # --- core run ---
 
+def short_answer_note(answer: str, all_msgs: List[dict]) -> Optional[str]:
+    """Warn when the reply is very short but the run had thinking-only steps."""
+    if len(answer) < 60 and any(m["reasoning"] and not m["answer"] for m in all_msgs):
+        return ("This run produced a very short text reply and contained thinking-only "
+                "steps; the full deliverable may be in tool outputs rather than the reply.")
+    return None
+
+
 def run_agy_print(cmd: List[str], cwd: str, timeout_s: int
                   ) -> Tuple[int, str, str, bool]:
     try:
@@ -236,7 +271,7 @@ def build_agy_cmd(agy_path: str, args) -> List[str]:
     cmd = [
         agy_path,
         "--print",
-        args.PROMPT,
+        args.PROMPT + OUTPUT_PROTOCOL,
         "--print-timeout",
         args.print_timeout,
         "--add-dir",
@@ -327,6 +362,9 @@ def cmd_run(args) -> None:
         return
 
     before = snapshot_db_uuids()
+    after_idx = max_agent_step_idx(
+        CONVERSATIONS_DIR / f"{args.SESSION_ID}.db"
+    ) if args.SESSION_ID else -1
     cmd = build_agy_cmd(agy_path, args)
     outer_timeout = parse_timeout_to_seconds(args.print_timeout) + 60
     rc, out, err, timed_out = run_agy_print(cmd, cwd=str(cd.absolute()),
@@ -354,8 +392,19 @@ def cmd_run(args) -> None:
               "error": f"conversation DB not found: {db_path}"})
         return
 
-    answer, reasoning, all_msgs = extract_answer(db_path,
-                                                 include_reasoning=args.return_all_messages)
+    answer, reasoning, all_msgs = extract_answer(
+        db_path, include_reasoning=args.return_all_messages, after_idx=after_idx)
+    note = short_answer_note(answer, all_msgs)
+
+    # Persist every extracted step as JSONL so partial results survive a
+    # crash/timeout and the raw run can be audited later (mirrors the
+    # codex_bridge stream_file pattern).
+    sfd, stream_path = tempfile.mkstemp(prefix="agy_steps_", suffix=".jsonl")
+    with os.fdopen(sfd, "w", encoding="utf-8") as fp:
+        for m in all_msgs:
+            fp.write(json.dumps({"SESSION_ID": target_uuid, **m},
+                                ensure_ascii=False) + "\n")
+
     result = {"success": bool(answer), "SESSION_ID": target_uuid}
     if answer:
         result["agent_messages"] = answer
@@ -365,10 +414,13 @@ def cmd_run(args) -> None:
     else:
         result["error"] = (
             f"agy exited rc={rc} and DB {target_uuid} contained no extractable assistant "
-            f"reply (0 type=15 steps with non-empty f1). This may indicate agy performed only "
-            f"tool calls, or that the protobuf schema changed (fix: extract_answer()). "
-            f"stderr: {err}"
+            f"reply after idx {after_idx} (0 new type=15 steps with non-empty f1). This may "
+            f"indicate agy performed only tool calls, or that the protobuf schema changed "
+            f"(fix: extract_answer()). stderr: {err}"
         )
+    if note:
+        result["note"] = note
+    result["steps_file"] = stream_path
     if err.strip():
         result["stderr"] = err.strip()
     emit(result)
