@@ -5,6 +5,9 @@ Wraps the Google Antigravity CLI (`agy`) to provide a JSON-based interface.
 agy `--print` writes nothing to stdout; the assistant reply is persisted in a
 SQLite conversation DB at ~/.gemini/antigravity-cli/conversations/<UUID>.db,
 inside the last step_type=15 row's step_payload protobuf (field f20 -> f1).
+When a run fails upstream, agy writes no reply text and instead records the
+executor error in a step_type=17 row (f24 -> f3: f1 user-facing line, f2
+status detail).
 This bridge runs agy, discovers the conversation DB, extracts the reply, and
 returns JSON isomorphic to gemini_bridge.py.
 """
@@ -101,15 +104,18 @@ def scan_protobuf(b: bytes) -> List[Tuple[int, int, object]]:
     return out
 
 
-def max_agent_step_idx(db_path: Path) -> int:
-    """Return the latest step_type=15 idx in a DB, or -1 when absent."""
+def max_step_idx(db_path: Path) -> int:
+    """Return the latest idx of any step in a DB, or -1 when absent.
+
+    Spans every step type, not just 15: a failed run's type=17 error row
+    lands after its last type=15 step, so a type=15-only boundary would
+    re-attribute that stale error to the next run on resume.
+    """
     if not db_path.is_file():
         return -1
     con = sqlite3.connect(str(db_path))
     try:
-        row = con.execute(
-            "SELECT MAX(idx) FROM steps WHERE step_type=15"
-        ).fetchone()
+        row = con.execute("SELECT MAX(idx) FROM steps").fetchone()
     finally:
         con.close()
     return row[0] if row and row[0] is not None else -1
@@ -161,6 +167,55 @@ def extract_answer(db_path: Path, include_reasoning: bool = False,
             reasoning = f3
         all_msgs.append({"idx": idx, "answer": f1, "reasoning": f3})
     return "\n\n".join(answers), reasoning, all_msgs
+
+
+def extract_run_error(db_path: Path, after_idx: int = -1) -> str:
+    """Return agy's own upstream failure for this run, or "" when absent.
+
+    step_type=17 is agy's error channel: f24.f3 holds f1 (user-facing line),
+    f2 (status detail, e.g. "FAILED_PRECONDITION (code 400): ...") and f9 (a
+    duplicate of f2). Uses the same idx window as extract_answer so a resumed
+    session cannot resurface the previous run's error.
+
+    An error row that cannot be decoded still returns a non-empty string: the
+    row's mere existence proves the run failed upstream, and reporting "" here
+    would send the caller to extract_answer() over an error-channel change.
+    """
+    con = sqlite3.connect(str(db_path))
+    try:
+        rows = con.execute(
+            "SELECT step_payload FROM steps "
+            "WHERE step_type=17 AND idx > ? ORDER BY idx",
+            (after_idx,),
+        ).fetchall()
+    finally:
+        con.close()
+
+    for (blob,) in rows:
+        if not blob:
+            continue
+        f24 = next((v for fn, wt, v in scan_protobuf(blob)
+                    if fn == 24 and wt == 2), None)
+        if f24 is None:
+            continue
+        f3 = next((v for fn, wt, v in scan_protobuf(f24)
+                   if fn == 3 and wt == 2), None)
+        if f3 is None:
+            continue
+        parts = {}
+        for fn, wt, v in scan_protobuf(f3):
+            if wt == 2 and fn in (1, 2, 9):
+                try:
+                    parts[fn] = v.decode("utf-8")
+                except UnicodeDecodeError:
+                    pass
+        detail = parts.get(2) or parts.get(9) or parts.get(1)
+        if detail:
+            return detail
+    if rows:
+        return ("agy recorded an error step whose detail could not be decoded "
+                "(fix: extract_run_error())")
+    return ""
 
 
 # --- agy binary resolution ---
@@ -362,7 +417,7 @@ def cmd_run(args) -> None:
         return
 
     before = snapshot_db_uuids()
-    after_idx = max_agent_step_idx(
+    after_idx = max_step_idx(
         CONVERSATIONS_DIR / f"{args.SESSION_ID}.db"
     ) if args.SESSION_ID else -1
     cmd = build_agy_cmd(agy_path, args)
@@ -412,12 +467,25 @@ def cmd_run(args) -> None:
             result["all_messages"] = all_msgs
             result["reasoning"] = reasoning
     else:
-        result["error"] = (
-            f"agy exited rc={rc} and DB {target_uuid} contained no extractable assistant "
-            f"reply after idx {after_idx} (0 new type=15 steps with non-empty f1). This may "
-            f"indicate agy performed only tool calls, or that the protobuf schema changed "
-            f"(fix: extract_answer()). stderr: {err}"
-        )
+        upstream = extract_run_error(db_path, after_idx=after_idx)
+        if upstream:
+            result["error"] = (
+                f"agy produced no reply because the run failed upstream (rc={rc}): "
+                f"{upstream}"
+            )
+        elif timed_out:
+            result["error"] = (
+                f"agy timed out after {outer_timeout}s before producing a reply in DB "
+                f"{target_uuid}. stderr: {err}"
+            )
+        else:
+            result["error"] = (
+                f"agy exited rc={rc} and DB {target_uuid} contained no extractable assistant "
+                f"reply after idx {after_idx} (0 new type=15 steps with non-empty f1), and no "
+                f"type=17 error row explains it. This may indicate agy performed only tool "
+                f"calls, or that the protobuf schema changed (fix: extract_answer()). "
+                f"stderr: {err}"
+            )
     if note:
         result["note"] = note
     result["steps_file"] = stream_path

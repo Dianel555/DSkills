@@ -10,7 +10,7 @@ description: |
 python scripts/agy_bridge.py --cd "/path/to/project" --PROMPT "Your task"
 ```
 
-**Output:** JSON with `success`, `SESSION_ID`, `agent_messages`, and optional `error` / `stderr`.
+**Output:** JSON with `success`, `SESSION_ID`, `agent_messages`, `steps_file`, and optional `error` / `note` / `stderr`. On failure, `error` names the upstream cause agy recorded (e.g. a 400/503 status) when one exists.
 
 ## Parameters
 
@@ -86,7 +86,13 @@ python scripts/agy_bridge.py plugin import /path/to/plugin
 
 ## How It Works
 
-`agy --print` writes nothing to stdout. The bridge instead runs agy, discovers the new conversation SQLite DB at `~/.gemini/antigravity-cli/conversations/<UUID>.db`, and extracts the assistant reply from the last `step_type=15` row's `step_payload` protobuf (field `f20` → `f1`). MCP servers (`~/.gemini/antigravity/mcp_config.json`), the memory doc (`~/.gemini/GEMINI.md`), and skills are pre-configured by the user and auto-loaded by agy — the bridge does not manage them.
+`agy --print` writes nothing to stdout. The bridge instead runs agy, discovers the new conversation SQLite DB at `~/.gemini/antigravity-cli/conversations/<UUID>.db`, and extracts the assistant reply from the `step_type=15` rows' `step_payload` protobuf (field `f20` → `f1`). MCP servers (`~/.gemini/antigravity/mcp_config.json`), the memory doc (`~/.gemini/GEMINI.md`), and skills are pre-configured by the user and auto-loaded by agy — the bridge does not manage them.
+
+When a run fails upstream, agy writes no reply text at all and instead records the executor error in a `step_type=17` row (`f24` → `f3`: `f1` user-facing line, `f2` status detail). The bridge reads that row and reports the real cause — e.g. `FAILED_PRECONDITION (code 400): User location is not supported for the API use.` or `UNAVAILABLE (code 503): No capacity available for model ...` — instead of blaming its own parsing. `stderr` alone carries only agy's generic `Agent execution terminated due to error.` and no status code.
+
+On resume, both extractors window on `idx > after_idx`, where the boundary spans **all** step types: a failed run's `type=17` row lands after its last `type=15` step, so a `type=15`-only boundary would re-attribute that stale error to the next run.
+
+The bridge does not retry. A 400 geo rejection will almost certainly fail again on an immediate retry, and 503 capacity exhaustion is better answered by switching `--model` than by replaying — which could also repeat tool side effects. The structured error is passed through so the caller decides.
 
 ## Security Note
 
@@ -94,6 +100,6 @@ By default the bridge passes `--dangerously-skip-permissions` to agy. This is **
 
 ## Known Limitations
 
-- **Protobuf extraction is schema-dependent.** The bridge parses agy's conversation DB without a `.proto` file, reading the reply from field `f1` inside field `f20` of the last `step_type=15` row. If agy changes its internal schema, extraction returns empty. Fix location: `extract_answer()` in `scripts/agy_bridge.py`.
+- **Protobuf extraction is schema-dependent.** The bridge parses agy's conversation DB without a `.proto` file: replies from `f20` → `f1` of `step_type=15` rows, upstream errors from `f24` → `f3` of `step_type=17` rows. If agy changes its internal schema, extraction returns empty. The reported error distinguishes the two cases — a message naming an upstream status means agy failed and the bridge worked; the schema-drift hint appears only when no error row explains the empty reply. Fix locations: `extract_answer()` and `extract_run_error()` in `scripts/agy_bridge.py`.
 - `agy models` returns empty on this build; model aliases are hardcoded.
 - `--continue` is intentionally NOT exposed (target selection is opaque); use `--SESSION_ID` to resume a specific conversation.

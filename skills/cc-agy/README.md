@@ -6,7 +6,7 @@ A Claude Code **Agent Skill** that bridges Claude with the Google Antigravity CL
 
 This Skill lets Claude delegate coding/research tasks to `agy`, which runs external models — Gemini 3.x, Claude Sonnet/Opus 4.6, GPT-OSS — with their own configured MCP servers, skills, and memory doc. Claude orchestrates the workflow and refines the output; agy executes on the external model.
 
-`agy --print` writes nothing to stdout, so the bridge instead discovers the conversation SQLite DB that agy persists and extracts the assistant reply from its protobuf payload. MCP (`~/.gemini/antigravity/mcp_config.json`), the memory doc (`~/.gemini/GEMINI.md`), and skills are pre-configured by the user and auto-loaded by agy — the bridge does not manage them.
+`agy --print` writes nothing to stdout, so the bridge instead discovers the conversation SQLite DB that agy persists and extracts the assistant reply from its protobuf payload. When a run fails upstream, agy records the executor error in a separate `step_type=17` row instead of any reply text; the bridge reads that row and reports the real cause. MCP (`~/.gemini/antigravity/mcp_config.json`), the memory doc (`~/.gemini/GEMINI.md`), and skills are pre-configured by the user and auto-loaded by agy — the bridge does not manage them.
 
 ## Features
 
@@ -97,13 +97,26 @@ Model aliases: `flash-low/medium/high`, `pro-low/high`, `sonnet`, `opus`, `gpt-o
 }
 ```
 
+When agy produces no reply, `error` carries agy's own upstream failure rather than a guess about the bridge:
+
+```json
+{
+  "success": false,
+  "SESSION_ID": "uuid",
+  "error": "agy produced no reply because the run failed upstream (rc=1): FAILED_PRECONDITION (code 400): User location is not supported for the API use.",
+  "steps_file": "/tmp/agy_steps_xxxx.jsonl"
+}
+```
+
+Upstream failures are often transient (geo/egress-IP rejection, model capacity exhausted). The bridge does not retry — the status detail tells the caller whether to wait or switch `--model`.
+
 ## Security Note
 
 By default the bridge passes `--dangerously-skip-permissions` to agy. This is **mandatory for non-interactive `--print` mode**: agy's default `toolPermission` is `request-review`, which blocks waiting for a human to approve tool calls, and `--print` captures no TTY — so the process hangs until timeout. With `--dangerously-skip-permissions`, agy auto-approves all tool calls. The bridge always runs under a hard outer timeout (`--print-timeout` + 60s) so a hung agy cannot block indefinitely. Only use `--no-skip-permissions` in a context where interactive permission prompts can be serviced.
 
 ## Known Limitations
 
-- **Protobuf extraction is schema-dependent.** The reply is read from field `f1` inside field `f20` of the last `step_type=15` row in the conversation DB. If agy changes its internal schema, extraction returns empty. Fix location: `extract_answer()` in `scripts/agy_bridge.py`.
+- **Protobuf extraction is schema-dependent.** The reply is read from field `f1` inside field `f20` of `step_type=15` rows; upstream errors from `f24` → `f3` of `step_type=17` rows. If agy changes its internal schema, extraction returns empty. Fix location: `extract_answer()` (replies) or `extract_run_error()` (errors) in `scripts/agy_bridge.py`. The reported error names which one to fix, so trust it over guessing.
 - `agy models` returns empty on this build; model aliases are hardcoded.
 - `--continue` is intentionally not exposed (target selection is opaque); use `--SESSION_ID` to resume a specific conversation.
 
