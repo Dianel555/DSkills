@@ -1,7 +1,11 @@
 .ace-tool/
-.serena/
 TESTING.md
 .pre-commit-config.yaml
+.editorconfig
+.gitattributes
+
+# Git Files
+.github/
 
 # OpenSpec Files
 openspec/

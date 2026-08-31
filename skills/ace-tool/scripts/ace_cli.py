@@ -31,7 +31,7 @@ def cmd_search_context(args):
 
 def cmd_enhance_prompt(args):
     """Handle enhance_prompt command."""
-    client = AceToolClient(args.api_url, args.token, args.endpoint)
+    client = AceToolClient(args.api_url, args.token, args.endpoint, args.reasoning_effort)
 
     history = args.history
     if args.history_file:
@@ -104,6 +104,8 @@ def main():
     p_enhance.add_argument("-H", "--history", default="", help="Conversation history")
     p_enhance.add_argument("--history-file", help="File containing conversation history")
     p_enhance.add_argument("--project-root", help="Project root path (optional)")
+    p_enhance.add_argument("--reasoning-effort", default=None, metavar="LEVEL",
+                           help="Reasoning effort: none/minimal/low/medium/high/xhigh/max (default: none, or PROMPT_ENHANCER_REASONING_EFFORT; empty string omits the parameter)")
     p_enhance.add_argument("--no-interactive", action="store_true", help="Disable web UI, output JSON directly")
     p_enhance.add_argument("--no-browser", action="store_true", help="Don't auto-open browser, just print URL")
     p_enhance.add_argument("--port", type=int, default=8765, help="Port for interactive web server (default: 8765)")

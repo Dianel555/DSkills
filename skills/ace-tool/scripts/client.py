@@ -17,6 +17,7 @@ try:
         DEFAULT_CODEX_MODEL,
         ENV_ENHANCER_ENDPOINT, ENV_ENHANCER_ENDPOINT_LEGACY,
         ENV_ENHANCER_INCLUDE_SEARCH_CONTEXT,
+        ENV_ENHANCER_REASONING_EFFORT,
         SEARCH_CONTEXT_CHAR_LIMIT, NO_RELEVANT_CODE_CONTEXT,
         ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
         TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
@@ -30,6 +31,7 @@ except ImportError:
         DEFAULT_CODEX_MODEL,
         ENV_ENHANCER_ENDPOINT, ENV_ENHANCER_ENDPOINT_LEGACY,
         ENV_ENHANCER_INCLUDE_SEARCH_CONTEXT,
+        ENV_ENHANCER_REASONING_EFFORT,
         SEARCH_CONTEXT_CHAR_LIMIT, NO_RELEVANT_CODE_CONTEXT,
         ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
         TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
@@ -57,6 +59,7 @@ class AceToolClient:
         base_url: Optional[str] = None,
         token: Optional[str] = None,
         endpoint: Optional[str] = None,
+        reasoning_effort: Optional[str] = None,
     ):
         # Determine auth source priority: constructor params > session auth
         if base_url is not None or token is not None:
@@ -85,6 +88,15 @@ class AceToolClient:
         self.third_party_base_url = os.getenv("PROMPT_ENHANCER_BASE_URL", "").rstrip("/")
         self.third_party_token = os.getenv("PROMPT_ENHANCER_TOKEN", "")
         self.third_party_model = os.getenv("PROMPT_ENHANCER_MODEL", "")
+        # Reasoning control: default none (enhancement needs no deep reasoning);
+        # empty string sends no reasoning parameter at all.
+        env_val = os.environ.get(ENV_ENHANCER_REASONING_EFFORT)
+        if reasoning_effort is not None:
+            self.reasoning_effort = reasoning_effort.strip().lower()
+        elif env_val is not None:
+            self.reasoning_effort = env_val.strip().lower()
+        else:
+            self.reasoning_effort = "none"
 
     def _get_headers(self, use_third_party: bool = False) -> dict:
         headers = {
@@ -478,6 +490,8 @@ class AceToolClient:
         input_items.append({"role": "user", "content": prompt})
 
         payload = {"model": model, "input": input_items}
+        if self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
         url = build_api_url(self.third_party_base_url, "/v1/responses")
 
         data = self._post_json(url, payload, headers=self._get_headers(use_third_party=True), provider="Codex")
@@ -488,6 +502,14 @@ class AceToolClient:
         """Call Claude API."""
         messages = chat_history + [{"role": "user", "content": prompt}]
         payload = {"model": model, "max_tokens": 4096, "messages": messages}
+        # ponytail: adaptive only; legacy thinking-enabled/budget models unmapped —
+        # unset effort if such an endpoint rejects adaptive.
+        if self.reasoning_effort:
+            if self.reasoning_effort == "none":
+                payload["thinking"] = {"type": "disabled"}
+            else:
+                payload["thinking"] = {"type": "adaptive"}
+                payload["output_config"] = {"effort": self.reasoning_effort}
 
         url = build_api_url(self.third_party_base_url, "/v1/messages")
 
@@ -507,6 +529,8 @@ class AceToolClient:
         """Call OpenAI API."""
         messages = chat_history + [{"role": "user", "content": prompt}]
         payload = {"model": model, "messages": messages, "max_tokens": 4096}
+        if self.reasoning_effort:
+            payload["reasoning_effort"] = self.reasoning_effort
 
         url = build_api_url(self.third_party_base_url, "/v1/chat/completions")
 
@@ -523,6 +547,10 @@ class AceToolClient:
         contents.append({"role": "user", "parts": [{"text": prompt}]})
 
         payload = {"contents": contents, "generationConfig": {"maxOutputTokens": 4096}}
+        # Gemini 3 has no "none" thinking level; "minimal" is its lowest.
+        if self.reasoning_effort:
+            level = "minimal" if self.reasoning_effort == "none" else self.reasoning_effort
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": level}
 
         url = build_api_url(self.third_party_base_url, f"/v1beta/models/{model}:generateContent")
 
