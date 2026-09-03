@@ -99,6 +99,13 @@
       "source": "./skills/codex-cc",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "grill-me",
+      "description": "Grill the user about a requirement, decision, or idea before implementation, then produce an actionable planning report without writing code",
+      "source": "./skills/grill-me",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }
