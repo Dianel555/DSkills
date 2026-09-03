@@ -23,11 +23,20 @@ def run_cli(*args, env=None):
     )
 
 
-def test_cli_missing_vault_returns_json_error(monkeypatch):
+def test_cli_missing_vault_returns_json_error(monkeypatch, tmp_path):
+    # Create an isolated environment without vault config
     env = os.environ.copy()
     env.pop("AGENT_WIKI_VAULT", None)
+    env["DOTENV_DISABLE"] = "1"  # Disable .env loading for this test
 
-    result = subprocess.run([sys.executable, str(CLI), "status"], text=True, encoding="utf-8", capture_output=True, env=env)
+    result = subprocess.run(
+        [sys.executable, str(CLI), "status"],
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        env=env,
+        cwd=tmp_path,  # Run from temp dir
+    )
 
     assert result.returncode == 2
     assert json.loads(result.stderr)["error"] == "vault path required"

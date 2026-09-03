@@ -162,6 +162,9 @@ To avoid loading the whole vault at once, process sources in bounded rounds:
 After initial ingest, maintain topics incrementally **without scanning the entire vault**:
 
 1. **Check worklist**: Run `worklist` for two bounded queues: `wanted` (broken wikilink targets ranked by inbound demand) and `stale` (low-quality `stub`/`basic` or index-stale topics)
+
+   **Understanding `wanted` (Broken Wikilinks)**: These are wikilink targets referenced by `wiki/topics/` pages but not yet created as dedicated topic pages. **Not an error** — most point to source notes in the vault root or other directories outside `wiki/`. They work as jump links in Obsidian; the "broken" label only means no dedicated topic page exists. **Use as demand signal**: `inbound` count shows reference frequency → prioritize high-demand sources (≥3) for enrichment.
+
 2. **Pick one page**: Select a single target from `wanted` (create new topic) or `stale` (enrich existing)
 3. **Enrich the page**: Read relevant sources, author/update the topic body and frontmatter
 4. **Re-index**: Run `index` (recomputes quality tiers, backlinks, alias resolution)

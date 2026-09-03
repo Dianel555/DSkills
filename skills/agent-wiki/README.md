@@ -80,6 +80,18 @@ python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 
 All command outputs are JSON.
 
+## Understanding "Broken Wikilinks"
+
+The `worklist` command reports a `wanted` list — wikilink targets referenced by `wiki/topics/` pages but not yet created as dedicated topic pages.
+
+**This is not an error**: Most of these links point to source notes in the vault root or other directories outside `wiki/`. They work as jump links in Obsidian — the "broken" label only means no dedicated wiki topic page exists yet.
+
+**Recommended strategies**:
+- **Keep as-is (recommended)**: Preserve the quick-jump functionality. The `wanted` list serves as a demand ranking — sources with high `inbound` counts indicate high reference frequency.
+- **Gradual enrichment**: For high-demand sources (e.g., `inbound ≥ 3`), create dedicated interpretation pages using the Bounded Enrichment Loop workflow.
+
+The `wanted` list is a feature, not a bug — it surfaces which source materials are most referenced across your wiki topics.
+
 ## Wiki Layout
 
 ```text
@@ -114,6 +126,8 @@ Source markdown files remain outside `wiki/`. The scanner skips `wiki/`, `.obsid
    - run `cache-put <relpath> --topics ...`
 3. For deleted sources, run `cleanup`.
 4. Run `index` to refresh `wiki/.wiki-index.json`, then `gen-base` to refresh the Bases views, update `wiki/index.md`, and append `wiki/log.md` entries.
+
+**Understanding cache-put**: `cache-put <relpath> --topics topic1.md,topic2.md` records the completion of an ingest operation by updating the cache's `sources[relpath]` entry (keyed by source file path) with a `derived_topics` list. This is independent of the `sources` field in each topic's frontmatter — the cache tracks "which source files were processed and into which topics", while topic frontmatter tracks "which source files this topic was derived from". Both fields coexist and serve different purposes: the cache enables incremental scanning (skip unchanged sources), while topic frontmatter enables hybrid retrieval (from topic back to source notes).
 
 **Batched ingest (large vaults)**: instead of processing every `scan` result at once, run `plan --batch-size 20` to split pending sources into rounds (task report at `wiki/_archived/ingest-tasks.md`), process one batch's docs, then `batch-done --batch <id>` (it refuses until each doc in the round is `cache-put`). Repeat until `complete`. Re-running `plan` re-derives remaining work; `status.batch` tracks progress.
 

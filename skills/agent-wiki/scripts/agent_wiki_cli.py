@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import traceback
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 from agent_wiki import __version__
 from agent_wiki import batch
@@ -129,6 +133,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Load .env files (skill dir, current dir, then cwd) unless disabled for testing
+    if not os.getenv("DOTENV_DISABLE"):
+        skill_dir = Path(__file__).resolve().parent.parent
+        load_dotenv(skill_dir / ".env")
+        load_dotenv(Path.cwd() / ".env")
+
     _configure_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
