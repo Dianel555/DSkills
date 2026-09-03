@@ -8,7 +8,7 @@ inline static literals so each page is self-contained and byte-deterministic.
 
 from __future__ import annotations
 
-import hashlib
+import contextlib
 import html
 import os
 import re
@@ -552,10 +552,8 @@ def _atomic_write(site_dir: Path, name: str, content: str) -> None:
         os.close(tmp_fd)
         os.replace(tmp_path, out_path)
     except OSError:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise
 
 

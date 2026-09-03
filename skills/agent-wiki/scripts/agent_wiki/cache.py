@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
 import os
 import stat
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from . import config
 
@@ -33,7 +35,7 @@ class CacheReplaceError(CacheWriteError):
     pass
 
 
-def empty_schema() -> dict:
+def empty_schema() -> dict[str, Any]:
     return copy.deepcopy(_SCHEMA)
 
 
@@ -45,11 +47,11 @@ def file_signature(path: str | Path) -> tuple[int, int] | None:
     return st.st_mtime_ns, st.st_size
 
 
-def load(vault: str | Path) -> dict:
+def load(vault: str | Path) -> dict[str, Any]:
     return load_with_signature(vault)[0]
 
 
-def load_with_signature(vault: str | Path) -> tuple[dict, tuple[int, int] | None]:
+def load_with_signature(vault: str | Path) -> tuple[dict[str, Any], tuple[int, int] | None]:
     path = config.cache_path(vault)
     if not path.exists():
         return empty_schema(), None
@@ -74,7 +76,7 @@ def is_cache_writable(path: str | Path) -> bool:
     return parent.exists() and bool(parent.stat().st_mode & stat.S_IWRITE)
 
 
-def save(vault: str | Path, data: dict, expected_signature: tuple[int, int] | None = None) -> None:
+def save(vault: str | Path, data: dict[str, Any], expected_signature: tuple[int, int] | None = None) -> None:
     path = config.cache_path(vault)
     path.parent.mkdir(parents=True, exist_ok=True)
     if not is_cache_writable(path):
@@ -90,16 +92,12 @@ def save(vault: str | Path, data: dict, expected_signature: tuple[int, int] | No
             raise CacheConflictError("cache_conflict")
         os.replace(tmp, path)
     except CacheConflictError:
-        try:
+        with contextlib.suppress(OSError):
             tmp.unlink()
-        except OSError:
-            pass
         raise
     except OSError as exc:
-        try:
+        with contextlib.suppress(OSError):
             tmp.unlink()
-        except OSError:
-            pass
         raise CacheReplaceError(str(exc)) from exc
 
 
@@ -116,17 +114,17 @@ def stat_signature(path: str | Path) -> tuple[int, int]:
     return stat_result.st_mtime_ns, stat_result.st_size
 
 
-def upsert(data: dict, relpath: str, sha: str, mtime_ns: int, size: int, derived_topics: list[str]) -> None:
+def upsert(data: dict[str, Any], relpath: str, sha: str, mtime_ns: int, size: int, derived_topics: list[str]) -> None:
     data.setdefault("version", SCHEMA_VERSION)
     data.setdefault("sources", {})
     data["sources"][config.normalize_relpath(relpath)] = {
         "sha256": sha,
         "mtime_ns": mtime_ns,
         "size": size,
-        "last_ingest_at": datetime.now(timezone.utc).isoformat(),
+        "last_ingest_at": datetime.now(UTC).isoformat(),
         "derived_topics": [config.normalize_relpath(topic) for topic in derived_topics],
     }
 
 
-def remove(data: dict, relpath: str) -> None:
+def remove(data: dict[str, Any], relpath: str) -> None:
     data.setdefault("sources", {}).pop(config.normalize_relpath(relpath), None)

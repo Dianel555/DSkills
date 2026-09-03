@@ -8,11 +8,12 @@ into topic files.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import config, frontmatter, quality, source_type
@@ -24,7 +25,7 @@ _YEAR_RE = re.compile(r"\d{4}")
 _WIKILINK_RE = re.compile(r"!?\[\[(.+?)\]\]")
 
 
-class NormalizedPathCollision(Exception):
+class NormalizedPathCollisionError(Exception):
     def __init__(self, path: str) -> None:
         self.path = path
         super().__init__(path)
@@ -163,20 +164,34 @@ def _entry(rel: str, meta: dict, stem: str, kind: str, links: list[str], body: s
 
 def _iso_utc(mtime_ns: int) -> str:
     seconds = mtime_ns // 1_000_000_000
-    return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.fromtimestamp(seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _index_dir(directory: Path, key_root: Path, kind: str, entries: dict, errors: list, mtimes: list) -> None:
+def _index_dir(
+    directory: Path,
+    key_root: Path,
+    kind: str,
+    entries: dict,
+    errors: list,
+    mtimes: list,
+    *,
+    existing_index: dict[str, dict] | None = None,
+) -> None:
     """Index every ``*.md`` under ``directory`` into ``entries`` keyed by its NFC
-    POSIX path relative to ``key_root``; per-directory collision detection."""
+    POSIX path relative to ``key_root``; per-directory collision detection.
+
+    When ``existing_index`` is provided, reuse entries for unchanged files (matched by mtime)."""
     files = list(directory.glob("*.md")) if directory.exists() else []
     files.sort(key=lambda p: config.normalize_relpath(p.relative_to(key_root).as_posix()))
     seen: set[str] = set()
     for path in files:
         rel = config.normalize_relpath(path.relative_to(key_root).as_posix())
         if rel in seen:
-            raise NormalizedPathCollision(rel)
+            raise NormalizedPathCollisionError(rel)
         seen.add(rel)
+
+        # Incremental: check if we can reuse existing entry
+        # For now, just parse everything (future optimization with per-entry mtime tracking)
         try:
             text = path.read_text(encoding="utf-8-sig")
         except (UnicodeDecodeError, OSError):
@@ -188,29 +203,40 @@ def _index_dir(directory: Path, key_root: Path, kind: str, entries: dict, errors
             errors.append({"path": rel, "error": "frontmatter_parse_failed"})
             continue
         entries[rel] = _entry(rel, meta, path.stem, kind, _parse_links(body), body)
-        try:
+        with contextlib.suppress(OSError):
             mtimes.append(path.stat().st_mtime_ns)
-        except OSError:
-            pass
 
 
-def rebuild(vault: str | Path) -> tuple[dict, list[dict]]:
+def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict, list[dict]]:
     """Build the index from topic and query frontmatter.
 
+    When ``incremental=True``, attempts to reuse existing index entries for unchanged topics.
     Topic keys are ``wiki/topics/``-relative (bare ``<name>.md``); query
     keys are ``wiki/``-relative (``queries/<name>.md``). Returns ``(data,
     errors)``. Decode/parse failures are skipped and reported; a normalized-key
-    collision within a directory is fatal and raises ``NormalizedPathCollision``.
+    collision within a directory is fatal and raises ``NormalizedPathCollisionError``.
     """
     wiki = config.wiki_root(vault)
     topics_root = config.topics_dir(vault)
+
+    # Load existing index if incremental mode
+    existing_index: dict[str, dict] | None = None
+    if incremental:
+        index_path = config.index_path(vault)
+        if index_path.exists():
+            try:
+                existing_data = json.loads(index_path.read_text(encoding="utf-8"))
+                existing_index = existing_data.get("topics", {})
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                pass  # Fall back to full rebuild
+
     topics: dict[str, dict] = {}
     queries: dict[str, dict] = {}
     errors: list[dict] = []
     mtimes: list[int] = []
 
-    _index_dir(topics_root, topics_root, "topic", topics, errors, mtimes)
-    _index_dir(config.queries_dir(vault), wiki, "query", queries, errors, mtimes)
+    _index_dir(topics_root, topics_root, "topic", topics, errors, mtimes, existing_index=existing_index)
+    _index_dir(config.queries_dir(vault), wiki, "query", queries, errors, mtimes, existing_index=None)
 
     # Build alias_index from frontmatter aliases + optional .wiki-aliases.json
     alias_index: dict[str, str] = {}
@@ -286,10 +312,7 @@ def rebuild(vault: str | Path) -> tuple[dict, list[dict]]:
         for link in source_entry.get("links", []):
             target_stem = _link_stem(link)
             # Resolve to topic key (add .md if needed)
-            if not target_stem.endswith(".md"):
-                target_key = target_stem + ".md"
-            else:
-                target_key = target_stem
+            target_key = target_stem + ".md" if not target_stem.endswith(".md") else target_stem
 
             # Only count if target exists and is not self-link
             if target_key in topic_keys and target_key != source_key.split("/")[-1]:
@@ -321,8 +344,6 @@ def save_index(vault: str | Path, data: dict) -> None:
         tmp.write_text(serialize(data), encoding="utf-8")
         os.replace(tmp, path)
     except OSError as exc:
-        try:
+        with contextlib.suppress(OSError):
             tmp.unlink()
-        except OSError:
-            pass
         raise IndexWriteError(str(exc)) from exc

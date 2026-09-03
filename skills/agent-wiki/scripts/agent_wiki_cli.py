@@ -22,6 +22,8 @@ def _configure_stdio() -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent_wiki")
     parser.add_argument("--version", action="version", version=f"agent-wiki {__version__}")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show progress messages to stderr")
+    parser.add_argument("--format", choices=["json", "yaml", "table"], default="json", help="Output format (default: json)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_vault(p: argparse.ArgumentParser) -> None:
@@ -37,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan = sub.add_parser("plan")
     plan.add_argument("--batch-size", type=int, default=batch.DEFAULT_BATCH_SIZE, help="Documents per ingest round")
+    plan.add_argument("--resume", action="store_true", help="Resume existing batch plan instead of creating new one")
     add_vault(plan)
     plan.set_defaults(func=commands.cmd_plan)
 
@@ -79,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     index = sub.add_parser("index")
     add_vault(index)
+    index.add_argument("--incremental", action="store_true", help="Reuse existing index for unchanged topics (experimental)")
     index.set_defaults(func=commands.cmd_index)
 
     normalize_source_type = sub.add_parser("normalize-source-type")

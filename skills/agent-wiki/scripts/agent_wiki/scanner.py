@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import fnmatch
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Iterator
+from typing import Any
 
 from . import cache as cache_mod
 from . import config
@@ -28,11 +29,11 @@ def _excluded(rel: str, patterns: list[str]) -> bool:
     return any(part in EXCLUDED_DIRS for part in parts) or _ignored(rel, patterns)
 
 
-def _collect_sources(vault: str | Path) -> tuple[list[Path], list[dict]]:
+def _collect_sources(vault: str | Path) -> tuple[list[Path], list[dict[str, str]]]:
     root = Path(vault).resolve()
     patterns = _ignore_patterns(root)
     found: list[Path] = []
-    skipped: list[dict] = []
+    skipped: list[dict[str, str]] = []
     for path in root.rglob("*.md"):
         rel = config.to_rel_posix(path, root)
         if _excluded(rel, patterns):
@@ -50,7 +51,7 @@ def walk_sources(vault: str | Path) -> Iterator[Path]:
     yield from _collect_sources(vault)[0]
 
 
-def _item(path: Path, vault: Path, derived_topics: list[str] | None = None, *, cached_entry: dict | None = None) -> dict:
+def _item(path: Path, vault: Path, derived_topics: list[str] | None = None, *, cached_entry: dict[str, Any] | None = None) -> dict[str, Any]:
     st = path.stat()
     mtime_ns, size = st.st_mtime_ns, st.st_size
 
@@ -76,10 +77,10 @@ def _item(path: Path, vault: Path, derived_topics: list[str] | None = None, *, c
     }
 
 
-def classify(vault: str | Path, cache_data: dict, *, collect=None) -> dict:
+def classify(vault: str | Path, cache_data: dict[str, Any], *, collect: Callable[[Path], tuple[list[Path], list[dict[str, str]]]] | None = None) -> dict[str, Any]:
     root = Path(vault).resolve()
     sources = cache_data.get("sources", {})
-    result = {"new": [], "modified": [], "unchanged": [], "deleted": [], "errors": [], "skipped_symlinks": []}
+    result: dict[str, Any] = {"new": [], "modified": [], "unchanged": [], "deleted": [], "errors": [], "skipped_symlinks": []}
 
     if collect is None:
         source_paths, skipped = _collect_sources(root)
@@ -123,9 +124,12 @@ def classify(vault: str | Path, cache_data: dict, *, collect=None) -> dict:
     return result
 
 
-def format_report(classified: dict, vault: str | Path) -> dict:
+def format_report(classified: dict[str, Any], vault: str | Path) -> dict[str, Any]:
     if "fatal" in classified:
-        return classified["fatal"]
+        fatal_value = classified["fatal"]
+        if isinstance(fatal_value, dict):
+            return fatal_value
+        return {"error": str(fatal_value)}
     return {
         "version": 1,
         "vault": str(Path(vault).resolve()),

@@ -7,13 +7,14 @@ import os
 import sys
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 
 def _nfc(value: str) -> str:
     return unicodedata.normalize("NFC", value)
 
 
-def _json_stderr(payload: dict) -> None:
+def _json_stderr(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
 
 

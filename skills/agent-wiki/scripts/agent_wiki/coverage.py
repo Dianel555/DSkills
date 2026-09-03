@@ -42,8 +42,8 @@ def compute_coverage(vault: str | Path) -> dict:
     # Collect covered sources from topics
     try:
         data, _ = wiki_index.rebuild(vault)
-    except wiki_index.NormalizedPathCollision:
-        raise ValueError("normalized_path_collision")
+    except wiki_index.NormalizedPathCollisionError:
+        raise ValueError("normalized_path_collision") from None
 
     covered_set = set()
     for topic_entry in data.get("topics", {}).values():
@@ -57,10 +57,7 @@ def compute_coverage(vault: str | Path) -> dict:
     gaps = [{"path": path} for path in sorted(gaps_set)]
 
     # Compute coverage ratio
-    if len(scan_set) == 0:
-        coverage_ratio = 1.0  # Vacuously covered
-    else:
-        coverage_ratio = len(covered_set & scan_set) / len(scan_set)
+    coverage_ratio = 1.0 if len(scan_set) == 0 else len(covered_set & scan_set) / len(scan_set)
 
     return {
         "ok": True,

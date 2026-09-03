@@ -17,6 +17,7 @@ sizes and integer coords; ``text`` nodes add ``text``, ``file`` nodes add
 
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import os
@@ -189,8 +190,6 @@ def write_canvas(path: Path, canvas: dict) -> None:
         tmp.write_text(serialize(canvas), encoding="utf-8")
         os.replace(tmp, path)
     except OSError as exc:
-        try:
+        with contextlib.suppress(OSError):
             tmp.unlink()
-        except OSError:
-            pass
         raise CanvasWriteError(str(exc)) from exc

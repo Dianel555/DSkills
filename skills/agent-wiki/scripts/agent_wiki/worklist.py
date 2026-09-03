@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import unicodedata
 from pathlib import Path
 
-from . import config, quality, wiki_index
+from . import config, wiki_index
 
 
 def _nfc(s: str) -> str:
@@ -38,12 +39,12 @@ def compute_worklist(vault: str | Path) -> dict:
     # Collect all existing page stems (topics, queries)
     existing_stems = set()
 
-    for topic_key in data["topics"].keys():
+    for topic_key in data["topics"]:
         # Strip .md to get stem
         stem = topic_key[:-3] if topic_key.endswith(".md") else topic_key
         existing_stems.add(_nfc(stem))
 
-    for query_key in data["queries"].keys():
+    for query_key in data["queries"]:
         # queries/name.md -> name
         stem = query_key.split("/")[-1]
         stem = stem[:-3] if stem.endswith(".md") else stem
@@ -58,7 +59,7 @@ def compute_worklist(vault: str | Path) -> dict:
         (k, v, "query") for k, v in data["queries"].items()
     ]
 
-    for page_key, entry, page_type in all_entries:
+    for page_key, entry, _page_type in all_entries:
         for link in entry.get("links", []):
             # Extract stem (strip .md if present)
             link_stem = _nfc(link[:-3] if link.endswith(".md") else link)
@@ -89,10 +90,8 @@ def compute_worklist(vault: str | Path) -> dict:
     index_path = config.index_path(vault)
     index_mtime = None
     if index_path.exists():
-        try:
+        with contextlib.suppress(OSError):
             index_mtime = index_path.stat().st_mtime_ns
-        except OSError:
-            pass
 
     for topic_key, entry in data["topics"].items():
         tier = entry.get("quality_tier", "stub")

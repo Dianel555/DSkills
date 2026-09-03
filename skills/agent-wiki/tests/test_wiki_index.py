@@ -205,6 +205,64 @@ def test_normalized_path_collision_is_fatal(tmp_path):
     if nfd_path.name == unicodedata.normalize("NFC", "café.md"):
         pytest.skip("filesystem normalizes unicode filenames")
     nfd_path.write_bytes(frontmatter.dump({"title": "c2"}, "b").encode("utf-8"))
-    with pytest.raises(wiki_index.NormalizedPathCollision) as exc:
+    with pytest.raises(wiki_index.NormalizedPathCollisionError) as exc:
         wiki_index.rebuild(tmp_path)
     assert exc.value.path == "café.md"
+
+
+def test_incremental_rebuild(tmp_path):
+    """Incremental rebuild reuses existing index and doesn't crash."""
+    _init(tmp_path)
+
+    # Create initial topics
+    _topic(tmp_path, "topic1.md", {"title": "Topic 1"}, "Initial content")
+    _topic(tmp_path, "topic2.md", {"title": "Topic 2"}, "More content")
+
+    # Full rebuild
+    data1, errors1 = wiki_index.rebuild(tmp_path, incremental=False)
+    assert len(data1["topics"]) == 2
+    assert len(errors1) == 0
+
+    # Save index
+    wiki_index.save_index(tmp_path, data1)
+
+    # Incremental rebuild with no changes should succeed
+    data2, errors2 = wiki_index.rebuild(tmp_path, incremental=True)
+    assert len(data2["topics"]) == 2
+    assert len(errors2) == 0
+
+    # Add new topic
+    _topic(tmp_path, "topic3.md", {"title": "Topic 3"}, "New topic")
+
+    # Incremental rebuild should pick up new topic
+    data3, errors3 = wiki_index.rebuild(tmp_path, incremental=True)
+    assert len(data3["topics"]) == 3
+    assert len(errors3) == 0
+    assert "topic3.md" in data3["topics"]
+
+
+def test_incremental_rebuild_without_existing_index(tmp_path):
+    """Incremental rebuild falls back to full rebuild if index missing."""
+    _init(tmp_path)
+    _topic(tmp_path, "topic1.md", {"title": "Topic 1"}, "Content")
+
+    # Incremental rebuild without saved index should not crash
+    data, errors = wiki_index.rebuild(tmp_path, incremental=True)
+    assert len(data["topics"]) == 1
+    assert len(errors) == 0
+
+
+def test_incremental_rebuild_with_corrupted_index(tmp_path):
+    """Incremental rebuild falls back to full rebuild if index corrupted."""
+    _init(tmp_path)
+    _topic(tmp_path, "topic1.md", {"title": "Topic 1"}, "Content")
+
+    # Create corrupted index file
+    index_path = config.index_path(tmp_path)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text("not valid json", encoding="utf-8")
+
+    # Incremental rebuild should fall back to full rebuild
+    data, errors = wiki_index.rebuild(tmp_path, incremental=True)
+    assert len(data["topics"]) == 1
+    assert len(errors) == 0

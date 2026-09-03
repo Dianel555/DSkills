@@ -38,9 +38,8 @@ def _resolve(src: str, root_by_norm: dict[str, Path]) -> Path | None:
     best: tuple[str, Path] | None = None
     for norm, path in root_by_norm.items():
         cand = norm[:-3] if norm.endswith(".md") else norm
-        if cand.startswith(pref) or stem.startswith(cand[:60]):
-            if best is None or len(cand) < len(best[0]):
-                best = (cand, path)
+        if (cand.startswith(pref) or stem.startswith(cand[:60])) and (best is None or len(cand) < len(best[0])):
+            best = (cand, path)
     return best[1] if best else None
 
 

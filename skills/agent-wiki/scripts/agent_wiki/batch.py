@@ -9,9 +9,10 @@ archive directory; each round is gated behind an explicit completion check.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import cache, config, scanner
@@ -25,7 +26,7 @@ class BatchStateError(OSError):
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def report_path(vault: str | Path) -> Path:
@@ -77,10 +78,8 @@ def save_state(vault: str | Path, data: dict) -> None:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         os.replace(tmp, path)
     except OSError as exc:
-        try:
+        with contextlib.suppress(OSError):
             tmp.unlink()
-        except OSError:
-            pass
         raise BatchStateError(str(exc)) from exc
 
 

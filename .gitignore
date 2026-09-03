@@ -71,3 +71,6 @@ Thumbs.db
 
 # agent-wiki runtime artifacts (test leftovers)
 skills/agent-wiki/wiki/
+
+#OC docs
+docs/

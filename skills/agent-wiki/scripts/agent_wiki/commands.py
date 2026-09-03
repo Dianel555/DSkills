@@ -2,23 +2,84 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import stat
 import sys
 from datetime import date
 from pathlib import Path
+from typing import Any
 
-from . import authors, bases, batch, cache, canvas, cleanup, config, coverage, frontmatter, home, obsidian_api, plugins, quality, scanner, site, source_type, wiki_index, worklist
+try:
+    import yaml as yaml_module
+except ImportError:
+    yaml_module = None  # type: ignore[assignment]
+
+from . import (
+    authors,
+    bases,
+    batch,
+    cache,
+    canvas,
+    cleanup,
+    config,
+    coverage,
+    frontmatter,
+    home,
+    obsidian_api,
+    plugins,
+    quality,
+    scanner,
+    site,
+    source_type,
+    wiki_index,
+    worklist,
+)
 
 
 def emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
 
+def emit_formatted(args, payload: dict[str, Any]) -> None:
+    """Emit output in the requested format (json/yaml/table)."""
+    fmt = getattr(args, "format", "json")
+
+    if fmt == "yaml":
+        if yaml_module is None:
+            fail({"error": "yaml_not_available", "hint": "pip install PyYAML"}, 1)
+        print(yaml_module.safe_dump(payload, allow_unicode=True, sort_keys=False))
+    elif fmt == "table":
+        _emit_table(payload)
+    else:
+        print(json.dumps(payload, ensure_ascii=False))
+
+
+def _emit_table(payload: dict[str, Any]) -> None:
+    """Emit simple key-value table format."""
+    if "error" in payload:
+        print(f"ERROR: {payload.get('error')}", file=sys.stderr)
+        if "hint" in payload:
+            print(f"  Hint: {payload['hint']}", file=sys.stderr)
+        return
+
+    for key, value in payload.items():
+        if isinstance(value, (dict, list)):
+            print(f"{key}: {json.dumps(value, ensure_ascii=False)}")
+        else:
+            print(f"{key}: {value}")
+
+
 def fail(payload: dict, code: int = 1) -> None:
     print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
     sys.exit(code)
+
+
+def verbose(args, message: str) -> None:
+    """Print progress message to stderr if --verbose flag is set."""
+    if getattr(args, "verbose", False):
+        print(f"[agent-wiki] {message}", file=sys.stderr)
 
 
 def _vault(args) -> Path:
@@ -89,28 +150,45 @@ def cmd_init(args) -> None:
 
 def cmd_scan(args) -> None:
     vault = _vault(args)
+    verbose(args, f"Scanning vault: {vault}")
     classified = scanner.classify(vault, cache.load(vault))
+    verbose(args, f"Found {len(classified.get('new', []))} new, {len(classified.get('modified', []))} modified, {len(classified.get('deleted', []))} deleted")
     report = scanner.format_report(classified, vault)
     if "error" in report:
         fail(report, 1)
-    emit(report)
+    emit_formatted(args, report)
 
 
 def cmd_plan(args) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
-    size = args.batch_size
-    if size <= 0:
-        fail({"error": "invalid_batch_size", "batch_size": size}, 1)
-    state = batch.build_plan(vault, size)
-    batch.save_state(vault, state)
+
+    # Check for resume flag
+    resume = getattr(args, "resume", False)
+    existing_state = batch.load_state(vault)
+
+    if resume:
+        if not existing_state:
+            fail({"error": "no_existing_plan", "hint": "no batch state to resume"}, 1)
+        verbose(args, "Resuming existing batch plan...")
+        state = existing_state
+    else:
+        if existing_state:
+            verbose(args, "Overwriting existing batch plan...")
+        size = args.batch_size
+        if size <= 0:
+            fail({"error": "invalid_batch_size", "batch_size": size}, 1)
+        state = batch.build_plan(vault, size)
+        batch.save_state(vault, state)
+
     batch.write_report(vault, state)
-    emit({
+    emit_formatted(args, {
         "ok": True,
         "total": state["total"],
         "batch_size": state["batch_size"],
         "report": state["report"],
+        "resumed": resume,
         "batches": [
             {"id": item["id"], "status": item["status"], "count": len(item["items"]), "items": item["items"]}
             for item in state["batches"]
@@ -255,10 +333,8 @@ def _atomic_write_text(path: Path, text: str) -> None:
         tmp.write_text(text, encoding="utf-8")
         os.replace(tmp, path)
     except OSError:
-        try:
+        with contextlib.suppress(OSError):
             tmp.unlink()
-        except OSError:
-            pass
         raise
 
 
@@ -300,10 +376,10 @@ def _topic_meta(path: Path) -> tuple[dict, str] | None:
         return None
 
 
-def _rebuild_index(vault: Path) -> tuple[dict, list[dict]]:
+def _rebuild_index(vault: Path, *, incremental: bool = False) -> tuple[dict, list[dict]]:
     try:
-        data, errors = wiki_index.rebuild(vault)
-    except wiki_index.NormalizedPathCollision as exc:
+        data, errors = wiki_index.rebuild(vault, incremental=incremental)
+    except wiki_index.NormalizedPathCollisionError as exc:
         fail({"error": "normalized_path_collision", "path": exc.path}, 1)
     try:
         wiki_index.save_index(vault, data)
@@ -339,8 +415,11 @@ def cmd_index(args) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
-    data, errors = _rebuild_index(vault)
-    emit({"ok": True, "topics": len(data["topics"]), "errors": errors})
+    incremental = getattr(args, "incremental", False)
+    verbose(args, f"Building index (incremental={incremental})...")
+    data, errors = _rebuild_index(vault, incremental=incremental)
+    verbose(args, f"Index built: {len(data['topics'])} topics, {len(errors)} errors")
+    emit_formatted(args, {"ok": True, "topics": len(data["topics"]), "errors": errors})
 
 
 def cmd_normalize_source_type(args) -> None:
@@ -393,7 +472,7 @@ def cmd_status(args) -> None:
             index_topics = len(raw_index["topics"])
     try:
         _index_data, index_errors = wiki_index.rebuild(vault)
-    except wiki_index.NormalizedPathCollision as exc:
+    except wiki_index.NormalizedPathCollisionError as exc:
         _index_data = {}
         index_errors = [{"path": exc.path, "error": "normalized_path_collision"}]
 
@@ -403,7 +482,7 @@ def cmd_status(args) -> None:
     aliases_count = len(_index_data.get("alias_index", {}))
     backlinks_max = 0
 
-    for topic_key, topic_entry in _index_data.get("topics", {}).items():
+    for _topic_key, topic_entry in _index_data.get("topics", {}).items():
         tier = topic_entry.get("quality_tier", "stub")
         quality_distribution[tier] = quality_distribution.get(tier, 0) + 1
 
@@ -516,7 +595,7 @@ def cmd_gen_base(args) -> None:
 def _rebuild_index_in_memory(vault: Path) -> dict:
     try:
         data, _errors = wiki_index.rebuild(vault)
-    except wiki_index.NormalizedPathCollision as exc:
+    except wiki_index.NormalizedPathCollisionError as exc:
         fail({"error": "normalized_path_collision", "path": exc.path}, 1)
     return data
 
@@ -558,9 +637,8 @@ def _write_index(vault: Path, text: str, use_rest: bool) -> str:
     """Write ``wiki/index.md``. Prefer the Obsidian Local REST API (so an open
     editor buffer is updated in lock-step) when configured and reachable; on any
     miss fall back to a direct atomic write. Returns the method used."""
-    if use_rest and obsidian_api.available():
-        if obsidian_api.put_file(_obsidian_index_relpath(vault), text):
-            return "rest"
+    if use_rest and obsidian_api.available() and obsidian_api.put_file(_obsidian_index_relpath(vault), text):
+        return "rest"
     _atomic_write_text(config.wiki_root(vault) / "index.md", text)
     return "atomic"
 
@@ -594,7 +672,7 @@ def cmd_quality(args) -> None:
 
     topics_dir = config.topics_dir(vault)
     if not topics_dir.exists():
-        emit({"ok": True, "tiers": {}, "distribution": {tier: 0 for tier in ["stub", "basic", "standard", "rich", "premium"]}, "errors": []})
+        emit({"ok": True, "tiers": {}, "distribution": dict.fromkeys(["stub", "basic", "standard", "rich", "premium"], 0), "errors": []})
         return
 
     tiers = {}
@@ -658,8 +736,10 @@ def cmd_gen_site(args) -> None:
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
 
+    verbose(args, "Generating static site...")
     try:
         result = site.generate_site(vault)
+        verbose(args, f"Generated {result.get('pages_written', 0)} pages")
     except ValueError as exc:
         fail({"error": str(exc)}, 1)
 

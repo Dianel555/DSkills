@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 try:
     import yaml
 except ImportError as exc:  # pragma: no cover
@@ -12,7 +14,7 @@ class FrontmatterError(ValueError):
     pass
 
 
-def parse(text: str) -> tuple[dict, str]:
+def parse(text: str) -> tuple[dict[str, Any], str]:
     bom = "﻿" if text.startswith("﻿") else ""
     source = text[1:] if bom else text
     lines = source.splitlines(keepends=True)
@@ -42,6 +44,6 @@ def parse(text: str) -> tuple[dict, str]:
     return meta, body
 
 
-def dump(meta: dict, body: str) -> str:
+def dump(meta: dict[str, Any], body: str) -> str:
     yaml_text = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False).strip()
     return f"---\n{yaml_text}\n---\n\n{body}"
