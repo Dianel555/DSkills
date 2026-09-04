@@ -55,7 +55,7 @@ def available(timeout: float = 2.0) -> bool:
     req = urllib.request.Request(url + "/", headers={"Authorization": f"Bearer {key}"})
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_context(url)) as resp:
-            return 200 <= resp.status < 300
+            return bool(200 <= resp.status < 300)
     except _TRANSPORT_ERRORS:
         return False
 
@@ -77,6 +77,6 @@ def put_file(vault_rel_path: str, text: str, timeout: float = 10.0) -> bool:
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_context(url)) as resp:
-            return 200 <= resp.status < 300
+            return bool(200 <= resp.status < 300)
     except _TRANSPORT_ERRORS:
         return False

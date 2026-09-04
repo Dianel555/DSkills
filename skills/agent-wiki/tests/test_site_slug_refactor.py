@@ -1,8 +1,8 @@
 """Tests for clean topic-named HTML filenames (no hash suffix)."""
 
-import pytest
 from pathlib import Path
 
+import pytest
 from agent_wiki import config, frontmatter, site
 
 
@@ -69,7 +69,7 @@ def test_site_prunes_orphaned_pages(tmp_path):
 
     # First run: create topic A
     _topic(tmp_path, "topic-a.md", {"title": "Topic A"}, "Content A.")
-    result = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     site_dir = config.wiki_root(tmp_path) / "site"
     assert (site_dir / "topic-a.html").exists()
@@ -79,7 +79,7 @@ def test_site_prunes_orphaned_pages(tmp_path):
     orphan.write_text("<html>orphan</html>", encoding="utf-8")
 
     # Second run: topic A still exists
-    result = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     # Current page should exist
     assert (site_dir / "topic-a.html").exists()
@@ -97,7 +97,7 @@ def test_site_slug_map_threaded_through_links(tmp_path):
     _topic(tmp_path, "target.md", {"title": "Target"}, "Target content.")
     _topic(tmp_path, "source.md", {"title": "Source"}, "Link: [[target]]")
 
-    result = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     site_dir = config.wiki_root(tmp_path) / "site"
     source_html = (site_dir / "source.html").read_text(encoding="utf-8")

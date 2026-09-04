@@ -1,6 +1,5 @@
 """Test that the agent_wiki Python package structure exists."""
 import pathlib
-import importlib.util
 
 
 def test_agent_wiki_package_exists():

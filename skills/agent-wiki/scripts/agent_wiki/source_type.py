@@ -10,7 +10,8 @@ that ``normalize-source-type`` rewrites in place.
 from __future__ import annotations
 
 import unicodedata
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+from typing import Any
 
 from . import config, frontmatter
 
@@ -32,7 +33,7 @@ _EXTENSION_TYPES = {
 }
 
 
-def _nfc(value) -> str:
+def _nfc(value: Any) -> str:
     return unicodedata.normalize("NFC", str(value))
 
 
@@ -48,7 +49,7 @@ def classify_ref(ref: str) -> str:
     return _EXTENSION_TYPES.get(ext, "other")
 
 
-def classify_sources(sources) -> str:
+def classify_sources(sources: Any) -> str:
     """Reduce a topic's ``sources`` to one format, ``"mixed"``, or ``""``."""
     if not isinstance(sources, list):
         sources = [sources] if sources else []
@@ -61,14 +62,14 @@ def classify_sources(sources) -> str:
     return "mixed"
 
 
-def backfill(vault) -> dict:
+def backfill(vault: str | Path) -> dict[str, Any]:
     """Rewrite each topic's ``source_type`` frontmatter to its ``sources[]``
     format, in place. Topics already matching, or with no sources to derive a
     format from, are left untouched (no mtime churn). Returns changed/skipped/errors."""
     topics_dir = config.topics_dir(vault)
-    changed: list[dict] = []
+    changed: list[dict[str, Any]] = []
     skipped = 0
-    errors: list[dict] = []
+    errors: list[dict[str, Any]] = []
     for path in sorted(topics_dir.glob("*.md")):
         rel = config.normalize_relpath(path.name)
         try:

@@ -1,9 +1,8 @@
 """Tests for wiki_index passing source_count to compute_tier."""
 
-import pytest
 from pathlib import Path
 
-from agent_wiki import config, frontmatter, wiki_index, quality
+from agent_wiki import config, frontmatter, quality, wiki_index
 
 
 def _init(vault: Path) -> None:

@@ -15,6 +15,7 @@ import re
 import tempfile
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 from . import config, frontmatter, wiki_index
 
@@ -39,7 +40,7 @@ def _nfc(s: str) -> str:
     return unicodedata.normalize("NFC", str(s))
 
 
-def _esc(text) -> str:
+def _esc(text: Any) -> str:
     return html.escape(str(text), quote=True)
 
 
@@ -264,7 +265,7 @@ _TIERS = ("premium", "rich", "standard", "basic", "stub")
 
 # --- Content rendering (D8/D9) -------------------------------------------------
 
-def _resolve_target(target: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]) -> str | None:
+def _resolve_target(target: str, topic_keys: set[str], alias_index: dict[str, Any], slug_map: dict[str, str]) -> str | None:
     """Resolve a wikilink target to a slug: exact key -> Target.md -> alias_index."""
     if target in topic_keys:
         return slug_map[target]
@@ -276,9 +277,9 @@ def _resolve_target(target: str, topic_keys: set[str], alias_index: dict, slug_m
     return None
 
 
-def _convert_links(text: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]) -> str:
+def _convert_links(text: str, topic_keys: set[str], alias_index: dict[str, Any], slug_map: dict[str, str]) -> str:
     """Replace `[[...]]` outside code with escaped anchors/inert spans."""
-    def repl(m: re.Match) -> str:
+    def repl(m: re.Match[str]) -> str:
         raw = m.group(1)
         if "|" in raw:
             target_spec, label = raw.split("|", 1)
@@ -298,7 +299,7 @@ def _convert_links(text: str, topic_keys: set[str], alias_index: dict, slug_map:
     return _WIKILINK_RE.sub(repl, text)
 
 
-def _convert_inline(line: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]) -> str:
+def _convert_inline(line: str, topic_keys: set[str], alias_index: dict[str, Any], slug_map: dict[str, str]) -> str:
     """Convert wikilinks on a line, leaving inline code spans untouched."""
     parts = []
     pos = 0
@@ -310,7 +311,7 @@ def _convert_inline(line: str, topic_keys: set[str], alias_index: dict, slug_map
     return "".join(parts)
 
 
-def _resolve_wikilinks(body: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]) -> str:
+def _resolve_wikilinks(body: str, topic_keys: set[str], alias_index: dict[str, Any], slug_map: dict[str, str]) -> str:
     """Pre-pass over raw markdown: convert wikilinks outside fenced blocks and code spans."""
     out = []
     in_fence = False
@@ -337,7 +338,7 @@ def _add_heading_ids(html_body: str) -> tuple[str, list[tuple[str, str, str]]]:
     seen: dict[str, int] = {}
     toc: list[tuple[str, str, str]] = []
 
-    def repl(m: re.Match) -> str:
+    def repl(m: re.Match[str]) -> str:
         level, inner = m.group(1), m.group(2)
         label = _TAG_RE.sub("", inner).strip()
         base = "h-" + _sanitize_filename(_nfc(label)).lower()
@@ -350,7 +351,7 @@ def _add_heading_ids(html_body: str) -> tuple[str, list[tuple[str, str, str]]]:
     return _HEADING_RE.sub(repl, html_body), toc
 
 
-def _render_body_and_toc(body: str, topic_keys: set[str], alias_index: dict, slug_map: dict[str, str]):
+def _render_body_and_toc(body: str, topic_keys: set[str], alias_index: dict[str, Any], slug_map: dict[str, str]) -> tuple[str, list[tuple[str, str, str]]]:
     """Render a topic body to HTML + TOC, or escaped plaintext fallback (degraded)."""
     if MARKDOWN_AVAILABLE:
         pre = _resolve_wikilinks(body, topic_keys, alias_index, slug_map)
@@ -376,13 +377,13 @@ def _render_toc(toc: list[tuple[str, str, str]]) -> str:
 
 # --- Components ----------------------------------------------------------------
 
-def _chip(type_str: str, type_accent: dict) -> str:
+def _chip(type_str: str, type_accent: dict[str, str]) -> str:
     accent = type_accent.get(_nfc(type_str), "--faint")
     return (f'<span class="chip"><span class="chip-dot" style="--dot:var({accent})"></span>'
             f'{_esc(type_str)}</span>')
 
 
-def _render_infobox(entry: dict, type_accent: dict) -> str:
+def _render_infobox(entry: dict[str, Any], type_accent: dict[str, str]) -> str:
     rows = []
 
     def row(label: str, value_html: str) -> None:
@@ -415,7 +416,7 @@ def _render_infobox(entry: dict, type_accent: dict) -> str:
     return "".join(rows)
 
 
-def _card(key: str, entry: dict, type_accent: dict, slug_map: dict[str, str]) -> str:
+def _card(key: str, entry: dict[str, Any], type_accent: dict[str, str], slug_map: dict[str, str]) -> str:
     title = entry.get("title", "")
     type_str = _nfc(entry.get("type", ""))
     tier = entry.get("quality_tier", "")
@@ -445,7 +446,7 @@ def _footer(generated_at: str) -> str:
 
 # --- Page templates ------------------------------------------------------------
 
-def _article_page(title, generated_at, toc_html, body_html, infobox_html) -> str:
+def _article_page(title: str, generated_at: str, toc_html: str, body_html: str, infobox_html: str) -> str:
     nav_inner = toc_html or '<p class="muted">（无目录）</p>'
     return f"""<!DOCTYPE html>
 <html lang="zh" data-theme="shan-shui">
@@ -487,11 +488,11 @@ def _section(label: str, accent_token: str, cards_html: str, kind: str, extra: s
             f'<div class="card-grid">{cards_html}</div></section>')
 
 
-def _index_page(data: dict, type_accent: dict, generated_at: str, slug_map: dict[str, str]) -> str:
-    topics = data["topics"]
+def _index_page(data: dict[str, Any], type_accent: dict[str, str], generated_at: str, slug_map: dict[str, str]) -> str:
+    topics: dict[str, Any] = data["topics"]
     items = list(topics.items())
 
-    def by_title(ke):
+    def by_title(ke: tuple[str, Any]) -> tuple[str, str]:
         return (_nfc(ke[1].get("title", "")), ke[0])
 
     sections = []
@@ -504,7 +505,7 @@ def _index_page(data: dict, type_accent: dict, generated_at: str, slug_map: dict
             f'<div class="card-grid">{cards}</div></section>'
         )
 
-    groups: dict[str, list] = {}
+    groups: dict[str, list[tuple[str, Any]]] = {}
     for k, e in items:
         groups.setdefault(_nfc(e.get("type", "")), []).append((k, e))
     for t in sorted(x for x in groups if x):
@@ -557,7 +558,7 @@ def _atomic_write(site_dir: Path, name: str, content: str) -> None:
         raise
 
 
-def generate_site(vault: str | Path) -> dict:
+def generate_site(vault: str | Path) -> dict[str, Any]:
     """Generate a self-contained static HTML site under wiki/site/.
 
     Returns ``{"ok": True, "pages": int, "out": str, "degraded": bool, "errors": list}``.
@@ -586,7 +587,7 @@ def generate_site(vault: str | Path) -> dict:
     topics_dir = config.topics_dir(vault)
 
     pages_written = 0
-    errors: list[dict] = list(index_errors)
+    errors: list[dict[str, Any]] = list(index_errors)
     for key, entry in topics.items():
         topic_path = topics_dir / key
         if not topic_path.exists():

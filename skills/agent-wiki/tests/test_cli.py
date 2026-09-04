@@ -131,3 +131,24 @@ def test_status_reports_health(tmp_path):
     assert payload["topics_orphaned"] == 1
     assert payload["sources_tracked"] == 0
     assert "last_log_entry" in payload
+
+
+def test_completion_bash_script(tmp_path):
+    result = run_cli("completion", "--shell", "bash", env={"DOTENV_DISABLE": "1"})
+    assert result.returncode == 0
+    assert "complete -F _agent_wiki_complete agent-wiki agent_wiki" in result.stdout
+    for subcommand in ("init", "gen-site", "doctor", "batch-done"):
+        assert subcommand in result.stdout
+
+
+def test_completion_zsh_script():
+    result = run_cli("completion", "--shell", "zsh", env={"DOTENV_DISABLE": "1"})
+    assert result.returncode == 0
+    assert "#compdef agent-wiki agent_wiki" in result.stdout
+    assert "init" in result.stdout and "doctor" in result.stdout
+
+
+def test_doctor_subcommand(tmp_path):
+    result = run_cli("doctor", "--vault", str(tmp_path), env={"DOTENV_DISABLE": "1"})
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["ok"] is False  # uninitialized vault

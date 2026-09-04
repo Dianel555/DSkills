@@ -1,14 +1,11 @@
 """Tests for site.py static HTML generation."""
 
 import hashlib
-import json
 import re
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-
-from agent_wiki import config, frontmatter, wiki_index, site
+from agent_wiki import config, frontmatter, site, wiki_index
 
 
 def _read_topic_html(vault: Path, prefix: str) -> str:
@@ -44,18 +41,18 @@ def test_site_generates_deterministic_output(tmp_path):
 
     _topic(tmp_path, "topic.md", {"title": "Topic"}, "## Section\n\nContent.")
 
-    result1 = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     # Read all generated files
     site_dir = config.wiki_root(tmp_path) / "site"
     files1 = {p.relative_to(site_dir): p.read_bytes() for p in site_dir.rglob("*.html")}
 
-    result2 = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
     files2 = {p.relative_to(site_dir): p.read_bytes() for p in site_dir.rglob("*.html")}
 
     # Should be byte-identical
     assert files1.keys() == files2.keys()
-    for path in files1.keys():
+    for path in files1:
         assert files1[path] == files2[path], f"File {path} differs between runs"
 
 
@@ -80,7 +77,7 @@ def test_site_writes_only_under_wiki_site(tmp_path):
     """Site writes only under wiki/site/, never modifies other areas."""
     _init(tmp_path)
 
-    topic_path = _topic(tmp_path, "topic.md", {"title": "Topic"}, "Content.")
+    _topic(tmp_path, "topic.md", {"title": "Topic"}, "Content.")
 
     # Snapshot filesystem before
     before_files = {p: p.stat().st_mtime_ns for p in tmp_path.rglob("*") if p.is_file() and "site" not in p.parts}
@@ -148,16 +145,16 @@ def test_site_no_wall_clock_timestamps(tmp_path):
     _topic(tmp_path, "topic.md", {"title": "Topic"}, "Content.")
 
     import time
-    result1 = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
     time.sleep(0.01)
-    result2 = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     # Should be identical despite time passing
     site_dir = config.wiki_root(tmp_path) / "site"
     files1 = {p.relative_to(site_dir): p.read_bytes() for p in site_dir.rglob("*.html")}
     files2 = {p.relative_to(site_dir): p.read_bytes() for p in site_dir.rglob("*.html")}
 
-    for path in files1.keys():
+    for path in files1:
         assert files1[path] == files2[path]
 
 
@@ -175,7 +172,7 @@ def test_site_slug_is_injective(tmp_path):
     _topic(tmp_path, "A.md", {"title": "A"}, "Content A.")
     _topic(tmp_path, "B.md", {"title": "B"}, "Content B.")
 
-    result = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     site_dir = config.wiki_root(tmp_path) / "site"
     html_files = [p.name for p in site_dir.glob("*.html") if p.name != "index.html"]
@@ -209,7 +206,7 @@ def test_site_generates_index_html(tmp_path):
     _topic(tmp_path, "A.md", {"title": "Topic A"}, "Content A.")
     _topic(tmp_path, "B.md", {"title": "Topic B"}, "Content B.")
 
-    result = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     site_dir = config.wiki_root(tmp_path) / "site"
     index_path = site_dir / "index.html"
@@ -229,7 +226,7 @@ def test_site_renders_quality_tier_badge(tmp_path):
     # Create standard tier topic
     _topic(tmp_path, "topic.md", {"title": "Topic"}, "## S1\n## S2\n\n" + ("Prose. " * 100))
 
-    result = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     site_dir = config.wiki_root(tmp_path) / "site"
     html_content = (site_dir / "topic.html").read_text(encoding="utf-8")
@@ -243,7 +240,7 @@ def test_site_shows_featured_marker(tmp_path):
 
     _topic(tmp_path, "featured.md", {"title": "Featured", "featured": True}, "Content.")
 
-    result = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     site_dir = config.wiki_root(tmp_path) / "site"
     html_content = (site_dir / "featured.html").read_text(encoding="utf-8")
@@ -262,7 +259,7 @@ def test_site_shows_backlinks_count(tmp_path):
     data, _ = wiki_index.rebuild(tmp_path)
     wiki_index.save_index(tmp_path, data)
 
-    result = site.generate_site(tmp_path)
+    site.generate_site(tmp_path)
 
     site_dir = config.wiki_root(tmp_path) / "site"
     html_content = (site_dir / "B.html").read_text(encoding="utf-8")
@@ -535,7 +532,7 @@ def test_index_and_toc_navigable_without_js(tmp_path):
     site_dir = config.wiki_root(tmp_path) / "site"
     idx = (site_dir / "index.html").read_text(encoding="utf-8")
     idx_nojs = re.sub(r"<script.*?</script>", "", idx, flags=re.DOTALL)
-    for key, slug in [("a.md", "a.html"), ("b.md", "b.html")]:
+    for _key, slug in [("a.md", "a.html"), ("b.md", "b.html")]:
         assert f'href="{slug}"' in idx_nojs
         assert (site_dir / slug).exists()
 

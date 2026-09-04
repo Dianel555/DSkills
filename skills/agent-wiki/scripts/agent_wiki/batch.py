@@ -14,6 +14,7 @@ import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from . import cache, config, scanner
 
@@ -43,7 +44,7 @@ def _chunk(paths: list[str], size: int) -> list[list[str]]:
     return [paths[i:i + size] for i in range(0, len(paths), size)]
 
 
-def build_plan(vault: str | Path, batch_size: int) -> dict:
+def build_plan(vault: str | Path, batch_size: int) -> dict[str, Any]:
     paths = _pending_paths(vault)
     batches = [
         {"id": index + 1, "status": "pending", "items": chunk}
@@ -59,7 +60,7 @@ def build_plan(vault: str | Path, batch_size: int) -> dict:
     }
 
 
-def load_state(vault: str | Path) -> dict | None:
+def load_state(vault: str | Path) -> dict[str, Any] | None:
     path = config.batch_path(vault)
     if not path.exists():
         return None
@@ -70,7 +71,7 @@ def load_state(vault: str | Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def save_state(vault: str | Path, data: dict) -> None:
+def save_state(vault: str | Path, data: dict[str, Any]) -> None:
     path = config.batch_path(vault)
     tmp = path.with_name(path.name + ".tmp")
     try:
@@ -83,7 +84,7 @@ def save_state(vault: str | Path, data: dict) -> None:
         raise BatchStateError(str(exc)) from exc
 
 
-def render_report(state: dict) -> str:
+def render_report(state: dict[str, Any]) -> str:
     lines = [
         "# Ingest Task Report",
         "",
@@ -102,14 +103,14 @@ def render_report(state: dict) -> str:
     return "\n".join(lines)
 
 
-def write_report(vault: str | Path, state: dict) -> Path:
+def write_report(vault: str | Path, state: dict[str, Any]) -> Path:
     path = report_path(vault)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_report(state), encoding="utf-8")
     return path
 
 
-def is_ingested(vault: str | Path, rel: str, tracked: dict) -> bool:
+def is_ingested(vault: str | Path, rel: str, tracked: dict[str, Any]) -> bool:
     """A batch item counts as done only if its current content is cached."""
     entry = tracked.get(config.normalize_relpath(rel))
     if not entry:
@@ -118,6 +119,6 @@ def is_ingested(vault: str | Path, rel: str, tracked: dict) -> bool:
     if not source.is_file():
         return False
     try:
-        return cache.sha256_file(source) == entry.get("sha256")
+        return bool(cache.sha256_file(source) == entry.get("sha256"))
     except OSError:
         return False

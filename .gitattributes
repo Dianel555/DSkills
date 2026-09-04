@@ -1,0 +1,12 @@
+# Normalize text files to LF on checkout and commit (avoids CRLF/LF churn)
+* text=auto eol=lf
+
+# Binary assets — never normalize
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary

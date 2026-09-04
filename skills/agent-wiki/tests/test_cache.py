@@ -1,9 +1,7 @@
 import json
 import os
-from pathlib import Path
 
 import pytest
-
 from agent_wiki import cache
 
 

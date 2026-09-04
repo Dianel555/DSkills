@@ -1,5 +1,4 @@
 import pytest
-
 from agent_wiki import frontmatter
 
 

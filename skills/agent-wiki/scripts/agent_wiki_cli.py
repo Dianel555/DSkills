@@ -5,15 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
 
+from agent_wiki import __version__, batch, commands
 from dotenv import load_dotenv
-
-from agent_wiki import __version__
-from agent_wiki import batch
-from agent_wiki import commands
 
 
 def _configure_stdio() -> None:
@@ -129,7 +127,72 @@ def build_parser() -> argparse.ArgumentParser:
     add_vault(gen_site)
     gen_site.set_defaults(func=commands.cmd_gen_site)
 
+    doctor_cmd = sub.add_parser("doctor", help="Run vault health checks")
+    add_vault(doctor_cmd)
+    doctor_cmd.set_defaults(func=commands.cmd_doctor)
+
+    completion = sub.add_parser("completion", help="Print a bash/zsh completion script")
+    completion.add_argument("--shell", choices=["bash", "zsh"], default="bash", help="Shell to generate for (default: bash)")
+    completion.set_defaults(func=cmd_completion)
+
+    # Keep the subcommand list derivable for the completion generator
+    parser.set_defaults(_subcommands=lambda: sorted(sub.choices))
     return parser
+
+
+_SAFE_NAME = re.compile(r"[A-Za-z0-9-]+")
+_OPTS = "--vault --verbose -v --format --version --help"
+_FORMATS = "json yaml table"
+
+
+def _bash_completion(names: list[str]) -> str:
+    cmds = " ".join(names)
+    return (
+        "# bash completion for agent-wiki (agent-wiki completion --shell bash)\n"
+        "_agent_wiki_complete() {\n"
+        "    local cur prev\n"
+        "    cur=\"${COMP_WORDS[COMP_CWORD]}\"\n"
+        "    prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n"
+        "    if [ \"$COMP_CWORD\" -eq 1 ]; then\n"
+        f'        COMPREPLY=( $(compgen -W "{cmds}" -- "$cur") )\n'
+        "    elif [ \"$prev\" = \"--format\" ]; then\n"
+        f'        COMPREPLY=( $(compgen -W "{_FORMATS}" -- "$cur") )\n'
+        "    else\n"
+        f'        COMPREPLY=( $(compgen -W "{_OPTS}" -- "$cur") )\n'
+        "    fi\n"
+        "}\n"
+        "complete -F _agent_wiki_complete agent-wiki agent_wiki\n"
+    )
+
+
+def _zsh_completion(names: list[str]) -> str:
+    cmds = " ".join(names)
+    return (
+        "#compdef agent-wiki agent_wiki\n"
+        "function _agent_wiki() {\n"
+        "    _arguments \\\n"
+        f"        '1:subcommand:(({cmds}))' \\\n"
+        "        '--vault[vault root path]:vault:_files' \\\n"
+        "        '--format[output format]:format:(json yaml table)' \\\n"
+        "        '-v[show progress to stderr]' \\\n"
+        "        '--verbose[show progress to stderr]' \\\n"
+        "        '--help[show help]' \\\n"
+        "        '--version[show version]'\n"
+        "}\n"
+        "_agent_wiki \"$@\"\n"
+    )
+
+
+def cmd_completion(args: argparse.Namespace) -> None:
+    # Defense before emission: reject any subcommand name outside [A-Za-z0-9-]
+    # so the generated shell never sees shell-special chars (argparse itself
+    # imposes no such charset restriction).
+    raw = build_parser().get_default("_subcommands")()
+    names = sorted(n for n in raw if _SAFE_NAME.fullmatch(n))
+    if getattr(args, "shell", "bash") == "zsh":
+        print(_zsh_completion(names), end="")
+    else:
+        print(_bash_completion(names), end="")
 
 
 def main(argv: list[str] | None = None) -> int:

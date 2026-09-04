@@ -16,7 +16,8 @@ are regenerated from it and are never written back into topic files. The Obsidia
 - **Topic entries** include: `path`, `title`, `sources[]`, `last_updated`,
   `year_start` (int|null), `year_end` (int|null), `authors[]`,
   `source_type` (derived), `institutions[]`, `methods[]`, `technical_routes[]`, `research_trends[]`, `summary`
-  (≤1000 chars), `keywords[]`, `kind` (`topic`), `links[]` (parsed from body), plus **extended fields**:
+  (≤1000 chars), `keywords[]`, `kind` (`topic`), `links[]` (parsed from body),
+  `mtime_ns` (int, source file mtime — drives `--incremental` reuse on rebuild), plus **extended fields**:
   - `type` (string, default `""`) — page kind from frontmatter (orthogonal to derived `source_type`)
   - `aliases` (array, default `[]`) — order-preserved alternative names from frontmatter
   - `quality_tier` (string enum) — derived tier (`stub`/`basic`/`standard`/`rich`/`premium`)

@@ -1,10 +1,8 @@
 """Tests for coverage and gap reporting."""
 
-import json
 from pathlib import Path
 
 import pytest
-
 from agent_wiki import config, frontmatter, wiki_index
 
 

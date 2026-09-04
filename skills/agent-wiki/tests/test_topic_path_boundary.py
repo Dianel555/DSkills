@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from agent_wiki import config
 
 CLI = Path(__file__).resolve().parents[1] / "scripts" / "agent_wiki_cli.py"

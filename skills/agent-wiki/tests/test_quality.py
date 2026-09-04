@@ -1,6 +1,5 @@
 """Tests for quality.py metrics computation."""
 
-import pytest
 from pathlib import Path
 
 from agent_wiki import config, frontmatter
@@ -553,8 +552,9 @@ def test_quality_metrics_bounds():
 
 def test_quality_with_nfd_unicode():
     """INVARIANT: NFD text handled correctly (prose_chars uses NFC)."""
-    from agent_wiki import quality
     import unicodedata
+
+    from agent_wiki import quality
 
     # NFD: decomposed form (e.g., é = e + ́)
     body_nfd = unicodedata.normalize("NFD", "## Section\n\nProse with café and naïve words.")

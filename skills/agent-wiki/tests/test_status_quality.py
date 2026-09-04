@@ -7,7 +7,6 @@ from pathlib import Path
 
 from agent_wiki import config, frontmatter
 
-
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agent_wiki_cli.py"
 

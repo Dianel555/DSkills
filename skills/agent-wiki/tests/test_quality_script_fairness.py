@@ -1,6 +1,5 @@
 """Tests for CJK/EN script fairness in quality tier assignment."""
 
-import pytest
 from agent_wiki import quality
 
 
@@ -30,7 +29,6 @@ def test_tier_script_fairness_standard_level():
     body_cjk = f"## 第一节\n\n{cjk_prose[:30]}\n\n## 第二节\n\n{cjk_prose[30:]}"
 
     # Latin: 2 sections + exactly 38 words × 16 = 608 weight
-    latin_prose = " ".join(["word"] * 38)  # Exactly 38 words
     body_latin = f"## First Section\n\n{' '.join(['word']*19)}\n\n## Second Section\n\n{' '.join(['word']*19)}"
 
     tier_cjk = quality.compute_tier(body_cjk)

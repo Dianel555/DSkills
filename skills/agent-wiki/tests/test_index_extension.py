@@ -3,9 +3,7 @@
 import json
 from pathlib import Path
 
-import pytest
-
-from agent_wiki import config, frontmatter, wiki_index, quality
+from agent_wiki import config, frontmatter, wiki_index
 
 
 def _topic(vault: Path, name: str, meta: dict, body: str = "x") -> Path:

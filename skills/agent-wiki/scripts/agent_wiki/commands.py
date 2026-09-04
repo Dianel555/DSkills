@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import json
 import os
 import stat
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 try:
     import yaml as yaml_module
@@ -25,6 +27,7 @@ from . import (
     cleanup,
     config,
     coverage,
+    doctor,
     frontmatter,
     home,
     obsidian_api,
@@ -38,11 +41,11 @@ from . import (
 )
 
 
-def emit(payload: dict) -> None:
+def emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
 
-def emit_formatted(args, payload: dict[str, Any]) -> None:
+def emit_formatted(args: argparse.Namespace, payload: dict[str, Any]) -> None:
     """Emit output in the requested format (json/yaml/table)."""
     fmt = getattr(args, "format", "json")
 
@@ -71,18 +74,18 @@ def _emit_table(payload: dict[str, Any]) -> None:
             print(f"{key}: {value}")
 
 
-def fail(payload: dict, code: int = 1) -> None:
+def fail(payload: dict[str, Any], code: int = 1) -> NoReturn:
     print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
     sys.exit(code)
 
 
-def verbose(args, message: str) -> None:
+def verbose(args: argparse.Namespace, message: str) -> None:
     """Print progress message to stderr if --verbose flag is set."""
     if getattr(args, "verbose", False):
         print(f"[agent-wiki] {message}", file=sys.stderr)
 
 
-def _vault(args) -> Path:
+def _vault(args: argparse.Namespace) -> Path:
     return config.resolve_vault(getattr(args, "vault", None))
 
 
@@ -106,7 +109,7 @@ def _ensure_wiki_writable(vault: Path) -> None:
             fail({"error": "wiki_not_writable"}, 1)
 
 
-def cmd_init(args) -> None:
+def cmd_init(args: argparse.Namespace) -> None:
     vault = _vault(args)
     _ensure_wiki_writable(vault)
     root = config.wiki_root(vault)
@@ -148,7 +151,7 @@ def cmd_init(args) -> None:
     emit({"status": "already_initialized" if existed else "ok", "created": created})
 
 
-def cmd_scan(args) -> None:
+def cmd_scan(args: argparse.Namespace) -> None:
     vault = _vault(args)
     verbose(args, f"Scanning vault: {vault}")
     classified = scanner.classify(vault, cache.load(vault))
@@ -159,7 +162,7 @@ def cmd_scan(args) -> None:
     emit_formatted(args, report)
 
 
-def cmd_plan(args) -> None:
+def cmd_plan(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -196,7 +199,7 @@ def cmd_plan(args) -> None:
     })
 
 
-def cmd_batch_done(args) -> None:
+def cmd_batch_done(args: argparse.Namespace) -> None:
     vault = _vault(args)
     state = batch.load_state(vault)
     if state is None:
@@ -215,21 +218,21 @@ def cmd_batch_done(args) -> None:
     emit({"ok": True, "batch": args.batch, "status": "done", "remaining": remaining, "complete": not remaining})
 
 
-def cmd_extract_authors(args) -> None:
+def cmd_extract_authors(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.topics_dir(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
     emit({"ok": True, "topics": authors.extract(vault)})
 
 
-def cmd_aggregate_authors(args) -> None:
+def cmd_aggregate_authors(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.topics_dir(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
     emit({"ok": True, "authors": authors.aggregate(authors.extract(vault))})
 
 
-def cmd_cache_get(args) -> None:
+def cmd_cache_get(args: argparse.Namespace) -> None:
     vault = _vault(args)
     rel = config.normalize_relpath(args.path)
     entry = cache.load(vault).get("sources", {}).get(rel)
@@ -241,7 +244,7 @@ def cmd_cache_get(args) -> None:
     emit(payload)
 
 
-def cmd_cache_put(args) -> None:
+def cmd_cache_put(args: argparse.Namespace) -> None:
     vault = _vault(args)
     rel = config.normalize_relpath(args.path)
     source = config.source_path(vault, rel)
@@ -280,14 +283,14 @@ def _append_log(vault: Path, category: str, action: str, path: str) -> None:
         handle.write(f"## [{date.today().isoformat()}] {category} | {action} | {path}\n")
 
 
-def cmd_cleanup(args) -> None:
+def cmd_cleanup(args: argparse.Namespace) -> None:
     vault = _vault(args)
     data, signature = cache.load_with_signature(vault)
     sources = data.get("sources", {})
     removed = 0
     archived = 0
-    details: list[dict] = []
-    errors: list[dict] = []
+    details: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
 
     for rel, entry in list(sources.items()):
         source = config.source_path(vault, rel)
@@ -344,7 +347,7 @@ def _safe_md_name(value: str) -> str:
     return safe if safe.endswith(".md") else safe + ".md"
 
 
-def _capture(args, dir_func, kind: str, action: str) -> None:
+def _capture(args: argparse.Namespace, dir_func: Callable[[Path], Path], kind: str, action: str) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -365,18 +368,18 @@ def _capture(args, dir_func, kind: str, action: str) -> None:
     emit({"ok": True, "path": rel, "kind": kind})
 
 
-def cmd_save_report(args) -> None:
+def cmd_save_report(args: argparse.Namespace) -> None:
     _capture(args, config.queries_dir, "query", "save_report")
 
 
-def _topic_meta(path: Path) -> tuple[dict, str] | None:
+def _topic_meta(path: Path) -> tuple[dict[str, Any], str] | None:
     try:
         return frontmatter.parse(path.read_text(encoding="utf-8-sig"))
     except (UnicodeDecodeError, frontmatter.FrontmatterError):
         return None
 
 
-def _rebuild_index(vault: Path, *, incremental: bool = False) -> tuple[dict, list[dict]]:
+def _rebuild_index(vault: Path, *, incremental: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     try:
         data, errors = wiki_index.rebuild(vault, incremental=incremental)
     except wiki_index.NormalizedPathCollisionError as exc:
@@ -411,7 +414,7 @@ def _graphs_stale(vault: Path) -> bool:
     return False
 
 
-def cmd_index(args) -> None:
+def cmd_index(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -422,7 +425,7 @@ def cmd_index(args) -> None:
     emit_formatted(args, {"ok": True, "topics": len(data["topics"]), "errors": errors})
 
 
-def cmd_normalize_source_type(args) -> None:
+def cmd_normalize_source_type(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.topics_dir(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -430,7 +433,7 @@ def cmd_normalize_source_type(args) -> None:
     emit({"ok": True, **result})
 
 
-def cmd_status(args) -> None:
+def cmd_status(args: argparse.Namespace) -> None:
     vault = _vault(args)
     data = cache.load(vault)
     topics_root = config.topics_dir(vault)
@@ -568,7 +571,7 @@ def cmd_status(args) -> None:
     })
 
 
-def cmd_gen_base(args) -> None:
+def cmd_gen_base(args: argparse.Namespace) -> None:
     vault = _vault(args)
     root = config.wiki_root(vault)
     if not root.exists():
@@ -592,7 +595,7 @@ def cmd_gen_base(args) -> None:
     emit({"ok": True, "prefix": prefix, "written": written})
 
 
-def _rebuild_index_in_memory(vault: Path) -> dict:
+def _rebuild_index_in_memory(vault: Path) -> dict[str, Any]:
     try:
         data, _errors = wiki_index.rebuild(vault)
     except wiki_index.NormalizedPathCollisionError as exc:
@@ -600,7 +603,7 @@ def _rebuild_index_in_memory(vault: Path) -> dict:
     return data
 
 
-def _render_canvas(vault: Path, data: dict, prefix: str, key: str) -> dict:
+def _render_canvas(vault: Path, data: dict[str, Any], prefix: str, key: str) -> dict[str, Any]:
     graph = canvas.build_canvas(key, data, prefix)
     path = config.graphs_dir(vault) / (Path(key).stem + ".canvas")
     try:
@@ -610,7 +613,7 @@ def _render_canvas(vault: Path, data: dict, prefix: str, key: str) -> dict:
     return {"path": config.to_rel_posix(path, vault), "nodes": len(graph["nodes"]), "edges": len(graph["edges"])}
 
 
-def cmd_gen_canvas(args) -> None:
+def cmd_gen_canvas(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -653,7 +656,7 @@ def _resolve_cards(mode: str, vault: Path) -> bool:
     return plugins.cards_available(vault)
 
 
-def cmd_gen_home(args) -> None:
+def cmd_gen_home(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -665,7 +668,7 @@ def cmd_gen_home(args) -> None:
     emit({"ok": True, "path": "wiki/index.md", "cards": cards, "write_via": write_via})
 
 
-def cmd_quality(args) -> None:
+def cmd_quality(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -705,7 +708,7 @@ def cmd_quality(args) -> None:
     emit({"ok": True, "tiers": tiers, "distribution": distribution, "errors": errors})
 
 
-def cmd_coverage(args) -> None:
+def cmd_coverage(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -718,7 +721,7 @@ def cmd_coverage(args) -> None:
     emit(result)
 
 
-def cmd_worklist(args) -> None:
+def cmd_worklist(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -731,7 +734,7 @@ def cmd_worklist(args) -> None:
     emit({"ok": True, **result})
 
 
-def cmd_gen_site(args) -> None:
+def cmd_gen_site(args: argparse.Namespace) -> None:
     vault = _vault(args)
     if not config.wiki_root(vault).exists():
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
@@ -744,3 +747,9 @@ def cmd_gen_site(args) -> None:
         fail({"error": str(exc)}, 1)
 
     emit(result)
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    vault = _vault(args)
+    verbose(args, f"Running health checks on: {vault}")
+    emit_formatted(args, doctor.run(vault))

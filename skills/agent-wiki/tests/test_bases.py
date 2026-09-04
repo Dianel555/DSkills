@@ -1,11 +1,9 @@
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import yaml
-
 from agent_wiki import bases
 
 ROOT = Path(__file__).resolve().parents[1]

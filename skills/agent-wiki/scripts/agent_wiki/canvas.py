@@ -22,6 +22,7 @@ import json
 import math
 import os
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 # Node box geometry (positive-int width/height, integer coords).
 CENTER_WIDTH = 480
@@ -57,17 +58,17 @@ def _is_url(value: str) -> bool:
     return value.lower().startswith(("http://", "https://"))
 
 
-def _text_node(node_id: str, x: int, y: int, width: int, height: int, text: str, color: str) -> dict:
+def _text_node(node_id: str, x: int, y: int, width: int, height: int, text: str, color: str) -> dict[str, Any]:
     return {"id": node_id, "type": "text", "x": x, "y": y,
             "width": width, "height": height, "text": text, "color": color}
 
 
-def _link_node(node_id: str, x: int, y: int, url: str, color: str) -> dict:
+def _link_node(node_id: str, x: int, y: int, url: str, color: str) -> dict[str, Any]:
     return {"id": node_id, "type": "link", "x": x, "y": y,
             "width": RING_WIDTH, "height": RING_HEIGHT, "url": url, "color": color}
 
 
-def _edge(edge_id: str, from_node: str, to_node: str, color: str, label: str = "") -> dict:
+def _edge(edge_id: str, from_node: str, to_node: str, color: str, label: str = "") -> dict[str, Any]:
     edge = {"id": edge_id, "fromNode": from_node, "toNode": to_node, "toEnd": "arrow", "color": color}
     if label:
         edge["label"] = label
@@ -117,7 +118,7 @@ def _position(radius: int, k: int, n: int, width: int, height: int) -> tuple[int
     return x, y
 
 
-def neighbors(target_key: str, index_data: dict) -> set[str]:
+def neighbors(target_key: str, index_data: dict[str, Any]) -> set[str]:
     """Topic keys (excluding the target) sharing >=1 source with the target, or
     connected to it by a body wikilink in either direction (resolved by stem)."""
     topics = index_data.get("topics", {})
@@ -136,7 +137,7 @@ def neighbors(target_key: str, index_data: dict) -> set[str]:
     return result
 
 
-def build_canvas(target_key: str, index_data: dict, prefix: str = "") -> dict:
+def build_canvas(target_key: str, index_data: dict[str, Any], prefix: str = "") -> dict[str, Any]:
     """JSON Canvas dict for ``target_key`` from the rebuilt index. ``prefix`` is
     the obsidian-vault-relative folder of the agent-wiki vault (``bases.obsidian_prefix``)."""
     target = index_data["topics"][target_key]
@@ -144,11 +145,11 @@ def build_canvas(target_key: str, index_data: dict, prefix: str = "") -> dict:
     topic_path = _join(prefix, "wiki", "topics", target_key)
     topic_wikilink = _wikilink_target(topic_path)
     center_text = _center_card(target["title"], target["summary"], topic_wikilink)
-    nodes: list[dict] = [
+    nodes: list[dict[str, Any]] = [
         _text_node(topic_id, round(-CENTER_WIDTH / 2), round(-CENTER_HEIGHT / 2),
                    CENTER_WIDTH, CENTER_HEIGHT, center_text, TOPIC_COLOR)
     ]
-    edges: list[dict] = []
+    edges: list[dict[str, Any]] = []
 
     sources = sorted(set(target["sources"]))
     r1 = _ring_radius(len(sources), R1_BASE, _RING_DIAG)
@@ -179,11 +180,11 @@ def build_canvas(target_key: str, index_data: dict, prefix: str = "") -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
-def serialize(canvas: dict) -> str:
+def serialize(canvas: dict[str, Any]) -> str:
     return json.dumps(canvas, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def write_canvas(path: Path, canvas: dict) -> None:
+def write_canvas(path: Path, canvas: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     try:

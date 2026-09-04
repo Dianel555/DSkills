@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 
 def obsidian_config_dir(vault: str | Path) -> Path | None:
@@ -24,7 +25,7 @@ def obsidian_config_dir(vault: str | Path) -> Path | None:
         current = current.parent
 
 
-def _read_json(path: Path):
+def _read_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError):

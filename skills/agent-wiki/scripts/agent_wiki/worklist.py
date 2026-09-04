@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 from . import config, wiki_index
 
@@ -13,7 +14,7 @@ def _nfc(s: str) -> str:
     return unicodedata.normalize("NFC", s)
 
 
-def compute_worklist(vault: str | Path) -> dict:
+def compute_worklist(vault: str | Path) -> dict[str, Any]:
     """Compute wanted and stale worklists.
 
     Returns:
@@ -70,7 +71,7 @@ def compute_worklist(vault: str | Path) -> dict:
                 target_sources[link_stem].add(page_key)
 
     # Build wanted list
-    wanted = []
+    wanted: list[dict[str, Any]] = []
     for target, sources in target_sources.items():
         linked_from = sorted(sources, key=lambda x: _nfc(x))
         wanted.append({

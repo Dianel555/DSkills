@@ -13,8 +13,10 @@ import json
 import os
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from . import config, frontmatter, quality, source_type
 
@@ -35,7 +37,7 @@ class IndexWriteError(OSError):
     pass
 
 
-def empty_schema() -> dict:
+def empty_schema() -> dict[str, Any]:
     return {"version": INDEX_VERSION, "generated_at": EPOCH, "topics": {}, "queries": {}, "alias_index": {}}
 
 
@@ -43,7 +45,7 @@ def _nfc(value: str) -> str:
     return unicodedata.normalize("NFC", str(value))
 
 
-def _str_list(value) -> list[str]:
+def _str_list(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, list):
@@ -51,7 +53,7 @@ def _str_list(value) -> list[str]:
     return [_nfc(value)]
 
 
-def _str_field(value) -> str:
+def _str_field(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, list):
@@ -59,7 +61,7 @@ def _str_field(value) -> str:
     return _nfc(value)
 
 
-def _title(value, stem: str) -> str:
+def _title(value: Any, stem: str) -> str:
     if value is None:
         return _nfc(stem)
     if isinstance(value, list):
@@ -67,14 +69,14 @@ def _title(value, stem: str) -> str:
     return _nfc(value)
 
 
-def _sources(value) -> list[str]:
+def _sources(value: Any) -> list[str]:
     if value is None:
         return []
     items = value if isinstance(value, list) else [value]
     return [config.normalize_relpath(str(item)) for item in items]
 
 
-def _year(value):
+def _year(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -87,7 +89,7 @@ def _year(value):
     return int(match.group()) if match else None
 
 
-def _summary(value) -> str:
+def _summary(value: Any) -> str:
     if value is None:
         text = ""
     elif isinstance(value, list):
@@ -113,10 +115,10 @@ def _parse_links(body: str) -> list[str]:
     return links
 
 
-def _entry(rel: str, meta: dict, stem: str, kind: str, links: list[str], body: str = "") -> dict:
+def _entry(rel: str, meta: dict[str, Any], stem: str, kind: str, links: list[str], body: str = "", mtime_ns: int = 0) -> dict[str, Any]:
     """Build an index entry. Topic entries include extended fields; query entries preserve their current schema."""
     sources = _sources(meta.get("sources"))
-    entry = {
+    entry: dict[str, Any] = {
         "path": rel,
         "title": _title(meta.get("title"), stem),
         "sources": sources,
@@ -133,11 +135,12 @@ def _entry(rel: str, meta: dict, stem: str, kind: str, links: list[str], body: s
         "keywords": _str_list(meta.get("keywords")),
         "kind": kind,
         "links": links,
+        "mtime_ns": mtime_ns,
     }
 
     # Add topic-only fields
     if kind == "topic":
-        # type: optional page kind (orthogonal to derived source_type)
+        # Optional page kind (orthogonal to derived source_type)
         type_value = meta.get("type")
         if isinstance(type_value, str):
             entry["type"] = _nfc(type_value)
@@ -167,50 +170,85 @@ def _iso_utc(mtime_ns: int) -> str:
     return datetime.fromtimestamp(seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _parse_doc(job: tuple[str, Path, str]) -> tuple[str, int, dict[str, Any] | None, dict[str, Any] | None]:
+    """Parse one topic/query file into ``(rel, mtime_ns, entry, error)``. Runs in worker threads.
+
+    Stats the file here (tight against ``read_text``) so the entry's
+    ``mtime_ns`` tracks the content actually read, not the earlier stat done
+    in ``_index_dir`` for the reuse decision — closes the bulk of the TOCTOU
+    window; a residual stat→read gap self-heals on the next rebuild.
+    """
+    rel, path, kind = job
+    try:
+        st = path.stat()
+        text = path.read_text(encoding="utf-8-sig")
+    except (UnicodeDecodeError, OSError):
+        return rel, 0, None, {"path": rel, "error": "topic_decode_failed"}
+    mtime_ns = st.st_mtime_ns
+    try:
+        meta, body = frontmatter.parse(text)
+    except frontmatter.FrontmatterError:
+        return rel, mtime_ns, None, {"path": rel, "error": "frontmatter_parse_failed"}
+    return rel, mtime_ns, _entry(rel, meta, path.stem, kind, _parse_links(body), body, mtime_ns), None
+
+
 def _index_dir(
     directory: Path,
     key_root: Path,
     kind: str,
-    entries: dict,
-    errors: list,
-    mtimes: list,
+    entries: dict[str, Any],
+    errors: list[dict[str, Any]],
+    mtimes: list[int],
     *,
-    existing_index: dict[str, dict] | None = None,
+    existing_index: dict[str, Any] | None = None,
+    workers: int = 8,
 ) -> None:
     """Index every ``*.md`` under ``directory`` into ``entries`` keyed by its NFC
     POSIX path relative to ``key_root``; per-directory collision detection.
 
-    When ``existing_index`` is provided, reuse entries for unchanged files (matched by mtime)."""
+    When ``existing_index`` is provided, entries whose stored ``mtime_ns``
+    matches the file's current mtime are reused without re-parsing. Changed and
+    new files are parsed in parallel with a bounded thread pool."""
     files = list(directory.glob("*.md")) if directory.exists() else []
     files.sort(key=lambda p: config.normalize_relpath(p.relative_to(key_root).as_posix()))
     seen: set[str] = set()
+    jobs: list[tuple[str, Path, str]] = []
     for path in files:
         rel = config.normalize_relpath(path.relative_to(key_root).as_posix())
         if rel in seen:
             raise NormalizedPathCollisionError(rel)
         seen.add(rel)
-
-        # Incremental: check if we can reuse existing entry
-        # For now, just parse everything (future optimization with per-entry mtime tracking)
         try:
-            text = path.read_text(encoding="utf-8-sig")
-        except (UnicodeDecodeError, OSError):
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            # Same code the parse path would have reported
             errors.append({"path": rel, "error": "topic_decode_failed"})
             continue
-        try:
-            meta, body = frontmatter.parse(text)
-        except frontmatter.FrontmatterError:
-            errors.append({"path": rel, "error": "frontmatter_parse_failed"})
-            continue
-        entries[rel] = _entry(rel, meta, path.stem, kind, _parse_links(body), body)
-        with contextlib.suppress(OSError):
-            mtimes.append(path.stat().st_mtime_ns)
+        cached = existing_index.get(rel) if existing_index else None
+        if isinstance(cached, dict) and cached.get("mtime_ns") == mtime_ns:
+            entries[rel] = cached
+            mtimes.append(mtime_ns)
+        else:
+            jobs.append((rel, path, kind))
+
+    if len(jobs) < 2:
+        parsed = [_parse_doc(job) for job in jobs]
+    else:
+        with ThreadPoolExecutor(max_workers=min(workers, len(jobs))) as pool:
+            parsed = list(pool.map(_parse_doc, jobs))
+    for rel, mtime_ns, entry, error in parsed:
+        if entry is not None:
+            entries[rel] = entry
+            mtimes.append(mtime_ns)
+        if error is not None:
+            errors.append(error)
 
 
-def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict, list[dict]]:
+def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Build the index from topic and query frontmatter.
 
-    When ``incremental=True``, attempts to reuse existing index entries for unchanged topics.
+    When ``incremental=True``, reuses existing index entries whose stored
+    mtime matches the file on disk; only changed and new files are re-parsed.
     Topic keys are ``wiki/topics/``-relative (bare ``<name>.md``); query
     keys are ``wiki/``-relative (``queries/<name>.md``). Returns ``(data,
     errors)``. Decode/parse failures are skipped and reported; a normalized-key
@@ -219,24 +257,33 @@ def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict, list
     wiki = config.wiki_root(vault)
     topics_root = config.topics_dir(vault)
 
-    # Load existing index if incremental mode
-    existing_index: dict[str, dict] | None = None
+    # Load existing index if incremental mode. Validate top-level shape and the
+    # topics/queries maps so a corrupted/hand-edited index (null, array, or a
+    # non-dict entry) falls back to a full rebuild instead of crashing.
+    existing_topics: dict[str, Any] | None = None
+    existing_queries: dict[str, Any] | None = None
     if incremental:
         index_path = config.index_path(vault)
         if index_path.exists():
             try:
                 existing_data = json.loads(index_path.read_text(encoding="utf-8"))
-                existing_index = existing_data.get("topics", {})
             except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-                pass  # Fall back to full rebuild
+                existing_data = None
+            if isinstance(existing_data, dict):
+                topics_field = existing_data.get("topics", {})
+                queries_field = existing_data.get("queries", {})
+                if isinstance(topics_field, dict):
+                    existing_topics = topics_field
+                if isinstance(queries_field, dict):
+                    existing_queries = queries_field
 
-    topics: dict[str, dict] = {}
-    queries: dict[str, dict] = {}
-    errors: list[dict] = []
+    topics: dict[str, Any] = {}
+    queries: dict[str, Any] = {}
+    errors: list[dict[str, Any]] = []
     mtimes: list[int] = []
 
-    _index_dir(topics_root, topics_root, "topic", topics, errors, mtimes, existing_index=existing_index)
-    _index_dir(config.queries_dir(vault), wiki, "query", queries, errors, mtimes, existing_index=None)
+    _index_dir(topics_root, topics_root, "topic", topics, errors, mtimes, existing_index=existing_topics)
+    _index_dir(config.queries_dir(vault), wiki, "query", queries, errors, mtimes, existing_index=existing_queries)
 
     # Build alias_index from frontmatter aliases + optional .wiki-aliases.json
     alias_index: dict[str, str] = {}
@@ -332,11 +379,11 @@ def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict, list
     return data, errors
 
 
-def serialize(data: dict) -> str:
+def serialize(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def save_index(vault: str | Path, data: dict) -> None:
+def save_index(vault: str | Path, data: dict[str, Any]) -> None:
     path = config.index_path(vault)
     tmp = path.with_name(path.name + ".tmp")
     try:

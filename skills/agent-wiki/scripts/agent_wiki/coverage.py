@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 from . import config, scanner, wiki_index
 
@@ -17,7 +18,7 @@ def _nfc(text: str) -> str:
     return unicodedata.normalize("NFC", text)
 
 
-def compute_coverage(vault: str | Path) -> dict:
+def compute_coverage(vault: str | Path) -> dict[str, Any]:
     """Compute coverage and gaps for the vault.
 
     Returns dict with:

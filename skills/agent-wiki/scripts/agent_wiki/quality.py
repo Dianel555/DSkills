@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Any
 
 
 def _nfc(text: str) -> str:
@@ -58,7 +59,7 @@ def _count_cjk_and_latin(text: str) -> tuple[int, int]:
     return cjk_count, latin_count
 
 
-def compute_metrics(body: str) -> dict:
+def compute_metrics(body: str) -> dict[str, Any]:
     """Compute structural quality metrics from topic body.
 
     Metrics:

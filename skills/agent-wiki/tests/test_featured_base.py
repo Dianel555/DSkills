@@ -1,9 +1,12 @@
 """Tests for featured view in gen-base."""
 
-import yaml
 from pathlib import Path
 
+import yaml
 from agent_wiki import bases, config, frontmatter
+
+ROOT = Path(__file__).resolve().parents[1]
+CLI = ROOT / "scripts" / "agent_wiki_cli.py"
 
 
 def _topic(vault: Path, name: str, meta: dict, body: str = "x") -> Path:
@@ -48,8 +51,6 @@ def test_featured_view_preserves_two_file_contract(tmp_path):
     import subprocess
     import sys
 
-    ROOT = Path(__file__).resolve().parents[1]
-    CLI = ROOT / "scripts" / "agent_wiki_cli.py"
 
     # Initialize
     subprocess.run([sys.executable, str(CLI), "init", "--vault", str(tmp_path)],
@@ -100,12 +101,9 @@ def test_featured_property_defined_in_properties():
 
 def test_gen_base_works_with_zero_featured_topics(tmp_path):
     """gen-base succeeds when no topics are featured."""
-    import json
     import subprocess
     import sys
 
-    ROOT = Path(__file__).resolve().parents[1]
-    CLI = ROOT / "scripts" / "agent_wiki_cli.py"
 
     # Initialize with no featured topics
     subprocess.run([sys.executable, str(CLI), "init", "--vault", str(tmp_path)],
@@ -128,12 +126,9 @@ def test_gen_base_works_with_zero_featured_topics(tmp_path):
 
 def test_gen_base_works_with_many_featured_topics(tmp_path):
     """gen-base succeeds with multiple featured topics."""
-    import json
     import subprocess
     import sys
 
-    ROOT = Path(__file__).resolve().parents[1]
-    CLI = ROOT / "scripts" / "agent_wiki_cli.py"
 
     # Initialize with multiple featured topics
     subprocess.run([sys.executable, str(CLI), "init", "--vault", str(tmp_path)],

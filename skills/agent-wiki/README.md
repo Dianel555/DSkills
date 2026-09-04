@@ -34,12 +34,15 @@ Resolution order:
 python scripts/agent_wiki_cli.py init --vault /path/to/vault
 python scripts/agent_wiki_cli.py scan --vault /path/to/vault
 python scripts/agent_wiki_cli.py plan --batch-size 20 --vault /path/to/vault
+python scripts/agent_wiki_cli.py plan --resume --vault /path/to/vault
 python scripts/agent_wiki_cli.py batch-done --batch 1 --vault /path/to/vault
 python scripts/agent_wiki_cli.py cache-get <relpath> --vault /path/to/vault
 python scripts/agent_wiki_cli.py cache-put <relpath> --topics topic1.md,topic2.md --vault /path/to/vault
 python scripts/agent_wiki_cli.py cleanup --vault /path/to/vault
 python scripts/agent_wiki_cli.py status --vault /path/to/vault
 python scripts/agent_wiki_cli.py index --vault /path/to/vault
+python scripts/agent_wiki_cli.py index --incremental --vault /path/to/vault
+python scripts/agent_wiki_cli.py doctor --vault /path/to/vault
 python scripts/agent_wiki_cli.py normalize-source-type --vault /path/to/vault
 python scripts/agent_wiki_cli.py gen-base --name sources --vault /path/to/vault
 python scripts/agent_wiki_cli.py save-report <name> --vault /path/to/vault
@@ -53,19 +56,21 @@ python scripts/agent_wiki_cli.py quality --vault /path/to/vault
 python scripts/agent_wiki_cli.py coverage --vault /path/to/vault
 python scripts/agent_wiki_cli.py worklist --vault /path/to/vault
 python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
+python scripts/agent_wiki_cli.py completion --shell bash
 ```
 
 | Command | Purpose |
 |---|---|
 | `init` | Create `wiki/` layout, cache, retrieval index, topics, archive, and URL cache directories |
 | `scan` | Classify source notes as `new`, `modified`, or `deleted` |
-| `plan` | Split pending sources into batches (default 20/round); write a task report to `wiki/_archived/ingest-tasks.md` |
+| `plan` | Split pending sources into batches (default 20/round); write a task report to `wiki/_archived/ingest-tasks.md`. `--resume` restores the existing batch plan instead of rebuilding it |
 | `batch-done` | Mark a round complete after verifying every doc in it was `cache-put` |
 | `cache-get` | Return the cached ingest record for one source path |
 | `cache-put` | Record a completed ingest for one source path and derived topics |
 | `cleanup` | Remove deleted-source references and archive orphaned topics |
 | `status` | Emit machine-readable wiki health metrics, including index and batch progress (read-only) |
-| `index` | Rebuild `wiki/.wiki-index.json` from topic frontmatter (no `.base` written) |
+| `index` | Rebuild `wiki/.wiki-index.json` from topic frontmatter (no `.base` written). `--incremental` reuses entries whose file mtime is unchanged; changed/new files are parsed in parallel |
+| `doctor` | Run read-only vault health checks (index freshness/corruption, topic parse errors, orphan topics and sources) and emit `ok`/`checks` |
 | `normalize-source-type` | Rewrite each topic's `source_type` frontmatter to its `sources[]` file format (in place; no-source topics skipped) |
 | `gen-base` | Rebuild the index, then write Obsidian Bases views: `wiki/index.base` + `<name>.base` source master table |
 | `save-report` | Register an Agent-authored research report under `wiki/queries/`, ensure `kind: query`, and log it |
@@ -77,8 +82,9 @@ python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 | `coverage` | Identify covered sources vs gaps (read-only) |
 | `worklist` | Maintenance worklists: `wanted` (broken links) and `stale` (low-quality/outdated) topics (read-only) |
 | `gen-site` | Generate self-contained static HTML site under `wiki/site/` (optional `markdown` package; degrades to escaped plaintext; skipped topics reported under `errors`) |
+| `completion` | Print a bash/zsh completion script (`--shell bash|zsh`) covering subcommands and global options |
 
-All command outputs are JSON.
+All command outputs are JSON by default; `--format yaml|table` selects other formats, and `-v/--verbose` prints progress to stderr without disturbing stdout.
 
 ## Understanding "Broken Wikilinks"
 
@@ -155,6 +161,15 @@ last_updated: 2026-06-04T15:30:00
 The CLI does not fetch external URLs. The main Agent should use available search/fetch skills when needed.
 
 Do not fetch PDFs. For URLs ending in `.pdf` or returning `Content-Type: application/pdf`, record only the URL and link text in the topic page.
+
+## Development
+
+```bash
+pip install -e ".[dev,site]"
+python -m ruff check scripts/
+python -m mypy --strict scripts/agent_wiki_cli.py scripts/agent_wiki/
+python -m pytest tests/            # includes an index benchmark in test_benchmark_index.py
+```
 
 ## Safety
 

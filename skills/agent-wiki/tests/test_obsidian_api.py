@@ -1,11 +1,9 @@
 import http.client
-import socket
 import ssl
 import urllib.error
 import urllib.request
 
 import pytest
-
 from agent_wiki import obsidian_api
 
 # Transport failures that available()/put_file() must swallow into a False return.
@@ -13,7 +11,7 @@ from agent_wiki import obsidian_api
 # http.client.HTTPException (which is *not* an OSError subclass).
 _TRANSPORT_EXCEPTIONS = [
     urllib.error.URLError("refused"),
-    socket.timeout("timed out"),
+    TimeoutError("timed out"),
     ssl.SSLError("bad cert"),
     http.client.BadStatusLine("garbage"),
 ]
@@ -89,7 +87,7 @@ def test_put_file_builds_put_request(monkeypatch):
     assert captured["url"].startswith("https://127.0.0.1:27124/vault/")
     assert "%E6%96%87%E7%8C%AE" in captured["url"]  # Chinese path percent-encoded
     assert "/" in captured["url"].split("/vault/", 1)[1]  # path separators preserved
-    assert captured["body"] == "# hi\n".encode("utf-8")
+    assert captured["body"] == b"# hi\n"
     assert "text/markdown" in captured["ctype"]
     assert captured["auth"] == "Bearer k"
 

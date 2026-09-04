@@ -2,11 +2,11 @@
 
 import importlib
 import sys
+from importlib.util import find_spec
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from agent_wiki import config, frontmatter
 
 
@@ -43,7 +43,7 @@ def test_core_imports_without_markdown():
     # Simulate markdown not available
     with patch.dict(sys.modules, {'markdown': None}):
         # These should all import successfully (core stays PyYAML-only)
-        from agent_wiki import config, frontmatter, wiki_index, quality, coverage, worklist
+        from agent_wiki import config, coverage, frontmatter, quality, wiki_index, worklist
 
         # Verify they imported
         assert config is not None
@@ -95,9 +95,7 @@ def test_site_with_markdown_available(tmp_path):
     _topic(tmp_path, "topic.md", {"title": "Topic"}, "## Heading\n\nSome **bold** text.")
 
     # Ensure markdown is available (or skip if not installed)
-    try:
-        import markdown
-    except ImportError:
+    if find_spec("markdown") is None:
         pytest.skip("markdown package not installed")
 
     # Import site fresh (should detect markdown is available)

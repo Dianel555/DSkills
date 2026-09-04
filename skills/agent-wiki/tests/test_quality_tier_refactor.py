@@ -1,6 +1,5 @@
 """Tests for compute_tier with prose_weight and source_count."""
 
-import pytest
 from agent_wiki import quality
 
 

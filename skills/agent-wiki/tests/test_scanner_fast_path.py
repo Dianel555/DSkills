@@ -1,7 +1,7 @@
 """Test scanner fast-path via mtime_ns+size signature."""
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from agent_wiki import cache, scanner
 

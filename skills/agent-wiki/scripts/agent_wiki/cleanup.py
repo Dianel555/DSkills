@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 from . import config, frontmatter
 
@@ -15,7 +16,7 @@ class TopicError(ValueError):
         self.code = code
 
 
-def _read_topic(topic_path: Path) -> tuple[dict, str, bool]:
+def _read_topic(topic_path: Path) -> tuple[dict[str, Any], str, bool]:
     try:
         raw = topic_path.read_bytes()
         has_bom = raw.startswith(b"\xef\xbb\xbf")

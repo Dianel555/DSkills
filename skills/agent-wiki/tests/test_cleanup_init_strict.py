@@ -1,12 +1,10 @@
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-from agent_wiki import cache, commands, config, frontmatter
+from agent_wiki import cache, commands, frontmatter
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agent_wiki_cli.py"

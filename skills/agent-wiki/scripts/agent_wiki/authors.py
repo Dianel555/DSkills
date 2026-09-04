@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 from . import config, frontmatter
 
@@ -54,14 +55,14 @@ def _authors_row(path: Path) -> str:
     return ""
 
 
-def extract(vault: str | Path) -> dict[str, list[dict]]:
+def extract(vault: str | Path) -> dict[str, list[dict[str, Any]]]:
     """Per-topic raw author strings resolved from each source note."""
     vault = Path(vault)
     root_by_norm = _root_notes(vault)
-    out: dict[str, list[dict]] = {}
+    out: dict[str, list[dict[str, Any]]] = {}
     for topic in sorted(config.topics_dir(vault).glob("*.md")):
         meta, _ = frontmatter.parse(topic.read_text(encoding="utf-8-sig"))
-        entries: list[dict] = []
+        entries: list[dict[str, Any]] = []
         for src in meta.get("sources") or []:
             resolved = _resolve(str(src), root_by_norm)
             entries.append({
@@ -81,7 +82,7 @@ def first_author(raw: str) -> str:
     return first.replace("et al.", "").strip().strip(",").strip()
 
 
-def aggregate(extracted: dict[str, list[dict]]) -> dict[str, list[str]]:
+def aggregate(extracted: dict[str, list[dict[str, Any]]]) -> dict[str, list[str]]:
     """Deduplicated first author per topic, order preserved."""
     out: dict[str, list[str]] = {}
     for topic, entries in extracted.items():

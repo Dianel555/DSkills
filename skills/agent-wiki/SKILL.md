@@ -105,7 +105,8 @@ python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 | `cache-put` | Record ingest completion | source path, topic list | `{"ok": true, "path": "...", "sha256": "..."}`; topic paths outside `wiki/topics/` → `{"error": "invalid_topic_path"}` |
 | `cleanup` | Remove deleted sources from topics | vault path | `{"removed": N, "archived": M, "details": [...], "errors": [...]}` |
 | `status` | Wiki health metrics (read-only) | vault path | `{"vault": "...", "sources_tracked": N, "topics_total": N, "index_exists": bool, "index_topics": N, "index_stale": bool, "index_errors": [...], "batch": {...}\|null, "quality_distribution": {...}, "featured_count": N, "aliases_count": N, "backlinks_max": N, "gaps_count": N, "wanted_count": N, "stale_count": N, "site_exists": bool, "site_stale": bool, ...}` |
-| `index` | Rebuild `wiki/.wiki-index.json` from topic frontmatter (no `.base` written) | vault path | `{"ok": true, "topics": N, "errors": [...]}` |
+| `index` | Rebuild `wiki/.wiki-index.json` from topic frontmatter (no `.base` written); `--incremental` reuses entries whose file mtime is unchanged, other files parse in parallel | vault path, `--incremental` | `{"ok": true, "topics": N, "errors": [...]}` |
+| `doctor` | Read-only vault health checks: index freshness/corruption, topic parse errors, orphan topics and sources | vault path | `{"ok": bool, "checks": [{"name", "status", "detail"}], "summary": "..."}` |
 | `normalize-source-type` | Rewrite each topic's `source_type` frontmatter to its `sources[]` file format (in place; no-source topics skipped) | vault path | `{"ok": true, "changed": [{"path": "...", "source_type": "..."}], "skipped": N, "errors": [...]}` |
 | `gen-base` | Rebuild the index, then write Obsidian Bases views (index + master table) | vault path, `--name` | `{"ok": true, "prefix": "...", "written": [...]}` |
 | `save-report` | Register an Agent-authored research report under `wiki/queries/`, ensure `kind: query`, log it | name, vault path | `{"ok": true, "path": "queries/<name>.md", "kind": "query"}` |
@@ -117,6 +118,7 @@ python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 | `coverage` | Identify covered sources vs gaps (read-only) | vault path | `{"ok": true, "covered": N, "gaps": [{"path": "..."}], "coverage_ratio": 0.0-1.0}` |
 | `worklist` | Get maintenance worklists: `wanted` (broken link targets ranked by demand) and `stale` (low-quality or index-stale topics) for bounded enrichment (read-only) | vault path | `{"ok": true, "wanted": [{"target": "...", "inbound": N, "linked_from": [...]}], "stale": [{"path": "...", "tier": "...", "reason": "low_tier"\|"index_stale"}]}` |
 | `gen-site` | Generate self-contained static HTML site under `wiki/site/` (optional; requires `markdown` package; degrades gracefully to escaped plaintext if absent) | vault path | `{"ok": true, "pages": N, "out": "wiki/site", "degraded": bool, "errors": [...]}` |
+| `completion` | Print a bash/zsh completion script for the CLI | `--shell bash|zsh` | script on stdout |
 
 ## Agent Workflow
 

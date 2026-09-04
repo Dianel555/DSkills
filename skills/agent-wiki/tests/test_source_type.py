@@ -1,6 +1,5 @@
-from agent_wiki import config, frontmatter, source_type, wiki_index
+from agent_wiki import frontmatter, source_type, wiki_index
 from test_wiki_index import _init, _topic
-
 
 # --- unit: ref classification ----------------------------------------------
 

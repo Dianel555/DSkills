@@ -4,7 +4,6 @@ import unicodedata
 from pathlib import Path
 
 import pytest
-
 from agent_wiki import config, frontmatter, wiki_index
 
 
@@ -266,3 +265,104 @@ def test_incremental_rebuild_with_corrupted_index(tmp_path):
     data, errors = wiki_index.rebuild(tmp_path, incremental=True)
     assert len(data["topics"]) == 1
     assert len(errors) == 0
+
+
+# --- 1.6 mtime-based incremental reuse ---------------------------------------
+
+def test_incremental_skips_parse_for_unchanged_files(tmp_path, monkeypatch):
+    """Unchanged files are reused from the existing index without re-parsing."""
+    _init(tmp_path)
+    _topic(tmp_path, "a.md", {"title": "A"})
+    _topic(tmp_path, "b.md", {"title": "B"})
+    data1, _ = wiki_index.rebuild(tmp_path)
+    wiki_index.save_index(tmp_path, data1)
+
+    def boom(text):
+        raise AssertionError("unchanged file was re-parsed")
+
+    monkeypatch.setattr(wiki_index.frontmatter, "parse", boom)
+    data2, errors = wiki_index.rebuild(tmp_path, incremental=True)
+    assert errors == []
+    assert data2["topics"] == data1["topics"]
+
+
+
+
+def test_incremental_reparses_changed_file_only(tmp_path, monkeypatch):
+    """Only the changed file is re-parsed; unchanged entries are reused."""
+    _init(tmp_path)
+    _topic(tmp_path, "a.md", {"title": "A"})
+    b = _topic(tmp_path, "b.md", {"title": "B"})
+    data1, _ = wiki_index.rebuild(tmp_path)
+    wiki_index.save_index(tmp_path, data1)
+
+    parsed: list[str] = []
+    real_parse = wiki_index.frontmatter.parse
+
+    def spy(text):
+        parsed.append(text)
+        return real_parse(text)
+
+    monkeypatch.setattr(wiki_index.frontmatter, "parse", spy)
+    b.write_text(frontmatter.dump({"title": "B2"}, "changed"), encoding="utf-8")
+    data2, errors = wiki_index.rebuild(tmp_path, incremental=True)
+    assert errors == []
+    assert data2["topics"]["b.md"]["title"] == "B2"
+    assert data2["topics"]["a.md"] == data1["topics"]["a.md"]
+    assert len(parsed) == 1
+    assert "changed" in parsed[0]
+
+
+def test_legacy_entry_without_mtime_is_reparsed(tmp_path):
+    """Index entries saved before mtime tracking are re-parsed once."""
+    _init(tmp_path)
+    _topic(tmp_path, "a.md", {"title": "A"})
+    data1, _ = wiki_index.rebuild(tmp_path)
+    wiki_index.save_index(tmp_path, data1)
+
+    legacy = json.loads(config.index_path(tmp_path).read_text(encoding="utf-8"))
+    legacy_entry = legacy["topics"]["a.md"]
+    del legacy_entry["mtime_ns"]
+    config.index_path(tmp_path).write_text(json.dumps(legacy), encoding="utf-8")
+
+    data2, errors = wiki_index.rebuild(tmp_path, incremental=True)
+    assert errors == []
+    assert "mtime_ns" in data2["topics"]["a.md"]
+    assert data2["topics"]["a.md"]["mtime_ns"] > 0
+
+
+def test_incremental_with_null_index_falls_back(tmp_path):
+    """A JSON-null index file must not crash incremental rebuild; it falls back to full."""
+    _init(tmp_path)
+    _topic(tmp_path, "A.md", {"title": "A"})
+    index_path = config.index_path(tmp_path)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text("null", encoding="utf-8")
+    data, errors = wiki_index.rebuild(tmp_path, incremental=True)
+    assert len(data["topics"]) == 1
+    assert errors == []
+
+
+def test_incremental_with_array_index_falls_back(tmp_path):
+    """A JSON-array index file must not crash incremental rebuild."""
+    _init(tmp_path)
+    _topic(tmp_path, "A.md", {"title": "A"})
+    index_path = config.index_path(tmp_path)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text("[1, 2, 3]", encoding="utf-8")
+    data, errors = wiki_index.rebuild(tmp_path, incremental=True)
+    assert len(data["topics"]) == 1
+    assert errors == []
+
+
+def test_incremental_non_dict_entry_is_reparsed(tmp_path):
+    """A corrupt (non-dict) cached entry is re-parsed instead of crashing or being reused."""
+    _init(tmp_path)
+    _topic(tmp_path, "A.md", {"title": "A"})
+    data1, _ = wiki_index.rebuild(tmp_path)
+    data1["topics"]["A.md"] = "not a dict"
+    wiki_index.save_index(tmp_path, data1)
+    data2, errors = wiki_index.rebuild(tmp_path, incremental=True)
+    assert errors == []
+    assert isinstance(data2["topics"]["A.md"], dict)
+    assert data2["topics"]["A.md"]["title"] == "A"

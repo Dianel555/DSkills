@@ -7,7 +7,6 @@ the subprocess ``run_cli`` path in test_home.py cannot reach in-process patches.
 import types
 
 import pytest
-
 from agent_wiki import commands, config, home
 
 

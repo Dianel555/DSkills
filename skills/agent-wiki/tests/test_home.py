@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from agent_wiki import commands, config, frontmatter, home
 
 ROOT = Path(__file__).resolve().parents[1]

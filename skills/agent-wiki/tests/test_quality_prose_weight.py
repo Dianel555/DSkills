@@ -1,6 +1,5 @@
 """Tests for script-aware prose_weight metric."""
 
-import pytest
 from agent_wiki import quality
 
 
