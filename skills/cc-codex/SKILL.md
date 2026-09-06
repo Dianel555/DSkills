@@ -12,7 +12,7 @@ python scripts/codex_bridge.py --cd "/path/to/project" --PROMPT "Your task"
 
 **Output:** JSON with `success`, `SESSION_ID`, `agent_messages`, `stream_file` (path to the raw JSONL stream persisted line-by-line), optional `stderr`, and optional `error`.
 
-Approvals are always disabled (`codex --ask-for-approval never exec ...` is used automatically, except under `--yolo`): exec runs headless with stdin detached, so an approval prompt could never be answered.
+Headless `exec` runs with approvals disabled by Codex itself; bridge `--yolo` maps to Codex's `--dangerously-bypass-approvals-and-sandbox`. Stdin is detached, so an approval prompt could never be answered.
 
 ## Parameters
 

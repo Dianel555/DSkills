@@ -191,7 +191,7 @@ def test_ignore_user_config_and_hook_trust_flags_in_cmd(monkeypatch, capsys):
     assert out["success"] is True
     assert "--ignore-user-config" in captured["cmd"]
     assert "--dangerously-bypass-hook-trust" in captured["cmd"]
-    assert captured["cmd"][:4] == ["codex", "--ask-for-approval", "never", "exec"]
+    assert captured["cmd"][:2] == ["codex", "exec"]
 
 
 def test_build_exec_cmd_default_omits_isolation_flags():
@@ -212,16 +212,14 @@ def test_build_exec_cmd_default_omits_isolation_flags():
     assert "--ignore-user-config" not in cmd
     assert "--dangerously-bypass-hook-trust" not in cmd
     assert "--skip-git-repo-check" in cmd
-    approval_index = cmd.index("--ask-for-approval")
-    assert cmd[approval_index + 1] == "never"
-    assert approval_index < cmd.index("exec")
+    assert cmd[:2] == ["codex", "exec"]
+    assert "--ask-for-approval" not in cmd
     assert "--approval-policy" not in cmd
     Path(last).unlink(missing_ok=True)
 
 
-def test_build_exec_cmd_yolo_omits_approval_flag():
-    """--yolo already bypasses approvals and sandbox; adding --ask-for-approval
-    alongside it risks a CLI flag conflict."""
+def test_build_exec_cmd_yolo_uses_canonical_bypass_flag():
+    """The bridge's --yolo maps to Codex's canonical bypass option."""
     args = SimpleNamespace(
         PROMPT="p",
         cd=".",
@@ -236,7 +234,8 @@ def test_build_exec_cmd_yolo_omits_approval_flag():
         SESSION_ID="",
     )
     cmd, last = cb.build_exec_cmd(args)
-    assert "--yolo" in cmd
+    assert "--dangerously-bypass-approvals-and-sandbox" in cmd
+    assert "--yolo" not in cmd
     assert "--ask-for-approval" not in cmd
     Path(last).unlink(missing_ok=True)
 
