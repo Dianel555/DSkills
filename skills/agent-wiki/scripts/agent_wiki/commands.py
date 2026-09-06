@@ -637,7 +637,8 @@ def _obsidian_index_relpath(vault: Path) -> str:
     return "/".join(part for part in (prefix, "wiki", "index.md") if part)
 
 
-_IDENTITY_MARKER_NAME = ".agent-wiki-vault-id.md"
+# The REST plugin omits dotfiles from its structured JSON media types.
+_IDENTITY_MARKER_NAME = "agent-wiki-vault-id.md"
 
 
 def _bootstrap_vault_identity(vault: Path) -> obsidian_api.VaultIdentitySetupRequiredError:
@@ -648,7 +649,7 @@ def _bootstrap_vault_identity(vault: Path) -> obsidian_api.VaultIdentitySetupReq
     marker_name = _IDENTITY_MARKER_NAME
     for attempt in range(10):
         if attempt:
-            marker_name = f".agent-wiki-vault-id-{token[:10]}.md"
+            marker_name = f"agent-wiki-vault-id-{token[:10]}.md"
         candidate = wiki / marker_name
         try:
             fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)

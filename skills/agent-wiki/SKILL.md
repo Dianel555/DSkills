@@ -91,7 +91,7 @@ python scripts/agent_wiki_cli.py worklist --vault /path/to/vault
 python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 ```
 
-**Vault Path Resolution**: Use `--vault PATH` or set environment variable `AGENT_WIKI_VAULT`.
+**Vault Path Resolution**: Use `--vault PATH` or set environment variable `AGENT_WIKI_VAULT`. This is the agent-wiki **source scope**, which may be the registered Obsidian root or a child directory. Each scope owns its own `wiki/`; multiple scopes can coexist in one registered Obsidian vault. Paths in topic frontmatter/cache are relative to the selected scope.
 
 ## CLI Command Matrix
 
@@ -284,18 +284,19 @@ The optional frontmatter `type` field (concept/method/paper/person/event/place/o
 
 ## Integration with Obsidian Skills
 
-- **Source reading**: if the official Obsidian CLI is installed and the desktop app is running, prefer an explicit `vault="<name>" read path="<vault-relative-path>"`; otherwise read the file directly. Do not claim CLI reads are transactional or always include unsaved editor buffers. Hash the content actually read.
+- **Source reading**: if the official Obsidian CLI is installed and the desktop app is running, prefer an explicit registered-root `vault="<name>" read path="<root-relative-path>"`; otherwise read the file directly. When `--vault` is a child scope, prepend that scope's path for the CLI `path=` argument. Do not claim CLI reads are transactional or always include unsaved editor buffers. Hash the content actually read.
 - **URL fetching**: `defuddle parse <url> --md` (replaces WebFetch for token efficiency)
 - **CLI discovery**: check `obsidian help` and `obsidian version` first. Typical read-only operations are `vault="<name>" vault info=path`, `search:context`, `backlinks`, `unresolved`, and `base:query`; use each command's documented output format, an argument array, and a timeout. The CLI is optional and never replaces file-first operation.
 - **Frontmatter updates**: prefer `obsidian property:set name="..." value="..." file="..."` for an explicit target; fall back to direct YAML rewrite
-- **Homepage REST write-through**: because the API exposes only vault-relative paths, `gen-home` first verifies an explicit marker file for the intended vault, then checks the returned target and current content and uses a document-map version with conditional root `PATCH` (`ifMatch`). If marker env is missing, the first run creates a unique marker under `wiki/`, prints the two env values, and stops; set them and retry. Unknown targets, conflicts, unsupported plugin capabilities, or uncertain write results stop instead of silently overwriting via disk. `--no-rest` remains the explicit file-first path; see `references/homepage.md`.
+- **Homepage REST write-through**: because the API exposes only paths relative to the registered Obsidian root, `gen-home` first verifies an explicit marker for that root, then checks the scope-prefixed target/current content and uses a document-map version with conditional root `PATCH` (`ifMatch`). A configured `--vault` child scope is intentional; its prefix is added automatically, allowing multiple independent `wiki/` trees in one Obsidian vault. If marker env is missing, the first run creates a unique non-hidden marker under the selected scope's `wiki/`, prints the two root-relative env values, and stops; set them and retry. Unknown targets, conflicts, unsupported plugin capabilities, or uncertain write results stop instead of silently overwriting via disk. `--no-rest` remains the explicit file-first path; see `references/homepage.md`.
 - **Dynamic index (Bases)**: run `gen-base` to write the two `.base` views deterministically; embed via `![[index.base#主题总览]]`. View columns, faceting, and fallback: see `references/index-schema.md`
 
 ## Wiki Structure
 
 ```
-{vault}/
-├── <name>.base             # Source master table (Bases, at vault root)
+# A registered Obsidian vault may contain several such scopes, each with its own wiki/.
+{agent-wiki source scope}/
+├── <name>.base             # Source master table for this scope
 └── wiki/
     ├── index.md             # Homepage skeleton (gen-home); agent fills prose, cards auto-render
     ├── index.base           # Topic overview view (Bases)

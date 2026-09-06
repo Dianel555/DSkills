@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_vault(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--vault", help="Obsidian vault root path")
+        p.add_argument("--vault", help="agent-wiki source scope (vault root or child directory)")
 
     init = sub.add_parser("init")
     add_vault(init)
@@ -172,7 +172,7 @@ def _zsh_completion(names: list[str]) -> str:
         "function _agent_wiki() {\n"
         "    _arguments \\\n"
         f"        '1:subcommand:(({cmds}))' \\\n"
-        "        '--vault[vault root path]:vault:_files' \\\n"
+        "        '--vault[agent-wiki source scope]:vault:_files' \\\n"
         "        '--format[output format]:format:(json yaml table)' \\\n"
         "        '-v[show progress to stderr]' \\\n"
         "        '--verbose[show progress to stderr]' \\\n"

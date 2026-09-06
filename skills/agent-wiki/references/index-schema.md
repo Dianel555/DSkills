@@ -80,7 +80,7 @@ under the `queries` object and can be cross-linked into topics with body `[[wiki
 ## Bases Views (gen-base)
 
 - `wiki/index.base` — topic overview (主题 / 来源数 / 更新日期) plus per-dimension faceted table views (按作者 / 按机构 / 按方法 / 按来源类型 / 按年份) read from frontmatter; embed via `![[index.base#主题总览]]`
-- `{vault}/<name>.base` — source master table (文献 / 年份 / 标签); year parsed from a leading `(YYYY…)` filename, `标签` from source `tags` frontmatter
-- Filter folders are auto-resolved relative to the Obsidian vault root (the dir containing `.obsidian`)
+- `{agent-wiki scope}/<name>.base` — source master table (文献 / 年份 / 标签); year parsed from a leading `(YYYY…)` filename, `标签` from source `tags` frontmatter
+- Filter folders are auto-resolved relative to the registered Obsidian vault root (the dir containing `.obsidian`), while topic/source paths remain relative to the selected agent-wiki scope; child scopes therefore do not collide
 - **Virtual classification**: Bases renders one row per file and cannot unroll a list-valued property into per-value folders; dimensions are surfaced as filterable columns in the faceted views, and topic files stay flat under `wiki/topics/` (never moved or duplicated)
 - **Fallback**: Generate a markdown table in `index.md` if the obsidian-bases plugin is unavailable

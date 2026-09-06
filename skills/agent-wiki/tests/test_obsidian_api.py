@@ -19,14 +19,18 @@ _TRANSPORT_EXCEPTIONS = [
 
 
 class _FakeResp:
-    def __init__(self, status):
+    def __init__(self, status, payload=None):
         self.status = status
+        self.payload = {"authenticated": True} if payload is None else payload
 
     def __enter__(self):
         return self
 
     def __exit__(self, *exc):
         return False
+
+    def read(self):
+        return json.dumps(self.payload).encode()
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +62,13 @@ def test_available_true_when_key_and_server_ok(monkeypatch):
     assert obsidian_api.available() is True
     assert captured["url"] == "https://127.0.0.1:27124/"
     assert captured["auth"] == "Bearer secret"
+
+
+def test_available_false_when_server_rejects_key(monkeypatch):
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "wrong")
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: _FakeResp(200, {"authenticated": False}))
+
+    assert obsidian_api.available() is False
 
 
 @pytest.mark.parametrize("exc", _TRANSPORT_EXCEPTIONS)

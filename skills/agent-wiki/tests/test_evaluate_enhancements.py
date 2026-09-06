@@ -184,6 +184,23 @@ def test_canvas_resolves_alias_and_fragment_links(tmp_path: Path) -> None:
     assert canvas.neighbors("A.md", data) == {"B.md"}
 
 
+def test_link_resolver_accepts_explicit_wiki_query_paths(tmp_path: Path) -> None:
+    _init(tmp_path)
+    _page(tmp_path, "A.md", {"title": "A"}, "[[wiki/queries/report]]")
+    queries = config.queries_dir(tmp_path)
+    queries.mkdir(parents=True, exist_ok=True)
+    (queries / "report.md").write_text(frontmatter.dump({"title": "Report"}, "body"), encoding="utf-8")
+
+    data, errors = wiki_index.rebuild(tmp_path)
+
+    assert errors == []
+    entry = data["topics"]["A.md"]
+    resolution = links.resolve("wiki/queries/report", set(data["topics"]), set(data["queries"]), data["alias_index"])
+    assert resolution.status == "resolved"
+    assert resolution.key == "queries/report.md"
+    assert links.from_entry(entry)[0].target == "wiki/queries/report"
+
+
 def test_site_preserves_heading_fragment_and_renders_image_embed(tmp_path: Path) -> None:
     pytest.importorskip("markdown")
     _init(tmp_path)

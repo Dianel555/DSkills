@@ -357,6 +357,9 @@ def _page_candidates(target: str, page_keys: set[str]) -> list[str]:
         variants.add(target + ".md")
     if target.startswith("wiki/topics/"):
         variants.add(target[len("wiki/topics/"):])
+    if target.startswith("wiki/queries/"):
+        query_target = target[len("wiki/queries/"):]
+        variants.update({query_target, "queries/" + query_target})
     for key in page_keys:
         key_nfc = _nfc(key)
         stem = key_nfc[:-3] if key_nfc.lower().endswith(".md") else key_nfc

@@ -51,14 +51,17 @@ preserved.
 
 `index.md` is the one wiki file users keep open in an Obsidian tab, so an external `os.replace` can
 race the editor buffer. When the **Obsidian Local REST API** plugin is configured (env vars below),
-`gen-home` first verifies an explicit marker file for the intended vault because the API exposes only
-vault-relative paths. If either marker env variable is missing, the first run creates a unique marker
-under `wiki/`, prints both generated variables, and stops; set them and retry. It then reads a
-document map (`GET /vault/{path}` with `Accept: application/vnd.olrapi.document-map+json`) to capture
-its `version`, verifies the returned vault-relative target and current content, and finally replaces
-the document root with a conditional `PATCH` carrying `ifMatch`. A mismatch, changed content,
-unsupported plugin capability, or uncertain PATCH stops; it never falls back to disk after an attempted
-REST write. An unavailable API uses atomic file write.
+`gen-home` first verifies an explicit marker file for the registered Obsidian root because the API
+exposes only root-relative paths. The configured agent-wiki vault may be a child source scope; its
+path prefix is added to the target automatically, so one Obsidian vault can contain multiple
+independent `wiki/` trees. If either marker env variable is missing, the first run creates a unique
+non-hidden marker under the selected scope's `wiki/`, prints both generated root-relative variables, and stops;
+set them and retry. It then reads a document map (`GET /vault/{path}` with
+`Accept: application/vnd.olrapi.document-map+json`) to capture its `version`, verifies the returned
+root-relative target and current content, and finally replaces the document root with a conditional
+`PATCH` carrying `ifMatch`. A mismatch, changed content, unsupported plugin capability, or uncertain
+PATCH stops; it never falls back to disk after an attempted REST write. An unavailable API uses atomic
+file write.
 `write_via` in the output reports
 which path was taken (`rest` / `atomic`). Only `index.md` uses this; canvas/capture/index files stay
 atomic. Pass `--no-rest` to always write directly. Configure (key from Obsidian → Settings → Local
@@ -67,13 +70,13 @@ REST API; read from the environment only, never persisted — see `.env.example`
 ```bash
 export AGENT_WIKI_OBSIDIAN_API_KEY=<your-key>          # required to enable REST write
 # First missing-env gen-home run prints these two generated values.
-export AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH=wiki/.agent-wiki-vault-id.md
+export AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH=<generated-root-relative-marker-path>
 export AGENT_WIKI_OBSIDIAN_VAULT_ID=<exact-marker-content>
 export AGENT_WIKI_OBSIDIAN_API_URL=https://127.0.0.1:27124  # optional, this is the default
 ```
 
 The HTTPS endpoint uses a self-signed cert; agent-wiki skips TLS verification **only for loopback
-hosts** (127.0.0.1/localhost/::1). A plugin without document-map version and conditional root `PATCH` support is rejected; use `--no-rest` or a compatible plugin. This is a target guard, not a transactional guarantee; the installed plugin reads the saved vault adapter content rather than an unsaved editor buffer.
+hosts** (127.0.0.1/localhost/::1). A plugin without document-map version and conditional root `PATCH` support is rejected; use `--no-rest` or a compatible plugin. This is a target guard, not a transactional guarantee; the installed plugin reads the saved vault adapter content rather than an unsaved editor buffer. The bootstrap marker is deliberately non-hidden because the plugin's structured JSON media types omit dotfiles. Its path is relative to the registered Obsidian root, even when `AGENT_WIKI_VAULT` points to a child scope; use the generated value rather than hand-writing `wiki/...`.
 
 ## Optional Homepage CSS
 

@@ -61,12 +61,13 @@ def test_rest_bootstraps_identity_before_probe(initialized, capture_emit, monkey
     assert payload["error"] == "obsidian_vault_identity_setup_required"
     assert set(env) == {"AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "AGENT_WIKI_OBSIDIAN_VAULT_ID"}
     assert env["AGENT_WIKI_OBSIDIAN_VAULT_ID"]
+    assert not env["AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH"].split("/")[-1].startswith(".")
     marker = config.wiki_root(initialized) / env["AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH"].split("/")[-1]
     assert marker.read_text(encoding="utf-8") == env["AGENT_WIKI_OBSIDIAN_VAULT_ID"]
 
 
 def test_rest_identity_bootstrap_does_not_overwrite_marker(initialized, capture_emit, monkeypatch, capsys):
-    existing = config.wiki_root(initialized) / ".agent-wiki-vault-id.md"
+    existing = config.wiki_root(initialized) / "agent-wiki-vault-id.md"
     existing.write_text("old-marker", encoding="utf-8")
     monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
     monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", raising=False)

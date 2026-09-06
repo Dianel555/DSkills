@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Incremental LLM-friendly wiki generator for Obsidian note vaults"
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "DSkills Contributors"}
 ]
@@ -12,7 +12,6 @@ keywords = ["obsidian", "wiki", "knowledge-base", "llm", "incremental"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -28,6 +27,7 @@ dependencies = [
 [project.optional-dependencies]
 site = ["markdown>=3.4"]
 dev = [
+    "build>=1.2",
     "pytest>=9.0",
     "ruff>=0.5",
     "mypy>=1.10",

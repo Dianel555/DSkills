@@ -96,3 +96,22 @@ def test_gen_base_requires_init(tmp_path):
     result = run_cli("gen-base", "--vault", str(tmp_path))
     assert result.returncode == 1
     assert json.loads(result.stderr)["error"] == "wiki_not_initialized"
+
+
+def test_child_scopes_keep_independent_wikis_inside_one_obsidian_root(tmp_path):
+    """The configured source scope need not equal the registered Obsidian root."""
+    (tmp_path / ".obsidian").mkdir()
+    scopes = [tmp_path / "research-notes", tmp_path / "course-notes"]
+    for scope in scopes:
+        scope.mkdir()
+        assert run_cli("init", "--vault", str(scope)).returncode == 0
+        result = run_cli("gen-base", "--name", "sources", "--vault", str(scope))
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["prefix"] == scope.name
+        assert (scope / "wiki" / "index.base").exists()
+        assert (scope / "sources.base").exists()
+        assert not (tmp_path / "wiki").exists()
+
+        index_base = yaml.safe_load((scope / "wiki" / "index.base").read_text(encoding="utf-8"))
+        assert index_base["filters"]["and"][0] == f'file.inFolder("{scope.name}/wiki/topics")'

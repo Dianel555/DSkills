@@ -89,12 +89,17 @@ def available(timeout: float = 2.0) -> bool:
     if cfg is None:
         return False
     key, url = cfg
-    req = urllib.request.Request(url + "/", headers={"Authorization": f"Bearer {key}"})
+    req = urllib.request.Request(
+        url + "/", headers={"Authorization": f"Bearer {key}", "Accept": "application/json"}
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_context(url)) as resp:
-            return bool(200 <= resp.status < 300)
-    except _TRANSPORT_ERRORS:
+            if not 200 <= resp.status < 300:
+                return False
+            payload = json.loads(resp.read().decode("utf-8"))
+    except _TRANSPORT_ERRORS + (UnicodeDecodeError, json.JSONDecodeError, AttributeError, TypeError):
         return False
+    return isinstance(payload, dict) and payload.get("authenticated") is True
 
 
 def _target_url(url: str, vault_rel_path: str) -> str:

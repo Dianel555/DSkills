@@ -2,7 +2,7 @@
 
 Incremental LLM-friendly wiki generator for Obsidian note vaults.
 
-`agent-wiki` scans a vault, tracks source markdown files with SHA-256, and helps the main Agent maintain a reusable `wiki/` directory without modifying source notes or attachments.
+`agent-wiki` scans a configured source scope, tracks source markdown files with SHA-256, and helps the main Agent maintain a reusable `wiki/` directory without modifying source notes or attachments.
 
 ## Prerequisites
 
@@ -13,15 +13,24 @@ pip install ".[site]"         # optional Markdown/static-site renderer
 
 ## Vault Selection
 
-Pass a vault explicitly or set an environment variable:
+`--vault` / `AGENT_WIKI_VAULT` selects the **agent-wiki source scope**, not necessarily the
+root registered in Obsidian. It may be the Obsidian root or any child directory containing a
+source collection. The selected scope owns its own `wiki/` directory and relative source paths:
 
 ```bash
-python scripts/agent_wiki_cli.py scan --vault /path/to/vault
+python scripts/agent_wiki_cli.py scan --vault /path/to/registered-vault/research-notes
 
 # or
-export AGENT_WIKI_VAULT=/path/to/vault
+export AGENT_WIKI_VAULT=/path/to/registered-vault/course-notes
 python scripts/agent_wiki_cli.py scan
 ```
+
+One registered Obsidian vault can therefore contain independent wikis, for example
+`research-notes/wiki/` and `course-notes/wiki/`. Bases, Canvas links, and optional REST writes use
+paths relative to the registered Obsidian root automatically; do not change the source scope to
+make it equal to that root. When a scope is nested, the first REST bootstrap prints a non-hidden
+marker path including that scope prefix. That path is relative to the registered Obsidian root, not
+to `AGENT_WIKI_VAULT`.
 
 Resolution order:
 
@@ -31,15 +40,24 @@ Resolution order:
 
 ## Optional Obsidian CLI
 
-If Obsidian desktop is running and its official CLI is installed, use explicit vault/path targets for application-aware reads:
+If Obsidian desktop is running and its official CLI is installed, use the registered root vault name
+for `vault=` and pass paths relative to that root. This is intentionally different from an
+agent-wiki source scope when the scope is nested:
+
+```bash
+# AGENT_WIKI_VAULT=/path/to/registered-vault/research-notes
+obsidian vault="Research" read path="research-notes/papers/Example.md"
+obsidian vault="Research" read path="research-notes/wiki/topics/Example.md"
+```
+
+Use explicit vault/path targets for application-aware reads:
 
 ```bash
 obsidian help
 obsidian version
 obsidian vault="Research" vault info=path
-obsidian vault="Research" read path="Papers/Example.md"
 obsidian vault="Research" search:context query="关键概念"
-obsidian vault="Research" backlinks path="wiki/topics/Example.md" format=json
+obsidian vault="Research" backlinks path="research-notes/wiki/topics/Example.md" format=json
 ```
 
 The CLI is optional and does not replace file-first operation. Its output and support depend on the installed Obsidian version; do not assume reads include unsaved buffers or are transactional. Never pass source text as shell code, and hash the content actually read before `cache-put`.
@@ -117,8 +135,10 @@ The `wanted` list is a feature, not a bug — it surfaces which source materials
 ## Wiki Layout
 
 ```text
-{vault}/
-├── <name>.base              # source master table (Bases, at vault root)
+# A child scope is intentional: one registered Obsidian vault can contain
+# several independent wiki/ trees and source master bases.
+{agent-wiki source scope}/
+├── <name>.base              # source master table for this scope
 └── wiki/
     ├── index.md             # homepage skeleton (gen-home); agent fills prose, cards auto-render
     ├── index.base           # topic overview + per-dimension faceted views (Bases)
@@ -132,11 +152,11 @@ The `wanted` list is a feature, not a bug — it surfaces which source materials
     └── .wiki-url-cache/
 ```
 
-Source markdown files remain outside `wiki/`. The scanner skips `wiki/`, `.obsidian/`, `attachments/`, `.git/`, `.trash/`, `.wikiignore` matches, and symlinked markdown files.
+Source markdown files remain outside the selected scope's `wiki/`. The scanner skips `wiki/`, `.obsidian/`, `attachments/`, `.git/`, `.trash/`, `.wikiignore` matches, and symlinked markdown files.
 
 **Capture & graphs**: `save-report` registers an Agent-authored report already written under `wiki/queries/` as a first-class, index-visible, cross-linkable node (it gains a directory-derived `kind: query`, academic identity fields, and shared `link_records[]` in the index). `gen-canvas` renders deterministic per-topic JSON Canvas graphs (topic center + `sources[]` ring + 1-hop neighbour topics, derived from `sources[]` overlap and the shared link resolver) under `wiki/graphs/`. `gen-home` builds/refreshes the `wiki/index.md` skeleton plus a single managed "工作区" block that surfaces reports/graphs as a centered Dataview card grid (auto-detected; static list fallback) without touching `index.base`; the agent fills the surrounding prose, and re-runs refresh only the managed block (a content-bearing index without markers gets the block appended, never clobbered).
 
-**index.md & Obsidian-open conflicts**: `index.md` is the file you most often keep open in an Obsidian tab, where an external write can be clobbered by the editor buffer. If the [Obsidian Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) plugin is configured via env vars, `gen-home` verifies an explicit marker file for the intended vault, reads the document-map version, verifies the returned vault-relative target and current content, then uses a conditional root `PATCH` through Obsidian; a conflict, unknown target, or uncertain result stops without a disk fallback. The `PATCH` receives `ifMatch`, so a change between verification and write returns a conflict instead of overwriting it. If either marker variable is missing, the first run creates a unique marker under `wiki/`, prints the two generated env values, and stops; set them and retry. An unavailable API uses atomic file write (`--no-rest` forces atomic). The output's `write_via` reports `rest` or `atomic`. Set `AGENT_WIKI_OBSIDIAN_API_KEY` and (after the bootstrap prompt) `AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH`/`AGENT_WIKI_OBSIDIAN_VAULT_ID` (and optionally `AGENT_WIKI_OBSIDIAN_API_URL`, default `https://127.0.0.1:27124`) — see `.env.example`. The API key is read from the environment only; the generated marker value is stored in its marker file and existing markers are never overwritten. A plugin that does not expose both the document-map version and conditional root `PATCH` is rejected; use `--no-rest` or a compatible plugin. TLS verification is skipped only for loopback hosts.
+**index.md & Obsidian-open conflicts**: `index.md` is the file you most often keep open in an Obsidian tab, where an external write can be clobbered by the editor buffer. If the [Obsidian Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) plugin is configured via env vars, `gen-home` verifies an explicit marker file for the registered Obsidian root, reads the document-map version, verifies the returned root-relative target and current content, then uses a conditional root `PATCH` through Obsidian; a conflict, unknown target, or uncertain result stops without a disk fallback. The `PATCH` receives `ifMatch`, so a change between verification and write returns a conflict instead of overwriting it. A configured agent-wiki scope may be a child directory: its prefix is added to REST targets automatically, so several scopes can safely produce independent `wiki/` trees in one registered vault. If either marker variable is missing, the first run creates a unique non-hidden marker under the selected scope's `wiki/`, prints the two generated env values, and stops; set them and retry. The generated marker path is relative to the registered Obsidian root. An unavailable API uses atomic file write (`--no-rest` forces atomic). The output's `write_via` reports `rest` or `atomic`. Set `AGENT_WIKI_OBSIDIAN_API_KEY` and (after the bootstrap prompt) `AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH`/`AGENT_WIKI_OBSIDIAN_VAULT_ID` (and optionally `AGENT_WIKI_OBSIDIAN_API_URL`, default `https://127.0.0.1:27124`) — see `.env.example`. The API key is read from the environment only; generated marker values are create-only and existing markers are never overwritten. A plugin that does not expose both the document-map version and conditional root `PATCH` is rejected; use `--no-rest` or a compatible plugin. TLS verification is skipped only for loopback hosts.
 
 ## Agent Workflow
 
