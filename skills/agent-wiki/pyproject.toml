@@ -32,6 +32,7 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
     "types-Markdown>=1.0",
+    "types-PyYAML>=6.0",
 ]
 
 [project.scripts]
