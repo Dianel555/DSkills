@@ -71,6 +71,8 @@ def normalize_relpath(path: str | Path) -> str:
     value = str(path).replace("\\", "/").strip()
     while value.startswith("./"):
         value = value[2:]
+    if len(value) >= 2 and value[0].isalpha() and value[1] == ":":
+        raise ValueError(f"absolute drive path not allowed: {path!r}")
     return _nfc(value)
 
 

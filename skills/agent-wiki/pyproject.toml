@@ -33,6 +33,7 @@ dev = [
     "mypy>=1.10",
     "types-Markdown>=1.0",
     "types-PyYAML>=6.0",
+    "setuptools>=65.0",
 ]
 
 [project.scripts]

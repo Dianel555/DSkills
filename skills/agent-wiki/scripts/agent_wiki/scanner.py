@@ -39,6 +39,7 @@ def _collect_sources(vault: str | Path) -> tuple[list[Path], list[dict[str, str]
         if _excluded(rel, patterns):
             continue
         if path.is_symlink():
+            rel = config.normalize_relpath(path.relative_to(root).as_posix())
             skipped.append({"path": rel, "error": "skipped_symlink"})
             continue
         found.append(path)
