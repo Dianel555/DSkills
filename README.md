@@ -20,6 +20,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Antigravity CLI).
 | [github-trending-analyzer](skills/github-trending-analyzer/) | Crawl GitHub trending repos, analyze with LLM for Chinese insights, categorize by themes, diff against history; default brief report or opt-in detailed per-project report |
 | [context7](skills/context7/) | Fetch up-to-date library/framework/API docs from Context7 (bypass training cutoff); the co-located CLI normalizes current API payloads and an optional helper can run the same command in an isolated worker |
 | [grill-me](skills/grill-me/) | Grill the user about a requirement, decision, or idea before implementation, then produce an actionable planning report without writing code |
+| [literature-searcher](skills/literature-searcher/) | Search CrossRef, OpenAlex, PubMed, Semantic Scholar, and optional Scopus; deduplicate results, download open-access PDFs by DOI, classify papers, monitor topics, and analyze coverage gaps |
 
 ### Python Skill Dependencies
 
@@ -116,7 +117,8 @@ DSkills/
 │   ├── codex-cc/
 │   ├── github-trending-analyzer/
 │   ├── context7/
-│   └── grill-me/
+│   ├── grill-me/
+│   └── literature-searcher/
 └── .claude-plugin/
     └── marketplace.json               # Metadata
 ```

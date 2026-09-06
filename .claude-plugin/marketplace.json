@@ -106,6 +106,13 @@
       "source": "./skills/grill-me",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "literature-searcher",
+      "description": "Search CrossRef, OpenAlex, PubMed, Semantic Scholar, and optional Scopus; deduplicate results, download open-access PDFs by DOI, classify papers, monitor new results, and analyze coverage",
+      "source": "./skills/literature-searcher",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }
