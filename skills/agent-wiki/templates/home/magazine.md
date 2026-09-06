@@ -1,5 +1,10 @@
 <!-- agent-wiki 首页布局模板 · 杂志风。挑选片段贴入 wiki/index.md；_待补充_ 由 agent 填写，🗂 工作区卡片块原样照搬。 -->
 
+---
+cssclasses:
+  - agent-wiki-home
+---
+
 # Wiki Index · 杂志
 
 > [!quote] 导语

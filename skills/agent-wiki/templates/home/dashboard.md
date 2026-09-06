@@ -1,5 +1,10 @@
 <!-- agent-wiki 首页布局模板 · 仪表盘风。挑选片段贴入 wiki/index.md；_待补充_ 由 agent 填写，🗂 工作区卡片块原样照搬。 -->
 
+---
+cssclasses:
+  - agent-wiki-home
+---
+
 # Wiki Index · 仪表盘
 
 > _待补充_：一句话概述本库主线。

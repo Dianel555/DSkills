@@ -1,4 +1,5 @@
 import http.client
+import json
 import ssl
 import urllib.error
 import urllib.request
@@ -32,6 +33,8 @@ class _FakeResp:
 def _clear_env(monkeypatch):
     monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_API_KEY", raising=False)
     monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_API_URL", raising=False)
+    monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", raising=False)
+    monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", raising=False)
 
 
 def test_available_false_without_key():
@@ -90,6 +93,160 @@ def test_put_file_builds_put_request(monkeypatch):
     assert captured["body"] == b"# hi\n"
     assert "text/markdown" in captured["ctype"]
     assert captured["auth"] == "Bearer k"
+
+
+def test_conditional_rest_write_requires_vault_identity(monkeypatch):
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("identity must be required before any REST read")
+
+    monkeypatch.setattr(urllib.request, "urlopen", forbidden)
+    with pytest.raises(obsidian_api.TargetVerificationError, match="vault_identity_required"):
+        obsidian_api.put_file("wiki/index.md", "NEW", expected_content="OLD")
+
+
+def test_conditional_rest_write_rejects_wrong_vault_marker(monkeypatch):
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "wiki/.agent-wiki-vault-id.md")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", "vault-one")
+
+    class JsonResp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps({"path": "wiki/.agent-wiki-vault-id.md", "content": "vault-two"}).encode()
+
+    calls = []
+
+    def fake_urlopen(req, timeout=None, context=None):
+        calls.append(req)
+        return JsonResp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(obsidian_api.TargetVerificationError, match="identity_mismatch"):
+        obsidian_api.put_file("wiki/index.md", "NEW", expected_content="OLD")
+    assert [request.get_method() for request in calls] == ["GET"]
+
+
+def test_put_file_uses_document_map_version_for_conditional_patch(monkeypatch):
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "wiki/.agent-wiki-vault-id.md")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", "vault-one")
+    calls = []
+
+    class JsonResp:
+        status = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode()
+
+    def fake_urlopen(req, timeout=None, context=None):
+        calls.append(req)
+        if req.get_method() == "GET":
+            if req.full_url.endswith("/vault/wiki/.agent-wiki-vault-id.md"):
+                return JsonResp({"path": "wiki/.agent-wiki-vault-id.md", "content": "vault-one"})
+            if req.get_header("Accept") == "application/vnd.olrapi.document-map+json":
+                return JsonResp({"headings": {}, "blocks": [], "frontmatterFields": [], "version": "v1"})
+            return JsonResp({"path": "wiki/index.md", "content": "OLD"})
+        return _FakeResp(204)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert obsidian_api.put_file("wiki/index.md", "NEW", expected_content="OLD") is True
+    assert [request.get_method() for request in calls] == ["GET", "GET", "GET", "PATCH"]
+    assert calls[0].full_url.endswith("/vault/wiki/.agent-wiki-vault-id.md")
+    assert calls[1].get_header("Accept") == "application/vnd.olrapi.document-map+json"
+    assert calls[3].get_header("Content-type") == "application/json"
+    assert json.loads(calls[3].data.decode()) == {
+        "targetType": "heading",
+        "target": None,
+        "operation": "replace",
+        "content": "NEW",
+        "ifMatch": "v1",
+    }
+
+
+def test_conditional_rest_write_rejects_plugin_without_version(monkeypatch):
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "wiki/.agent-wiki-vault-id.md")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", "vault-one")
+
+    class JsonResp:
+        status = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode()
+
+    calls = []
+
+    def fake_urlopen(req, timeout=None, context=None):
+        calls.append(req)
+        if req.full_url.endswith("/vault/wiki/.agent-wiki-vault-id.md"):
+            return JsonResp({"path": "wiki/.agent-wiki-vault-id.md", "content": "vault-one"})
+        return JsonResp({"headings": {}, "blocks": [], "frontmatterFields": []})
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(obsidian_api.TargetVerificationError, match="conditional_write_unsupported"):
+        obsidian_api.put_file("wiki/index.md", "NEW", expected_content="OLD")
+    assert [request.get_method() for request in calls] == ["GET", "GET"]
+
+
+def test_conditional_patch_412_is_a_write_conflict(monkeypatch):
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "wiki/.agent-wiki-vault-id.md")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", "vault-one")
+
+    class JsonResp:
+        status = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return json.dumps(self.payload).encode()
+
+    def fake_urlopen(req, timeout=None, context=None):
+        if req.get_method() == "GET":
+            if req.full_url.endswith("/vault/wiki/.agent-wiki-vault-id.md"):
+                return JsonResp({"path": "wiki/.agent-wiki-vault-id.md", "content": "vault-one"})
+            if req.get_header("Accept") == "application/vnd.olrapi.document-map+json":
+                return JsonResp({"version": "v1"})
+            return JsonResp({"path": "wiki/index.md", "content": "OLD"})
+        raise urllib.error.HTTPError(req.full_url, 412, "Precondition Failed", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(obsidian_api.WriteConflictError):
+        obsidian_api.put_file("wiki/index.md", "NEW", expected_content="OLD")
 
 
 def test_put_file_false_on_http_error(monkeypatch):

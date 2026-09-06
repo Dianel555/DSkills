@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from agent_wiki import config, frontmatter
+from agent_wiki import config, frontmatter, wiki_index
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agent_wiki_cli.py"
@@ -34,7 +34,7 @@ def test_init_creates_empty_index(tmp_path):
     index = config.index_path(tmp_path)
     assert "wiki/.wiki-index.json" in payload["created"]
     assert json.loads(index.read_text(encoding="utf-8")) == {
-        "version": 1, "generated_at": "1970-01-01T00:00:00Z",
+        "version": wiki_index.INDEX_VERSION, "generated_at": "1970-01-01T00:00:00Z",
         "topics": {}, "queries": {}, "alias_index": {},
     }
 

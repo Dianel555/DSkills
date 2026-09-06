@@ -51,52 +51,62 @@ preserved.
 
 `index.md` is the one wiki file users keep open in an Obsidian tab, so an external `os.replace` can
 race the editor buffer. When the **Obsidian Local REST API** plugin is configured (env vars below),
-gen-home writes `index.md` *through* Obsidian (`PUT /vault/{path}`) so the editor buffer and disk
-update together; otherwise it falls back to the normal atomic write. `write_via` in the output reports
+`gen-home` first verifies an explicit marker file for the intended vault because the API exposes only
+vault-relative paths. If either marker env variable is missing, the first run creates a unique marker
+under `wiki/`, prints both generated variables, and stops; set them and retry. It then reads a
+document map (`GET /vault/{path}` with `Accept: application/vnd.olrapi.document-map+json`) to capture
+its `version`, verifies the returned vault-relative target and current content, and finally replaces
+the document root with a conditional `PATCH` carrying `ifMatch`. A mismatch, changed content,
+unsupported plugin capability, or uncertain PATCH stops; it never falls back to disk after an attempted
+REST write. An unavailable API uses atomic file write.
+`write_via` in the output reports
 which path was taken (`rest` / `atomic`). Only `index.md` uses this; canvas/capture/index files stay
 atomic. Pass `--no-rest` to always write directly. Configure (key from Obsidian → Settings → Local
 REST API; read from the environment only, never persisted — see `.env.example`):
 
 ```bash
 export AGENT_WIKI_OBSIDIAN_API_KEY=<your-key>          # required to enable REST write
+# First missing-env gen-home run prints these two generated values.
+export AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH=wiki/.agent-wiki-vault-id.md
+export AGENT_WIKI_OBSIDIAN_VAULT_ID=<exact-marker-content>
 export AGENT_WIKI_OBSIDIAN_API_URL=https://127.0.0.1:27124  # optional, this is the default
 ```
 
 The HTTPS endpoint uses a self-signed cert; agent-wiki skips TLS verification **only for loopback
-hosts** (127.0.0.1/localhost/::1).
+hosts** (127.0.0.1/localhost/::1). A plugin without document-map version and conditional root `PATCH` support is rejected; use `--no-rest` or a compatible plugin. This is a target guard, not a transactional guarantee; the installed plugin reads the saved vault adapter content rather than an unsaved editor buffer.
 
 ## Optional Homepage CSS
 
-The `gen-home` skeleton renders correctly in default Obsidian themes. For typography/palette polish,
+The `gen-home` skeleton adds the Obsidian `cssclasses: [agent-wiki-home]` property. The scope keeps this optional styling local to the generated home page. For typography/palette polish,
 the user may add this **optional** CSS snippet (Settings → Appearance → CSS snippets) — pure
 progressive enhancement, safe to omit:
 
 ```css
 /* agent-wiki homepage — optional progressive enhancement */
-.markdown-preview-view,
-.markdown-rendered {
+.agent-wiki-home .markdown-preview-view,
+.agent-wiki-home .markdown-rendered {
   --aw-ink: #475569;          /* slate body ink (light) */
   --aw-accent: #2563eb;       /* blue accent */
 }
-.theme-dark .markdown-preview-view,
-.theme-dark .markdown-rendered {
+.theme-dark .agent-wiki-home .markdown-preview-view,
+.theme-dark .agent-wiki-home .markdown-rendered {
   --aw-ink: #cbd5e1;          /* lighten ink in dark mode for ≥4.5:1 contrast */
   --aw-accent: #60a5fa;
 }
-.markdown-rendered h1,
-.markdown-rendered h2 {
+.agent-wiki-home .markdown-rendered h1,
+.agent-wiki-home .markdown-rendered h2 {
   font-family: "Crimson Pro", var(--font-text), serif;
   letter-spacing: 0.01em;
 }
-.markdown-rendered p,
-.markdown-rendered li,
-.markdown-rendered .callout {
+.agent-wiki-home .markdown-rendered p,
+.agent-wiki-home .markdown-rendered li,
+.agent-wiki-home .markdown-rendered .callout {
   font-family: "Atkinson Hyperlegible", var(--font-text), sans-serif;
   color: var(--aw-ink);
   line-height: 1.6;           /* 8px vertical rhythm at default size */
 }
-.markdown-rendered .callout { margin: 8px 0; padding: 8px 12px; }   /* 4/8px spacing */
-.markdown-rendered a { color: var(--aw-accent); }
+.agent-wiki-home .markdown-rendered .callout { margin: 8px 0; padding: 8px 12px; }   /* 4/8px spacing */
+.agent-wiki-home .markdown-rendered a { color: var(--aw-accent); }
 ```
 
 The palette (`#475569` ink / `#2563EB` accent), Crimson Pro + Atkinson Hyperlegible pairing, and

@@ -24,6 +24,8 @@ import os
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from . import links
+
 # Node box geometry (positive-int width/height, integer coords).
 CENTER_WIDTH = 480
 CENTER_HEIGHT = 260
@@ -119,21 +121,32 @@ def _position(radius: int, k: int, n: int, width: int, height: int) -> tuple[int
 
 
 def neighbors(target_key: str, index_data: dict[str, Any]) -> set[str]:
-    """Topic keys (excluding the target) sharing >=1 source with the target, or
-    connected to it by a body wikilink in either direction (resolved by stem)."""
+    """Topic keys sharing sources or resolved links with ``target_key``."""
     topics = index_data.get("topics", {})
+    queries = index_data.get("queries", {})
     target = topics[target_key]
-    target_stem = _stem(target_key)
-    target_sources = set(target["sources"])
-    target_link_stems = {_stem(link) for link in target["links"]}
-    result: set[str] = set()
+    topic_keys = set(topics)
+    query_keys = set(queries)
+    alias_index = index_data.get("alias_index", {})
+    target_sources = set(target.get("sources", []))
+    linked_topics: set[str] = set()
+    for ref in links.from_entry(target):
+        resolution = links.resolve(ref.target, topic_keys, query_keys, alias_index)
+        if resolution.status == "resolved" and resolution.key is not None and resolution.key in topic_keys:
+            linked_topics.add(resolution.key)
+
+    result: set[str] = linked_topics - {target_key}
     for key, entry in topics.items():
         if key == target_key:
             continue
-        if (target_sources & set(entry["sources"])
-                or _stem(key) in target_link_stems
-                or target_stem in {_stem(link) for link in entry["links"]}):
+        if target_sources & set(entry.get("sources", [])):
             result.add(key)
+            continue
+        for ref in links.from_entry(entry):
+            resolution = links.resolve(ref.target, topic_keys, query_keys, alias_index)
+            if resolution.status == "resolved" and resolution.key == target_key:
+                result.add(key)
+                break
     return result
 
 

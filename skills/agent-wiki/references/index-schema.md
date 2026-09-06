@@ -9,7 +9,7 @@ Derived retrieval cache; **frontmatter is the single source of truth** — the i
 are regenerated from it and are never written back into topic files. The Obsidian Bases plugin renders
 `.base` views by reading topic frontmatter **directly**, not this JSON.
 
-- Top-level: `version` (int `1`), `generated_at` (UTC ISO-8601 derived from the max page mtime across
+- Top-level: `version` (int `2`), `generated_at` (UTC ISO-8601 derived from the max page mtime across
   the topics and queries directories, not wall-clock), `topics` (keyed by NFC POSIX path relative to `wiki/topics/`),
   `queries` (captured reports, keyed by NFC POSIX path relative to `wiki/`, e.g.
   `queries/<name>.md`), and `alias_index` (derived NFC alias→topic key map for routing). Topic counts stay clean: `index` reports only the topic count.
@@ -17,13 +17,13 @@ are regenerated from it and are never written back into topic files. The Obsidia
   `year_start` (int|null), `year_end` (int|null), `authors[]`,
   `source_type` (derived), `institutions[]`, `methods[]`, `technical_routes[]`, `research_trends[]`, `summary`
   (≤1000 chars), `keywords[]`, `kind` (`topic`), `links[]` (parsed from body),
-  `mtime_ns` (int, source file mtime — drives `--incremental` reuse on rebuild), plus **extended fields**:
+  `mtime_ns` (int, source file mtime — drives `--incremental` reuse on rebuild), `link_records[]` (target, label, fragment, embed, syntax from the shared parser), and optional academic identity fields `citekey`, `doi`, `library_id`, `review_status`, `reviewed_at`, plus **extended fields**:
   - `type` (string, default `""`) — page kind from frontmatter (orthogonal to derived `source_type`)
   - `aliases` (array, default `[]`) — order-preserved alternative names from frontmatter
   - `quality_tier` (string enum) — derived tier (`stub`/`basic`/`standard`/`rich`/`premium`)
   - `featured` (boolean, default `false`) — emphasis flag (strict boolean coercion)
   - `backlinks` (int ≥ 0) — distinct inbound linker count across all pages
-- **Query entries** preserve existing schema (no extended fields); they include the same base fields plus `kind` (`query`).
+- **Query entries** preserve the topic-only schema boundary (no `type`/quality/backlinks fields); they include the same base fields, optional academic identity fields, parsed `link_records[]`, and `kind` (`query`). Query aliases are not added to the canonical topic alias index; use `keywords` for report discovery.
 - Missing fields use null-or-empty defaults; list order is preserved (no dedup/reorder). `year_start`/`year_end` parse a 4-digit run from int or string, else null.
 - `source_type` is **always derived from the source file formats** in `sources[]` (`.md`→`markdown`,
   `.pdf`→`pdf`, `.doc/.docx`→`word`, `.xls/.xlsx/.csv`→`spreadsheet`, `.ppt/.pptx`→`slides`, `.txt`→`text`,
@@ -62,6 +62,11 @@ technical_routes: ["analytical solution"]
 research_trends: ["quantum information"]
 summary: 一句话主题摘要，用于索引快速路由（索引中截断至 1000 字符）。
 keywords: ["叠加态", "波函数"]
+citekey: schrodinger1926       # optional stable key from the literature manager
+doi: 10.1000/example            # optional DOI; never inferred from a title
+library_id: zotero:ABC123       # optional library/item identifier
+review_status: needs_review     # optional: needs_review / reviewed / superseded
+reviewed_at: 2026-06-04          # optional manual verification date
 ---
 ```
 

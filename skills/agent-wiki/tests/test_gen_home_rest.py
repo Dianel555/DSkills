@@ -4,6 +4,7 @@ These monkeypatch ``commands.obsidian_api`` / ``commands.plugins`` / ``commands.
 the subprocess ``run_cli`` path in test_home.py cannot reach in-process patches.
 """
 
+import json
 import types
 
 import pytest
@@ -43,11 +44,71 @@ def test_atomic_by_default_when_api_unavailable(initialized, capture_emit, monke
     assert home.AUTO_START in text
 
 
+def test_rest_bootstraps_identity_before_probe(initialized, capture_emit, monkeypatch, capsys):
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", raising=False)
+    monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", raising=False)
+
+    def forbidden(*a, **k):
+        raise AssertionError("identity must be checked before the REST availability probe")
+
+    monkeypatch.setattr(commands.obsidian_api, "available", forbidden)
+    with pytest.raises(SystemExit):
+        commands.cmd_gen_home(_args(initialized))
+
+    payload = json.loads(capsys.readouterr().err)
+    env = payload["env"]
+    assert payload["error"] == "obsidian_vault_identity_setup_required"
+    assert set(env) == {"AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "AGENT_WIKI_OBSIDIAN_VAULT_ID"}
+    assert env["AGENT_WIKI_OBSIDIAN_VAULT_ID"]
+    marker = config.wiki_root(initialized) / env["AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH"].split("/")[-1]
+    assert marker.read_text(encoding="utf-8") == env["AGENT_WIKI_OBSIDIAN_VAULT_ID"]
+
+
+def test_rest_identity_bootstrap_does_not_overwrite_marker(initialized, capture_emit, monkeypatch, capsys):
+    existing = config.wiki_root(initialized) / ".agent-wiki-vault-id.md"
+    existing.write_text("old-marker", encoding="utf-8")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", raising=False)
+    monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", raising=False)
+    monkeypatch.setattr(commands.obsidian_api, "available", lambda timeout=2.0: False)
+
+    with pytest.raises(SystemExit):
+        commands.cmd_gen_home(_args(initialized))
+
+    payload = json.loads(capsys.readouterr().err)
+    generated = config.wiki_root(initialized) / payload["env"]["AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH"].split("/")[-1]
+    assert existing.read_text(encoding="utf-8") == "old-marker"
+    assert generated != existing
+    assert generated.read_text(encoding="utf-8") == payload["env"]["AGENT_WIKI_OBSIDIAN_VAULT_ID"]
+
+
+def test_rest_identity_bootstrap_uses_obsidian_root_prefix(tmp_path, capture_emit, monkeypatch, capsys):
+    (tmp_path / ".obsidian").mkdir()
+    vault = tmp_path / "nested"
+    vault.mkdir()
+    commands.cmd_init(_args(vault))
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", raising=False)
+    monkeypatch.delenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", raising=False)
+    monkeypatch.setattr(commands.obsidian_api, "available", lambda timeout=2.0: False)
+
+    with pytest.raises(SystemExit):
+        commands.cmd_gen_home(_args(vault))
+
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["env"]["AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH"].startswith("nested/wiki/")
+    assert (config.wiki_root(vault) / payload["env"]["AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH"].split("/")[-1]).exists()
+
+
 def test_uses_rest_when_available(initialized, capture_emit, monkeypatch):
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "wiki/.agent-wiki-vault-id.md")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", "vault-one")
     monkeypatch.setattr(commands.obsidian_api, "available", lambda timeout=2.0: True)
     calls = {}
     monkeypatch.setattr(commands.obsidian_api, "put_file",
-                        lambda vault_rel, text, timeout=10.0: calls.update(vault_rel=vault_rel, text=text) or True)
+                        lambda vault_rel, text, timeout=10.0, **kwargs: calls.update(vault_rel=vault_rel, text=text) or True)
     commands.cmd_gen_home(_args(initialized))
     assert capture_emit[-1]["write_via"] == "rest"
     assert calls["vault_rel"] == "wiki/index.md"  # no .obsidian ancestor -> empty prefix
@@ -67,12 +128,15 @@ def test_no_rest_skips_api_entirely(initialized, capture_emit, monkeypatch):
     assert _idx(initialized) == home.render_skeleton(initialized, False)
 
 
-def test_rest_put_failure_falls_back_to_atomic(initialized, capture_emit, monkeypatch):
+def test_rest_write_failure_does_not_fall_back_to_atomic(initialized, capture_emit, monkeypatch):
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "wiki/.agent-wiki-vault-id.md")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", "vault-one")
     monkeypatch.setattr(commands.obsidian_api, "available", lambda timeout=2.0: True)
-    monkeypatch.setattr(commands.obsidian_api, "put_file", lambda vault_rel, text, timeout=10.0: False)
-    commands.cmd_gen_home(_args(initialized))
-    assert capture_emit[-1]["write_via"] == "atomic"
-    assert _idx(initialized) == home.render_skeleton(initialized, False)
+    monkeypatch.setattr(commands.obsidian_api, "put_file", lambda vault_rel, text, timeout=10.0, **kwargs: False)
+    with pytest.raises(SystemExit):
+        commands.cmd_gen_home(_args(initialized))
+    assert _idx(initialized) == "# Wiki Index\n\n"
 
 
 def test_obsidian_prefix_in_rest_path(tmp_path, capture_emit, monkeypatch):
@@ -81,10 +145,13 @@ def test_obsidian_prefix_in_rest_path(tmp_path, capture_emit, monkeypatch):
     vault = tmp_path / "记录"
     vault.mkdir()
     commands.cmd_init(_args(vault))
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "wiki/.agent-wiki-vault-id.md")
+    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", "vault-one")
     monkeypatch.setattr(commands.obsidian_api, "available", lambda timeout=2.0: True)
     calls = {}
     monkeypatch.setattr(commands.obsidian_api, "put_file",
-                        lambda vault_rel, text, timeout=10.0: calls.update(vault_rel=vault_rel) or True)
+                        lambda vault_rel, text, timeout=10.0, **kwargs: calls.update(vault_rel=vault_rel) or True)
     commands.cmd_gen_home(_args(vault))
     assert calls["vault_rel"] == "记录/wiki/index.md"
 

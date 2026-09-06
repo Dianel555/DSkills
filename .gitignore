@@ -1,7 +1,6 @@
 .ace-tool/
 TESTING.md
 .pre-commit-config.yaml
-.editorconfig
 
 # OpenSpec Files
 openspec/
@@ -18,6 +17,9 @@ CLAUDE.md
 
 #Antigravity Files
 .agents/
+
+#Pi Files
+.Pi/
 
 #Evolver Files
 memory/

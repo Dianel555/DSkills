@@ -39,3 +39,10 @@ def test_cli_entry_exists():
     cli_entry = pathlib.Path(__file__).parent.parent / "scripts" / "agent_wiki_cli.py"
     assert cli_entry.exists()
     assert cli_entry.is_file()
+
+
+def test_pyproject_packages_top_level_cli_module():
+    """The wheel must include the legacy CLI module used by agent_wiki.cli."""
+    pyproject = pathlib.Path(__file__).parent.parent / "pyproject.toml"
+    text = pyproject.read_text(encoding="utf-8")
+    assert 'py-modules = ["agent_wiki_cli"]' in text

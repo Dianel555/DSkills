@@ -14,6 +14,7 @@ CLI = ROOT / "scripts" / "agent_wiki_cli.py"
 def run_cli(*args):
     # Strip API env so subprocess gen-home is deterministically atomic regardless of the dev shell.
     env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_WIKI_OBSIDIAN_API")}
+    env["DOTENV_DISABLE"] = "1"
     return subprocess.run([sys.executable, str(CLI), *args], text=True, encoding="utf-8", capture_output=True, env=env)
 
 
@@ -51,7 +52,8 @@ def test_gen_home_writes_skeleton(tmp_path):
     assert payload["write_via"] == "atomic"
     assert payload["cards"] is False  # tmp_path has no .obsidian/Dataview
     text = _read_home(tmp_path)
-    assert text.startswith("# Wiki Index")
+    assert text.startswith("---\ncssclasses:\n  - agent-wiki-home")
+    assert "# Wiki Index" in text
     assert home.EMBED in text
     for heading in ("## 🧭 动态视图（Bases）", "## 📚 主题导航", "## 🔗 主题关系图谱", "## 🗂 工作区"):
         assert heading in text

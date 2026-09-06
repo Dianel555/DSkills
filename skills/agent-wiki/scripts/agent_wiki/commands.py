@@ -6,6 +6,7 @@ import argparse
 import contextlib
 import json
 import os
+import secrets
 import stat
 import sys
 from collections.abc import Callable
@@ -508,23 +509,23 @@ def cmd_status(args: argparse.Namespace) -> None:
         worklist_result = worklist.compute_worklist(vault)
         wanted_count = len(worklist_result.get("wanted", []))
         stale_count = len(worklist_result.get("stale", []))
+        review_count = len(worklist_result.get("review", []))
     except (ValueError, Exception):
         wanted_count = 0
         stale_count = 0
+        review_count = 0
 
     # Check site status
     site_dir = config.wiki_root(vault) / "site"
     site_index = site_dir / "index.html"
     site_exists = site_index.exists()
     site_stale = False
-    if site_exists and topics:
+    pages = topics + (list(queries_root.glob("*.md")) if queries_root.exists() else [])
+    if site_exists and pages:
         try:
             site_mtime = site_index.stat().st_mtime_ns
-            # Site is stale if any topic is newer
-            for topic_path in topics:
-                if topic_path.stat().st_mtime_ns > site_mtime:
-                    site_stale = True
-                    break
+            # Site is stale if any exported topic/report is newer.
+            site_stale = any(page.stat().st_mtime_ns > site_mtime for page in pages)
         except OSError:
             pass
 
@@ -566,6 +567,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         "gaps_count": gaps_count,
         "wanted_count": wanted_count,
         "stale_count": stale_count,
+        "review_count": review_count,
         "site_exists": site_exists,
         "site_stale": site_stale,
     })
@@ -630,18 +632,74 @@ def cmd_gen_canvas(args: argparse.Namespace) -> None:
 
 
 def _obsidian_index_relpath(vault: Path) -> str:
-    """Obsidian-vault-root-relative POSIX path of ``wiki/index.md`` (the path the
-    Local REST API's ``PUT /vault/{path}`` expects)."""
+    """Obsidian-vault-root-relative POSIX path of ``wiki/index.md``."""
     prefix = bases.obsidian_prefix(vault)
     return "/".join(part for part in (prefix, "wiki", "index.md") if part)
 
 
-def _write_index(vault: Path, text: str, use_rest: bool) -> str:
-    """Write ``wiki/index.md``. Prefer the Obsidian Local REST API (so an open
-    editor buffer is updated in lock-step) when configured and reachable; on any
-    miss fall back to a direct atomic write. Returns the method used."""
-    if use_rest and obsidian_api.available() and obsidian_api.put_file(_obsidian_index_relpath(vault), text):
-        return "rest"
+_IDENTITY_MARKER_NAME = ".agent-wiki-vault-id.md"
+
+
+def _bootstrap_vault_identity(vault: Path) -> obsidian_api.VaultIdentitySetupRequiredError:
+    """Create a marker and return the env setup needed for the next run."""
+    wiki = config.wiki_root(vault)
+    token = secrets.token_urlsafe(24)
+    marker_path: Path | None = None
+    marker_name = _IDENTITY_MARKER_NAME
+    for attempt in range(10):
+        if attempt:
+            marker_name = f".agent-wiki-vault-id-{token[:10]}.md"
+        candidate = wiki / marker_name
+        try:
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            token = secrets.token_urlsafe(24)
+            continue
+        marker_path = candidate
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as marker:
+                marker.write(token)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                candidate.unlink()
+            raise
+        break
+    if marker_path is None:
+        raise OSError("could not create a unique vault identity marker")
+    api_marker_path = "/".join(
+        part for part in (bases.obsidian_prefix(vault), "wiki", marker_path.name) if part
+    )
+    return obsidian_api.VaultIdentitySetupRequiredError(
+        {
+            "AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH": api_marker_path,
+            "AGENT_WIKI_OBSIDIAN_VAULT_ID": token,
+        },
+        config.to_rel_posix(marker_path, vault),
+    )
+
+
+def _write_index(
+    vault: Path,
+    text: str,
+    use_rest: bool,
+    expected_content: str | None = None,
+) -> str:
+    """Write ``wiki/index.md`` without falling back after an uncertain REST write.
+    REST writes are verified against the intended target before replacement.
+    No local fallback is used after a configured REST write is attempted."""
+    if use_rest and expected_content is not None and obsidian_api.configured():
+        if not obsidian_api.identity_configured():
+            try:
+                raise _bootstrap_vault_identity(vault)
+            except OSError as exc:
+                raise obsidian_api.WriteSafetyError("obsidian_vault_identity_setup_failed") from exc
+        if obsidian_api.available():
+            ok = obsidian_api.put_file(
+                _obsidian_index_relpath(vault), text, expected_content=expected_content
+            )
+            if ok:
+                return "rest"
+            raise obsidian_api.WriteSafetyError("obsidian_write_failed")
     _atomic_write_text(config.wiki_root(vault) / "index.md", text)
     return "atomic"
 
@@ -664,7 +722,25 @@ def cmd_gen_home(args: argparse.Namespace) -> None:
     index_file = config.wiki_root(vault) / "index.md"
     existing = index_file.read_text(encoding="utf-8") if index_file.exists() else None
     text = home.merge(existing, vault, cards)
-    write_via = _write_index(vault, text, use_rest=not args.no_rest)
+    try:
+        write_via = _write_index(
+            vault, text, use_rest=not args.no_rest, expected_content=existing
+        )
+    except obsidian_api.VaultIdentitySetupRequiredError as exc:
+        fail(
+            {
+                "error": exc.code,
+                "env": exc.environment,
+                "marker_file": exc.marker_file,
+                "hint": "set the two generated environment variables, then retry; the marker is create-only",
+            },
+            1,
+        )
+    except obsidian_api.WriteSafetyError as exc:
+        hint = "install a REST plugin with document-map version and conditional root PATCH support, or use --no-rest"
+        if exc.code != "obsidian_conditional_write_unsupported":
+            hint = "refresh the vault target and retry"
+        fail({"error": exc.code, "hint": hint}, 1)
     emit({"ok": True, "path": "wiki/index.md", "cards": cards, "write_via": write_via})
 
 

@@ -10,7 +10,7 @@ browsing** of your own notes; Obsidian remains the primary interface.
 ## Requirements
 
 - Optional `markdown` package (pinned for determinism)
-- Degrades gracefully: if `markdown` is absent, the body is exported as HTML-escaped plaintext (TOC and wikilink resolution are skipped); page chrome still renders
+- Degrades gracefully: if `markdown` is absent, the body is exported as HTML-escaped plaintext (TOC and link resolution are skipped); page chrome still renders
 
 ## Themes
 
@@ -18,9 +18,9 @@ Three palettes via a `data-theme` attribute — `shan-shui` (宣纸 light, defau
 
 ## Page Anatomy
 
-**Topic page**: responsive three-zone layout with semantic landmarks — `<nav>` 文献目录 (heading-derived table of contents with scroll-spy) / `<main><article>` 知识舆图 / `<aside>` 批注札记 (frontmatter infobox: Title, Type chip, Quality-tier badge, Featured ⭐, Backlinks, Sources, Authors, Year, Keywords). Skip-to-content link, visible focus rings, ≥44px targets; collapses to a single column with no horizontal scroll on narrow viewports. `[[wikilinks]]` resolve to internal pages (exact key → `Target.md` → alias; inert text when absent) and stay literal inside code; code/tables/blockquotes are styled within the design tokens.
+**Topic/report page**: responsive three-zone layout with semantic landmarks — `<nav>` 文献目录 (heading-derived table of contents with scroll-spy) / `<main><article>` 知识舆图 / `<aside>` 资料信息 (frontmatter identity, review status, and source links). A clear return-to-index link and compact provenance block appear before the body. Skip-to-content link, visible focus rings, ≥44px targets; the main reading column remains primary until a measured wide-screen breakpoint. `[[wikilinks]]`, standard Markdown internal links, heading fragments, and local image embeds use the shared resolver; links stay literal inside code and ambiguous targets are inert with a reason. Code/tables/blockquotes/footnotes are styled within the design tokens.
 
-**Index (`index.html`)**: header band + 精选 (featured) section + per-`type` card sections (empty type → "未分类"), with inline client-side search/filter. The complete topic list is server-rendered and navigable with JavaScript disabled (progressive enhancement).
+**Index (`index.html`)**: header band + 精选 (featured) section + per-`type` card sections (empty type → "未分类"), with inline client-side search/filter over title, authors, years, aliases/keywords, summary, and literature identifiers. Topics and captured reports are server-rendered and navigable with JavaScript disabled (progressive enhancement).
 
 ## Determinism & Safety
 
@@ -29,4 +29,5 @@ Three palettes via a `data-theme` attribute — `shan-shui` (宣纸 light, defau
 - Clean topic-named filenames: `sanitize(stem).html` with no hash suffix (CJK preserved); collisions are disambiguated with numeric suffixes (`-2`, `-3`, …) in NFC key order
 - Automatic pruning: each `gen-site` run removes orphaned HTML files (from renamed/deleted topics or old naming schemes), keeping only current output
 - Atomic writes, **write-only under `wiki/site/`** — never modifies sources, topics, `.base`, or `.canvas`; `index.html` is written last so `site_stale` stays correct
+- Markdown output is passed through a small HTML element/attribute allowlist; only relative, `http`, `https`, and `mailto` URLs survive. Imported note HTML is rendered as data, not executable markup; degraded mode remains fully escaped.
 - Topics that fail to decode/parse are skipped and reported in the result's `errors` list

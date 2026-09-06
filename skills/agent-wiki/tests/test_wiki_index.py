@@ -23,7 +23,7 @@ def _init(vault: Path) -> None:
 
 def test_empty_schema_shape():
     assert wiki_index.empty_schema() == {
-        "version": 1,
+        "version": wiki_index.INDEX_VERSION,
         "generated_at": "1970-01-01T00:00:00Z",
         "topics": {},
         "queries": {},
@@ -145,7 +145,7 @@ def test_rebuild_is_byte_identical(tmp_path):
     second = wiki_index.serialize(wiki_index.rebuild(tmp_path)[0])
     assert first == second
     assert first.endswith("\n")
-    assert json.loads(first)["version"] == 1
+    assert json.loads(first)["version"] == wiki_index.INDEX_VERSION
 
 
 # --- 1.4 atomic write -------------------------------------------------------

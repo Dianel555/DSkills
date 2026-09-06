@@ -18,13 +18,57 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from . import config, frontmatter, quality, source_type
+from . import config, frontmatter, links, quality, source_type
 
-INDEX_VERSION = 1
+INDEX_VERSION = 2
 EPOCH = "1970-01-01T00:00:00Z"
 _SUMMARY_LIMIT = 1000
 _YEAR_RE = re.compile(r"\d{4}")
-_WIKILINK_RE = re.compile(r"!?\[\[(.+?)\]\]")
+_COMMON_ENTRY_FIELDS = frozenset({
+    "path", "title", "sources", "last_updated", "year_start", "year_end", "authors",
+    "source_type", "institutions", "methods", "technical_routes", "research_trends", "summary",
+    "keywords", "kind", "links", "link_records", "mtime_ns", "citekey", "doi", "library_id",
+    "review_status", "reviewed_at",
+})
+_TOPIC_ENTRY_FIELDS = frozenset({"type", "aliases", "quality_tier", "featured", "backlinks"})
+_STRING_ENTRY_FIELDS = frozenset({
+    "path", "title", "last_updated", "source_type", "summary", "kind", "citekey", "doi", "library_id",
+    "review_status", "reviewed_at",
+})
+_STRING_LIST_ENTRY_FIELDS = frozenset({
+    "sources", "authors", "institutions", "methods", "technical_routes", "research_trends", "keywords", "links",
+})
+
+
+def _cache_entry_is_current(entry: object, kind: str) -> bool:
+    if not isinstance(entry, dict) or entry.get("kind") != kind:
+        return False
+    required = _COMMON_ENTRY_FIELDS | (_TOPIC_ENTRY_FIELDS if kind == "topic" else frozenset())
+    if not required.issubset(entry):
+        return False
+    if not all(isinstance(entry[field], str) for field in _STRING_ENTRY_FIELDS):
+        return False
+    if not all(
+        isinstance(entry[field], list) and all(isinstance(item, str) for item in entry[field])
+        for field in _STRING_LIST_ENTRY_FIELDS
+    ):
+        return False
+    if not isinstance(entry["link_records"], list) or not all(isinstance(item, dict) for item in entry["link_records"]):
+        return False
+    if type(entry["mtime_ns"]) is not int:
+        return False
+    if any(entry[field] is not None and type(entry[field]) is not int for field in ("year_start", "year_end")):
+        return False
+    if kind != "topic":
+        return True
+    return (
+        isinstance(entry["type"], str)
+        and isinstance(entry["aliases"], list)
+        and all(isinstance(item, str) for item in entry["aliases"])
+        and isinstance(entry["quality_tier"], str)
+        and type(entry["featured"]) is bool
+        and type(entry["backlinks"]) is int
+    )
 
 
 class NormalizedPathCollisionError(Exception):
@@ -100,22 +144,20 @@ def _summary(value: Any) -> str:
 
 
 def _parse_links(body: str) -> list[str]:
-    """`[[Target]]`/`![[Target]]` targets from a page body, alias and
-    heading/block suffixes stripped, NFC-normalized, order-preserved, deduped."""
-    links: list[str] = []
-    seen: set[str] = set()
-    for match in _WIKILINK_RE.finditer(body):
-        target = match.group(1)
-        for sep in ("|", "#", "^"):
-            target = target.split(sep, 1)[0]
-        target = _nfc(target.strip())
-        if target and target not in seen:
-            seen.add(target)
-            links.append(target)
-    return links
+    """Return compatibility targets from the shared Obsidian/Markdown parser."""
+    return links.unique_targets(links.parse(body))
 
 
-def _entry(rel: str, meta: dict[str, Any], stem: str, kind: str, links: list[str], body: str = "", mtime_ns: int = 0) -> dict[str, Any]:
+def _entry(
+    rel: str,
+    meta: dict[str, Any],
+    stem: str,
+    kind: str,
+    links: list[str],
+    body: str = "",
+    mtime_ns: int = 0,
+    link_records: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Build an index entry. Topic entries include extended fields; query entries preserve their current schema."""
     sources = _sources(meta.get("sources"))
     entry: dict[str, Any] = {
@@ -135,6 +177,7 @@ def _entry(rel: str, meta: dict[str, Any], stem: str, kind: str, links: list[str
         "keywords": _str_list(meta.get("keywords")),
         "kind": kind,
         "links": links,
+        "link_records": link_records or [],
         "mtime_ns": mtime_ns,
     }
 
@@ -161,6 +204,10 @@ def _entry(rel: str, meta: dict[str, Any], stem: str, kind: str, links: list[str
 
         # backlinks: initialized to 0, computed later in rebuild
         entry["backlinks"] = 0
+
+    # Academic metadata is optional; empty strings keep the JSON shape stable.
+    for field in ("citekey", "doi", "library_id", "review_status", "reviewed_at"):
+        entry[field] = _str_field(meta.get(field))
 
     return entry
 
@@ -189,7 +236,10 @@ def _parse_doc(job: tuple[str, Path, str]) -> tuple[str, int, dict[str, Any] | N
         meta, body = frontmatter.parse(text)
     except frontmatter.FrontmatterError:
         return rel, mtime_ns, None, {"path": rel, "error": "frontmatter_parse_failed"}
-    return rel, mtime_ns, _entry(rel, meta, path.stem, kind, _parse_links(body), body, mtime_ns), None
+    refs = links.parse(body)
+    return rel, mtime_ns, _entry(
+        rel, meta, path.stem, kind, links.unique_targets(refs), body, mtime_ns, links.serialize(refs)
+    ), None
 
 
 def _index_dir(
@@ -225,7 +275,12 @@ def _index_dir(
             errors.append({"path": rel, "error": "topic_decode_failed"})
             continue
         cached = existing_index.get(rel) if existing_index else None
-        if isinstance(cached, dict) and cached.get("mtime_ns") == mtime_ns:
+        if (
+            isinstance(cached, dict)
+            and _cache_entry_is_current(cached, kind)
+            and cached.get("path") == rel
+            and cached.get("mtime_ns") == mtime_ns
+        ):
             entries[rel] = cached
             mtimes.append(mtime_ns)
         else:
@@ -269,7 +324,7 @@ def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict[str, 
                 existing_data = json.loads(index_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError, UnicodeDecodeError):
                 existing_data = None
-            if isinstance(existing_data, dict):
+            if isinstance(existing_data, dict) and existing_data.get("version") == INDEX_VERSION:
                 topics_field = existing_data.get("topics", {})
                 queries_field = existing_data.get("queries", {})
                 if isinstance(topics_field, dict):
@@ -343,26 +398,17 @@ def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict[str, 
         elif len(valid_targets) == 1:
             alias_index[alias_nfc] = valid_targets[0]
 
-    # Compute backlinks (inbound link count per topic)
+    # Compute backlinks (inbound link count per topic) using the same resolver
+    # as worklist, Canvas, and the HTML export.
     backlinks: dict[str, set[str]] = {key: set() for key in topic_keys}
-
-    # Helper: extract stem from wikilink target (strip #heading and |alias)
-    def _link_stem(link: str) -> str:
-        link = link.split("#")[0]  # Strip heading
-        link = link.split("|")[0]  # Strip alias
-        return link.strip()
-
-    # Collect all linkers (topics, queries)
     all_entries = list(topics.items()) + list(queries.items())
+    query_keys = set(queries)
 
     for source_key, source_entry in all_entries:
-        for link in source_entry.get("links", []):
-            target_stem = _link_stem(link)
-            # Resolve to topic key (add .md if needed)
-            target_key = target_stem + ".md" if not target_stem.endswith(".md") else target_stem
-
-            # Only count if target exists and is not self-link
-            if target_key in topic_keys and target_key != source_key.split("/")[-1]:
+        for ref in links.from_entry(source_entry):
+            resolution = links.resolve(ref.target, topic_keys, query_keys, alias_index)
+            target_key = resolution.key
+            if resolution.status == "resolved" and target_key in topic_keys and target_key != source_key:
                 backlinks[target_key].add(source_key)
 
     # Update topic entries with backlink counts

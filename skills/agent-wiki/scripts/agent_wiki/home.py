@@ -141,6 +141,7 @@ def render_skeleton(vault: str | Path, cards: bool) -> str:
     rows = _topic_rows(vault)
     total = sum(count for _, count in rows)
     blocks = [
+        "---\ncssclasses:\n  - agent-wiki-home\n---",
         "# Wiki Index",
         f"> 文献阅读记录知识库 · {len(rows)} 个主题 · 来源合计 {total}（含跨主题重复）。{PLACEHOLDER}：概述可由 agent 补充。",
         "## 🧭 动态视图（Bases）",

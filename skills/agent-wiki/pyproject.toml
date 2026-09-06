@@ -49,6 +49,7 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 package-dir = {"" = "scripts"}
 packages = ["agent_wiki"]
+py-modules = ["agent_wiki_cli"]
 
 [tool.ruff]
 line-length = 120
