@@ -31,6 +31,7 @@ from . import (
     doctor,
     frontmatter,
     home,
+    keywords,
     obsidian_api,
     plugins,
     quality,
@@ -723,6 +724,18 @@ def cmd_gen_home(args: argparse.Namespace) -> None:
     index_file = config.wiki_root(vault) / "index.md"
     existing = index_file.read_text(encoding="utf-8") if index_file.exists() else None
     text = home.merge(existing, vault, cards)
+    if getattr(args, "emit_only", False):
+        # No write: the agent holds an MCP channel this subprocess cannot reach,
+        # so it performs the conditional write itself from this payload.
+        emit({
+            "ok": True,
+            "path": "wiki/index.md",
+            "cards": cards,
+            "write_via": "none",
+            "obsidian_path": _obsidian_index_relpath(vault),
+            "content": text,
+        })
+        return
     try:
         write_via = _write_index(
             vault, text, use_rest=not args.no_rest, expected_content=existing
@@ -792,6 +805,19 @@ def cmd_coverage(args: argparse.Namespace) -> None:
 
     try:
         result = coverage.compute_coverage(vault)
+    except ValueError as exc:
+        fail({"error": str(exc)}, 1)
+
+    emit(result)
+
+
+def cmd_keywords(args: argparse.Namespace) -> None:
+    vault = _vault(args)
+    if not config.wiki_root(vault).exists():
+        fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
+
+    try:
+        result = keywords.compute_keywords(vault)
     except ValueError as exc:
         fail({"error": str(exc)}, 1)
 

@@ -19,6 +19,7 @@ are regenerated from it and are never written back into topic files. The Obsidia
   (≤1000 chars), `keywords[]`, `kind` (`topic`), `links[]` (parsed from body),
   `mtime_ns` (int, source file mtime — drives `--incremental` reuse on rebuild), `link_records[]` (target, label, fragment, embed, syntax from the shared parser), and optional academic identity fields `citekey`, `doi`, `library_id`, `review_status`, `reviewed_at`, plus **extended fields**:
   - `type` (string, default `""`) — page kind from frontmatter (orthogonal to derived `source_type`)
+  - `topic_category` (string, default `""`) — Agent-assigned subject category (e.g. 材料 / 器件 / 方法 …), derived from keyword inventory; drives static-site grouping, falling back to `type` when absent
   - `aliases` (array, default `[]`) — order-preserved alternative names from frontmatter
   - `quality_tier` (string enum) — derived tier (`stub`/`basic`/`standard`/`rich`/`premium`)
   - `featured` (boolean, default `false`) — emphasis flag (strict boolean coercion)
@@ -45,7 +46,8 @@ Agent-authored, and normalized into `wiki/.wiki-index.json` (omit any the source
 ```yaml
 ---
 title: 量子叠加原理
-type: concept                 # optional page kind (concept/method/paper/person/event/place/overview)
+type: concept                 # optional page kind (concept/method/paper/person/event/place/overview/material/device/application/review)
+topic_category: 量子力学      # optional subject category (Agent-assigned; drives site grouping, falls back to `type` when absent)
 aliases: ["叠加原理", "态叠加"]  # optional alternative names
 featured: true                # optional emphasis flag (strict boolean)
 sources:

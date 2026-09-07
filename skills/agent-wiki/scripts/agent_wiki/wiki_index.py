@@ -30,7 +30,9 @@ _COMMON_ENTRY_FIELDS = frozenset({
     "keywords", "kind", "links", "link_records", "mtime_ns", "citekey", "doi", "library_id",
     "review_status", "reviewed_at",
 })
-_TOPIC_ENTRY_FIELDS = frozenset({"type", "aliases", "quality_tier", "featured", "backlinks"})
+_TOPIC_ENTRY_FIELDS = frozenset({
+    "type", "topic_category", "aliases", "quality_tier", "featured", "backlinks",
+})
 _STRING_ENTRY_FIELDS = frozenset({
     "path", "title", "last_updated", "source_type", "summary", "kind", "citekey", "doi", "library_id",
     "review_status", "reviewed_at",
@@ -63,6 +65,7 @@ def _cache_entry_is_current(entry: object, kind: str) -> bool:
         return True
     return (
         isinstance(entry["type"], str)
+        and isinstance(entry["topic_category"], str)
         and isinstance(entry["aliases"], list)
         and all(isinstance(item, str) for item in entry["aliases"])
         and isinstance(entry["quality_tier"], str)
@@ -189,6 +192,10 @@ def _entry(
             entry["type"] = _nfc(type_value)
         else:
             entry["type"] = ""
+
+        # Agent-assigned subject category (orthogonal to the `type` genre);
+        # drives static-site grouping, falling back to `type` when absent.
+        entry["topic_category"] = _str_field(meta.get("topic_category"))
 
         # aliases: order-preserved list (not deduplicated)
         entry["aliases"] = _str_list(meta.get("aliases"))

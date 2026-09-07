@@ -67,6 +67,8 @@ properties:
     displayName: 来源类型
   featured:
     displayName: 精选
+  topic_category:
+    displayName: 主题
 views:
   - type: table
     name: 主题总览
@@ -91,6 +93,12 @@ views:
     name: 按作者
     order:
       - authors
+      - file.basename
+      - source_type
+  - type: table
+    name: 按主题
+    order:
+      - topic_category
       - file.basename
       - source_type
   - type: table

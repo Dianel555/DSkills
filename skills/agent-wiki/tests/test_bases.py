@@ -38,7 +38,7 @@ def test_index_base_is_valid_yaml_and_scoped():
     assert data["filters"]["and"][0] == 'file.inFolder("文献阅读记录/wiki/topics")'
     assert data["formulas"]["source_count"]
     names = [v["name"] for v in data["views"]]
-    assert names == ["主题总览", "精选", "按作者", "按机构", "按方法", "按来源类型", "按年份", "卡片视图"]
+    assert names == ["主题总览", "精选", "按作者", "按主题", "按机构", "按方法", "按来源类型", "按年份", "卡片视图"]
 
 
 def test_index_base_per_dimension_views_surface_frontmatter_columns():

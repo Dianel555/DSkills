@@ -599,10 +599,11 @@ def _card(key: str, entry: dict[str, Any], type_accent: dict[str, str], slug_map
     tier = str(entry.get("quality_tier", ""))
     summary = str(entry.get("summary", ""))
     keywords = [str(value) for value in (entry.get("keywords") or [])]
+    category = str(entry.get("topic_category", ""))
     authors = [str(value) for value in (entry.get("authors") or [])]
     aliases = [str(value) for value in (entry.get("aliases") or [])]
     years = [str(value) for value in (entry.get("year_start"), entry.get("year_end")) if value]
-    searchable = [title, *keywords, *authors, *aliases, *years, summary, str(entry.get("citekey", "")), str(entry.get("doi", ""))]
+    searchable = [title, category, *keywords, *authors, *aliases, *years, summary, str(entry.get("citekey", "")), str(entry.get("doi", ""))]
     search_payload = _esc(" ".join(searchable).lower())
     meta = ""
     if type_str:
@@ -666,6 +667,15 @@ def _article_page(title: str, generated_at: str, toc_html: str, body_html: str, 
 </html>"""
 
 
+def _group_key(entry: dict[str, Any]) -> str:
+    """Index section key: agent-assigned subject, else page genre, else kind."""
+    return _nfc(str(
+        entry.get("topic_category", "")
+        or entry.get("type", "")
+        or ("query" if entry.get("kind") == "query" else "")
+    ))
+
+
 def _section(label: str, accent_token: str, cards_html: str, kind: str, extra: str = "") -> str:
     dot = f'<span class="type-dot" style="--dot:var({accent_token})"></span>'
     return (f'<section class="{kind}"{extra}>'
@@ -693,8 +703,7 @@ def _index_page(data: dict[str, Any], type_accent: dict[str, str], generated_at:
 
     groups: dict[str, list[tuple[str, Any]]] = {}
     for k, e in items:
-        group = _nfc(str(e.get("type", "") or ("query" if e.get("kind") == "query" else "")))
-        groups.setdefault(group, []).append((k, e))
+        groups.setdefault(_group_key(e), []).append((k, e))
     for t in sorted(x for x in groups if x):
         cards = "".join(_card(k, e, type_accent, slug_map) for k, e in sorted(groups[t], key=by_title))
         sections.append(_section(t, type_accent.get(t, "--faint"), cards, "type-section"))
@@ -768,14 +777,16 @@ def generate_site(vault: str | Path) -> dict[str, Any]:
     # Build one slug map for topics and captured reports.
     slug_map = _build_slug_map(list(page_keys))
 
-    # Deterministic per-type accent assignment.
+    # Deterministic accent assignment covering both the section key (subject,
+    # else genre, else kind) and the bare genre/kind so the Type chip keeps its
+    # color even when a topic carries both `topic_category` and `type`.
     all_entries = list(topics.values()) + list(queries.values())
-    nonempty_types = sorted({
-        _nfc(str(e.get("type", "") or ("query" if e.get("kind") == "query" else "")))
-        for e in all_entries
-        if e.get("type") or e.get("kind") == "query"
+    accent_keys = sorted({
+        v for e in all_entries
+        for v in (_group_key(e), _nfc(str(e.get("type", "") or ("query" if e.get("kind") == "query" else ""))))
+        if v
     })
-    type_accent = {t: _TYPE_ACCENTS[i % len(_TYPE_ACCENTS)] for i, t in enumerate(nonempty_types)}
+    type_accent = {t: _TYPE_ACCENTS[i % len(_TYPE_ACCENTS)] for i, t in enumerate(accent_keys)}
 
     site_dir = wiki_root / "site"
     site_dir.mkdir(parents=True, exist_ok=True)
