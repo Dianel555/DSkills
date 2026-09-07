@@ -106,8 +106,11 @@ def build_parser() -> argparse.ArgumentParser:
     gen_home = sub.add_parser("gen-home")
     gen_home.add_argument("--cards", choices=["auto", "on", "off"], default="auto",
                           help="Workspace cards: auto-detect Dataview (default), force dataviewjs (on), or static list (off)")
-    gen_home.add_argument("--no-rest", action="store_true",
-                          help="Always write index.md directly (skip the Obsidian Local REST API)")
+    write_mode = gen_home.add_mutually_exclusive_group()
+    write_mode.add_argument("--no-rest", action="store_true",
+                            help="Always write index.md directly (skip the Obsidian Local REST API)")
+    write_mode.add_argument("--emit-only", action="store_true",
+                            help="Render index.md to stdout without writing, for an MCP-side conditional write")
     add_vault(gen_home)
     gen_home.set_defaults(func=commands.cmd_gen_home)
 
@@ -118,6 +121,10 @@ def build_parser() -> argparse.ArgumentParser:
     coverage = sub.add_parser("coverage")
     add_vault(coverage)
     coverage.set_defaults(func=commands.cmd_coverage)
+
+    keywords_cmd = sub.add_parser("keywords")
+    add_vault(keywords_cmd)
+    keywords_cmd.set_defaults(func=commands.cmd_keywords)
 
     worklist = sub.add_parser("worklist")
     add_vault(worklist)

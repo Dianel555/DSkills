@@ -72,6 +72,9 @@ python scripts/agent_wiki_cli.py gen-canvas --all --vault /path/to/vault
 # Build/refresh the wiki/index.md skeleton + its managed "工作区" card block
 python scripts/agent_wiki_cli.py gen-home --vault /path/to/vault
 
+# Render index.md without writing it, so an MCP-side conditional write can apply it
+python scripts/agent_wiki_cli.py gen-home --emit-only --vault /path/to/vault
+
 # Extract raw 作者 rows from each topic's source notes (read-only)
 python scripts/agent_wiki_cli.py extract-authors --vault /path/to/vault
 
@@ -83,6 +86,9 @@ python scripts/agent_wiki_cli.py quality --vault /path/to/vault
 
 # Identify covered sources vs gaps (read-only)
 python scripts/agent_wiki_cli.py coverage --vault /path/to/vault
+
+# Inventory keywords across topics to derive subject categories (read-only)
+python scripts/agent_wiki_cli.py keywords --vault /path/to/vault
 
 # Get maintenance worklists: wanted (broken links) and stale topics (read-only)
 python scripts/agent_wiki_cli.py worklist --vault /path/to/vault
@@ -111,11 +117,12 @@ python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
 | `gen-base` | Rebuild the index, then write Obsidian Bases views (index + master table) | vault path, `--name` | `{"ok": true, "prefix": "...", "written": [...]}` |
 | `save-report` | Register an Agent-authored research report under `wiki/queries/`, ensure `kind: query`, log it | name, vault path | `{"ok": true, "path": "queries/<name>.md", "kind": "query"}` |
 | `gen-canvas` | Generate per-topic JSON Canvas 1.0 graph(s) under `wiki/graphs/` from the index (topic center + `sources[]` ring + 1-hop neighbor topics) | vault path, `--topic <name>` or `--all` | `{"ok": true, "path": "wiki/graphs/<name>.canvas", "nodes": N, "edges": M}` or `{"ok": true, "written": [...], "count": K}` |
-| `gen-home` | Build/refresh the `wiki/index.md` skeleton + one managed "工作区" block (Dataview card grid when detected, else static list); refreshes **only** the managed block on re-run (agent prose preserved); never touches `index.base` | vault path, `--cards auto\|on\|off` (default auto), `--no-rest` | `{"ok": true, "path": "wiki/index.md", "cards": bool, "write_via": "rest\|atomic"}` |
+| `gen-home` | Build/refresh the `wiki/index.md` skeleton + one managed "工作区" block (Dataview card grid when detected, else static list); refreshes **only** the managed block on re-run (agent prose preserved); never touches `index.base`. `--emit-only` renders the content to stdout **without writing**, so the Agent can perform the write over MCP (mutually exclusive with `--no-rest`) | vault path, `--cards auto\|on\|off` (default auto), `--no-rest`, `--emit-only` | `{"ok": true, "path": "wiki/index.md", "cards": bool, "write_via": "rest\|atomic"}`; with `--emit-only`: `{"ok": true, ..., "write_via": "none", "obsidian_path": "...", "content": "..."}` |
 | `extract-authors` | Raw 作者 row per topic source note (read-only) | vault path | `{"ok": true, "topics": {"<topic>.md": [{"src": "...", "file": "...", "authors": "..."}]}}` |
 | `aggregate-authors` | Deduplicated first author per topic for frontmatter backfill (read-only) | vault path | `{"ok": true, "authors": {"<topic>.md": ["作者1", ...]}}` |
 | `quality` | Compute quality tier distribution and metrics per topic (read-only) | vault path | `{"ok": true, "tiers": {"<topic>.md": {"tier": "...", "metrics": {...}}}, "distribution": {"stub": N, ...}, "errors": [...]}` |
 | `coverage` | Identify covered sources vs gaps (read-only) | vault path | `{"ok": true, "covered": N, "gaps": [{"path": "..."}], "coverage_ratio": 0.0-1.0}` |
+| `keywords` | Inventory keywords across topics, frequency-descending, plus uncategorized topic keys — the input for the Agent to derive subject categories (read-only) | vault path | `{"ok": true, "keywords": [{"keyword": "...", "count": N, "topics": [...]}], "uncategorized": [...]}` |
 | `worklist` | Get maintenance worklists: `wanted` (missing dedicated pages), `unresolved` (ambiguous targets), `review` (source-changed topics/reports), and `stale` (low-quality/index-stale topics) (read-only) | vault path | `{"ok": true, "wanted": [{"target": "...", "inbound": N, "linked_from": [...]}], "unresolved": [{"target": "...", "candidates": [...], "linked_from": [...]}], "review": [{"path": "...", "kind": "topic"\|"query", "reason": "source_changed"}], "stale": [{"path": "...", "tier": "...", "reason": "low_tier"\|"source_changed"\|"index_stale", "reasons": [...]}]}` |
 | `gen-site` | Generate self-contained static HTML site under `wiki/site/` (optional; requires `markdown` package; degrades gracefully to escaped plaintext if absent) | vault path | `{"ok": true, "pages": N, "out": "wiki/site", "degraded": bool, "errors": [...]}` |
 | `completion` | Print a bash/zsh completion script for the CLI | `--shell bash|zsh` | script on stdout |
@@ -269,7 +276,7 @@ For paper-like sources, populate the common frontmatter fields and write concise
 
 **Every topic body MUST open with a single positioning sentence** (定位句) before the first `##` heading — plain paragraph, no heading/list/quote.
 
-The optional frontmatter `type` field (concept/method/paper/person/event/place/overview) selects a recommended section structure — taxonomy, per-type section templates, and the conflict-recording convention: see `references/topic-authoring.md`.
+The optional frontmatter `type` field (concept/method/paper/person/event/place/overview/material/device/application/review) selects a recommended section structure — taxonomy, per-type section templates, and the conflict-recording convention: see `references/topic-authoring.md`. Subject clustering (材料 / 器件 / 方法 …) is carried by `topic_category`, not `type`.
 
 ### URL Fetching Rules
 
@@ -288,8 +295,18 @@ The optional frontmatter `type` field (concept/method/paper/person/event/place/o
 - **URL fetching**: `defuddle parse <url> --md` (replaces WebFetch for token efficiency)
 - **CLI discovery**: check `obsidian help` and `obsidian version` first. Typical read-only operations are `vault="<name>" vault info=path`, `search:context`, `backlinks`, `unresolved`, and `base:query`; use each command's documented output format, an argument array, and a timeout. The CLI is optional and never replaces file-first operation.
 - **Frontmatter updates**: prefer `obsidian property:set name="..." value="..." file="..."` for an explicit target; fall back to direct YAML rewrite
-- **Homepage REST write-through**: because the API exposes only paths relative to the registered Obsidian root, `gen-home` first verifies an explicit marker for that root, then checks the scope-prefixed target/current content and uses a document-map version with conditional root `PATCH` (`ifMatch`). A configured `--vault` child scope is intentional; its prefix is added automatically, allowing multiple independent `wiki/` trees in one Obsidian vault. If marker env is missing, the first run creates a unique non-hidden marker under the selected scope's `wiki/`, prints the two root-relative env values, and stops; set them and retry. Unknown targets, conflicts, unsupported plugin capabilities, or uncertain write results stop instead of silently overwriting via disk. `--no-rest` remains the explicit file-first path; see `references/homepage.md`.
+- **Homepage write-through (MCP → REST → file)**: `wiki/index.md` is the one wiki file users keep open in an editor tab, so it is written through the most conflict-safe channel available. Follow the **Homepage Write Decision Chain** below — MCP first, REST second, atomic file write last. The REST tier: because the API exposes only paths relative to the registered Obsidian root, `gen-home` first verifies an explicit marker for that root, then checks the scope-prefixed target/current content and uses a document-map version with conditional root `PATCH` (`ifMatch`). A configured `--vault` child scope is intentional; its prefix is added automatically, allowing multiple independent `wiki/` trees in one Obsidian vault. If marker env is missing, the first run creates a unique non-hidden marker under the selected scope's `wiki/`, prints the two root-relative env values, and stops; set them and retry. Unknown targets, conflicts, unsupported plugin capabilities, or uncertain write results stop instead of silently overwriting via disk. `--no-rest` remains the explicit file-first path; see `references/homepage.md`.
 - **Dynamic index (Bases)**: run `gen-base` to write the two `.base` views deterministically; embed via `![[index.base#主题总览]]`. View columns, faceting, and fallback: see `references/index-schema.md`
+
+### Homepage Write Decision Chain
+
+`wiki/index.md` is written through the most conflict-safe channel available, always falling back rather than guessing:
+
+1. **MCP** (preferred): if an Obsidian MCP server is connected, probe the target with `vault_get_document_map` to capture its `version`, render the content with `gen-home --emit-only`, then apply it with `vault_patch` (`targetType: heading`, `target: null`, `operation: replace`, `ifMatch: <version>`). This matches the REST tier's conditional-write semantics, so an open editor tab is never blindly replaced. `--emit-only` returns `write_via: "none"` and never touches disk or the REST API.
+2. **REST API**: if MCP is absent or unreachable, run `gen-home` with the Obsidian Local REST API configured via env (document-map version + conditional root `PATCH`). See `references/homepage.md`.
+3. **Atomic file write**: if neither MCP nor REST is available, run `gen-home --no-rest` to write the file directly.
+
+Never do two tiers for the same write — pick the first available and stop. `write_via` reports which tier ran (`none` / `rest` / `atomic`).
 
 ## Wiki Structure
 

@@ -17,6 +17,12 @@ The optional frontmatter `type` field describes the page kind and is **orthogona
 - `event` — conferences, experiments, historical events
 - `place` — institutions, labs, geographical locations
 - `overview` — surveys, meta-analyses, literature reviews
+- `material` — materials as the object of study (gels, cellulose, polymers, composites, alloys, …) — their synthesis, structure, and properties, across many applications
+- `device` — devices/systems as the object of study (sensors, actuators, e-skin, batteries, robots, …)
+- `application` — an application domain or use case (healthcare, robotics, energy, construction, …)
+- `review` — a survey/roadmap of one technology or field (narrower than `overview`, which sweeps a literature landscape)
+
+> `type` is the page **genre**; the orthogonal subject clustering (材料 / 器件 / 方法 …) belongs in `topic_category`. See `index-schema.md`.
 
 ## Lead Sentence Rule (定位句)
 
