@@ -11,10 +11,27 @@ import re
 import unicodedata
 from typing import Any
 
+from .config import nfc as _nfc
 
-def _nfc(text: str) -> str:
-    """Normalize to NFC Unicode form."""
-    return unicodedata.normalize("NFC", text)
+_LIST_RE = re.compile(r"^(?:[-*+]|\d+[.)\]])\s")
+
+
+def _is_markdown_image_only(stripped: str) -> bool:
+    """``![alt](url)`` with nothing but punctuation after the closing paren."""
+    if not (stripped.startswith("![") and ")" in stripped):
+        return False
+    _, _, tail = stripped.partition(")")
+    return not any(c.isalnum() for c in tail)
+
+
+def _is_non_prose(stripped: str) -> bool:
+    """Heading, list, quote, table, comment, or embed-only line."""
+    return (
+        stripped.startswith(("#", ">", "|", "<!--"))
+        or bool(_LIST_RE.match(stripped))
+        or (stripped.startswith("![[") and stripped.endswith("]]"))
+        or _is_markdown_image_only(stripped)
+    )
 
 
 def _count_cjk_and_latin(text: str) -> tuple[int, int]:
@@ -146,17 +163,7 @@ def compute_metrics(body: str) -> dict[str, Any]:
                 has_image = True
 
         # Count prose characters and compute prose_weight
-        # Exclude: headings, lists, quotes, tables, comments, embed-only lines
-        if not (
-            stripped.startswith("#") or
-            re.match(r"^[-*+]\s", stripped) or
-            re.match(r"^\d+[.)\]]\s", stripped) or
-            stripped.startswith(">") or
-            stripped.startswith("|") or
-            stripped.startswith("<!--") or
-            (stripped.startswith("![[") and stripped.endswith("]]")) or
-            (stripped.startswith("![") and ")" in stripped and not any(c.isalnum() for c in stripped.split(")", 1)[1] if len(stripped.split(")", 1)) > 1))
-        ):
+        if not _is_non_prose(stripped):
             prose_chars += len(_nfc(stripped))
             cjk, latin = _count_cjk_and_latin(stripped)
             cjk_total += cjk
@@ -176,7 +183,7 @@ def compute_metrics(body: str) -> dict[str, Any]:
     }
 
 
-def compute_tier(body: str, source_count: int = 0) -> str:
+def compute_tier(body: str, source_count: int = 0, *, metrics: dict[str, Any] | None = None) -> str:
     """Assign quality tier based on metrics and source grounding.
 
     Uses effective_prose = prose_weight + 500*source_count for tier gates.
@@ -190,10 +197,12 @@ def compute_tier(body: str, source_count: int = 0) -> str:
     Args:
         body: Topic body markdown
         source_count: Number of deduplicated sources (default 0)
+        metrics: Precomputed ``compute_metrics(body)`` to avoid a second pass
 
     Returns tier string.
     """
-    metrics = compute_metrics(body)
+    if metrics is None:
+        metrics = compute_metrics(body)
 
     sections = metrics["sections"]
     prose_weight = metrics["prose_weight"]

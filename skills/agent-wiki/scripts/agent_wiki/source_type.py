@@ -9,11 +9,11 @@ that ``normalize-source-type`` rewrites in place.
 
 from __future__ import annotations
 
-import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from . import config, frontmatter
+from .config import nfc as _nfc
 
 _EXTENSION_TYPES = {
     ".md": "markdown",
@@ -31,10 +31,6 @@ _EXTENSION_TYPES = {
     ".pptx": "slides",
     ".txt": "text",
 }
-
-
-def _nfc(value: Any) -> str:
-    return unicodedata.normalize("NFC", str(value))
 
 
 def classify_ref(ref: str) -> str:
@@ -89,6 +85,6 @@ def backfill(vault: str | Path) -> dict[str, Any]:
         text = frontmatter.dump(meta, body)
         if has_bom:
             text = "﻿" + text
-        path.write_bytes(text.encode("utf-8"))
+        config.atomic_write_text(path, text.encode("utf-8"))
         changed.append({"path": rel, "source_type": derived})
     return {"changed": changed, "skipped": skipped, "errors": errors}

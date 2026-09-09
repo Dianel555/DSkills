@@ -17,14 +17,12 @@ sizes and integer coords; ``text`` nodes add ``text``, ``file`` nodes add
 
 from __future__ import annotations
 
-import contextlib
 import json
 import math
-import os
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from . import links
+from . import config, links
 
 # Node box geometry (positive-int width/height, integer coords).
 CENTER_WIDTH = 480
@@ -198,12 +196,8 @@ def serialize(canvas: dict[str, Any]) -> str:
 
 
 def write_canvas(path: Path, canvas: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
     try:
-        tmp.write_text(serialize(canvas), encoding="utf-8")
-        os.replace(tmp, path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        config.atomic_write_text(path, serialize(canvas))
     except OSError as exc:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
         raise CanvasWriteError(str(exc)) from exc

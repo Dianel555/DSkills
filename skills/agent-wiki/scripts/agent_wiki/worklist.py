@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import contextlib
-import unicodedata
 from pathlib import Path
 from typing import Any
 
 from . import cache, config, links, scanner, wiki_index
+from .config import nfc as _nfc
 
 
-def _nfc(s: str) -> str:
-    return unicodedata.normalize("NFC", s)
-
-
-def compute_worklist(vault: str | Path) -> dict[str, Any]:
+def compute_worklist(vault: str | Path, data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compute wanted and stale worklists.
+
+    ``data`` is a prebuilt ``wiki_index.rebuild`` result; ``None`` rebuilds here.
 
     Returns:
         {
@@ -33,7 +31,8 @@ def compute_worklist(vault: str | Path) -> dict[str, Any]:
         raise ValueError("wiki_not_initialized")
 
     # Rebuild index to get all pages and links
-    data, _ = wiki_index.rebuild(vault)
+    if data is None:
+        data, _ = wiki_index.rebuild(vault)
 
     # --- WANTED: missing dedicated page targets ---
     target_sources: dict[str, set[str]] = {}

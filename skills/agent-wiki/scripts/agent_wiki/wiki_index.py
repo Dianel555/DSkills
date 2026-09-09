@@ -8,17 +8,15 @@ into topic files.
 
 from __future__ import annotations
 
-import contextlib
 import json
-import os
 import re
-import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from . import config, frontmatter, links, quality, source_type
+from .config import nfc as _nfc
 
 INDEX_VERSION = 2
 EPOCH = "1970-01-01T00:00:00Z"
@@ -86,10 +84,6 @@ class IndexWriteError(OSError):
 
 def empty_schema() -> dict[str, Any]:
     return {"version": INDEX_VERSION, "generated_at": EPOCH, "topics": {}, "queries": {}, "alias_index": {}}
-
-
-def _nfc(value: str) -> str:
-    return unicodedata.normalize("NFC", str(value))
 
 
 def _str_list(value: Any) -> list[str]:
@@ -438,12 +432,8 @@ def serialize(data: dict[str, Any]) -> str:
 
 def save_index(vault: str | Path, data: dict[str, Any]) -> None:
     path = config.index_path(vault)
-    tmp = path.with_name(path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(serialize(data), encoding="utf-8")
-        os.replace(tmp, path)
+        config.atomic_write_text(path, serialize(data))
     except OSError as exc:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
         raise IndexWriteError(str(exc)) from exc

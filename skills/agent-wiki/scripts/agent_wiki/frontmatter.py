@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 try:
@@ -12,6 +13,14 @@ except ImportError as exc:  # pragma: no cover
 
 class FrontmatterError(ValueError):
     pass
+
+
+def parse_file(path: Path) -> tuple[dict[str, Any], str] | None:
+    """``parse`` a note on disk; ``None`` when unreadable or malformed."""
+    try:
+        return parse(path.read_text(encoding="utf-8-sig"))
+    except (UnicodeDecodeError, OSError, FrontmatterError):
+        return None
 
 
 def parse(text: str) -> tuple[dict[str, Any], str]:

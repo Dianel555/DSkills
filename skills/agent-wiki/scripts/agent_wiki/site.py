@@ -8,18 +8,15 @@ inline static literals so each page is self-contained and byte-deterministic.
 
 from __future__ import annotations
 
-import contextlib
 import html
-import os
 import re
-import tempfile
-import unicodedata
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
 from . import config, frontmatter, links, wiki_index
+from .config import nfc as _nfc
 
 # Optional markdown import - strictly gated inside this module
 try:
@@ -33,10 +30,6 @@ _TYPE_ACCENTS = ["--cinnabar", "--night", "--jade", "--amber", "--violet", "--gr
 
 _HEADING_RE = re.compile(r"<h([23])>(.*?)</h\1>", re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _nfc(s: str) -> str:
-    return unicodedata.normalize("NFC", str(s))
 
 
 def _esc(text: Any) -> str:
@@ -507,7 +500,7 @@ def _render_toc(toc: list[tuple[str, str, str]]) -> str:
 
 # --- Components ----------------------------------------------------------------
 
-def _render_infobox(entry: dict[str, Any], type_accent: dict[str, str], asset_prefix: str = "../../") -> str:
+def _render_infobox(entry: dict[str, Any], asset_prefix: str = "../../") -> str:
     rows = []
 
     def row(label: str, value_html: str) -> None:
@@ -727,19 +720,6 @@ def _index_page(data: dict[str, Any], type_accent: dict[str, str], generated_at:
 
 # --- Atomic write + orchestration (D11, contract preserved) --------------------
 
-def _atomic_write(site_dir: Path, name: str, content: str) -> None:
-    out_path = site_dir / name
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=site_dir, suffix=".html")
-    try:
-        os.write(tmp_fd, content.encode("utf-8"))
-        os.close(tmp_fd)
-        os.replace(tmp_path, out_path)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp_path)
-        raise
-
-
 def generate_site(vault: str | Path) -> dict[str, Any]:
     """Generate a self-contained static HTML site under wiki/site/.
 
@@ -792,14 +772,14 @@ def generate_site(vault: str | Path) -> dict[str, Any]:
         )
         page = _article_page(
             str(entry.get("title", key)), generated_at,
-            _render_toc(toc), body_html, _render_infobox(entry, type_accent, "../../"),
+            _render_toc(toc), body_html, _render_infobox(entry, "../../"),
             _render_provenance(entry, "../../"),
         )
-        _atomic_write(site_dir, slug_map[key], page)
+        config.atomic_write_text(site_dir / slug_map[key], page)
         pages_written += 1
 
     # index.html is written LAST so status.site_stale stays correct.
-    _atomic_write(site_dir, "index.html", _index_page(data, type_accent, generated_at, slug_map))
+    config.atomic_write_text(site_dir / "index.html", _index_page(data, type_accent, generated_at, slug_map))
 
     # Prune orphaned HTML files not in current output set
     current_files = {"index.html"} | set(slug_map.values())

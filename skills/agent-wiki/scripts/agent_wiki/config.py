@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -10,8 +11,23 @@ from pathlib import Path
 from typing import Any
 
 
-def _nfc(value: str) -> str:
-    return unicodedata.normalize("NFC", value)
+def nfc(value: Any) -> str:
+    return unicodedata.normalize("NFC", str(value))
+
+
+def atomic_write_text(path: Path, data: str | bytes) -> None:
+    """Write via same-dir temp file + ``os.replace``; the old file survives any failure."""
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        if isinstance(data, bytes):
+            tmp.write_bytes(data)
+        else:
+            tmp.write_text(data, encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 def _json_stderr(payload: dict[str, Any]) -> None:
@@ -24,7 +40,7 @@ def resolve_vault(args_vault: str | None) -> Path:
         _json_stderr({"error": "vault path required", "hint": "pass --vault PATH or set AGENT_WIKI_VAULT"})
         sys.exit(2)
 
-    vault = Path(_nfc(raw)).expanduser().resolve()
+    vault = Path(nfc(raw)).expanduser().resolve()
     if not vault.is_dir():
         _json_stderr({"error": "vault not found", "path": str(vault)})
         sys.exit(2)
@@ -63,17 +79,13 @@ def archive_dir(vault: str | Path) -> Path:
     return wiki_root(vault) / "_archived"
 
 
-def url_cache_dir(vault: str | Path) -> Path:
-    return wiki_root(vault) / ".wiki-url-cache"
-
-
 def normalize_relpath(path: str | Path) -> str:
     value = str(path).replace("\\", "/").strip()
     while value.startswith("./"):
         value = value[2:]
     if len(value) >= 2 and value[0].isalpha() and value[1] == ":":
         raise ValueError(f"absolute drive path not allowed: {path!r}")
-    return _nfc(value)
+    return nfc(value)
 
 
 def to_rel_posix(abs_path: str | Path, vault: str | Path) -> str:

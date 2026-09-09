@@ -9,19 +9,15 @@ a per-topic list the Agent can write into frontmatter. Neither modifies files.
 from __future__ import annotations
 
 import re
-import unicodedata
 from pathlib import Path
 from typing import Any
 
 from . import config, frontmatter
+from .config import nfc as _nfc
 
 _AUTHOR_RE = re.compile(r"作者[:：]\s*(.+)")
 _FIELD_BREAK = re.compile(r"\s*(期刊|DOI|标签|摘要)[:：]")
 _TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _nfc(value: str) -> str:
-    return unicodedata.normalize("NFC", value)
 
 
 def _root_notes(vault: Path) -> dict[str, Path]:

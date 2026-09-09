@@ -39,7 +39,7 @@ def remove_source_from_topic(topic_path: str | Path, deleted_rel: str) -> bool:
     text = frontmatter.dump(meta, body)
     if has_bom:
         text = "﻿" + text
-    path.write_bytes(text.encode("utf-8"))
+    config.atomic_write_text(path, text.encode("utf-8"))
     return bool(meta["sources"])
 
 

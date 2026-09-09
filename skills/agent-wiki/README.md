@@ -26,11 +26,9 @@ python scripts/agent_wiki_cli.py scan
 ```
 
 One registered Obsidian vault can therefore contain independent wikis, for example
-`research-notes/wiki/` and `course-notes/wiki/`. Bases, Canvas links, and optional REST writes use
-paths relative to the registered Obsidian root automatically; do not change the source scope to
-make it equal to that root. When a scope is nested, the first REST bootstrap prints a non-hidden
-marker path including that scope prefix. That path is relative to the registered Obsidian root, not
-to `AGENT_WIKI_VAULT`.
+`research-notes/wiki/` and `course-notes/wiki/`. Bases, Canvas links, and the `--emit-only`
+`obsidian_path` use paths relative to the registered Obsidian root automatically; do not change
+the source scope to make it equal to that root.
 
 Resolution order:
 
@@ -76,14 +74,14 @@ python scripts/agent_wiki_cli.py cleanup --vault /path/to/vault
 python scripts/agent_wiki_cli.py status --vault /path/to/vault
 python scripts/agent_wiki_cli.py index --vault /path/to/vault
 python scripts/agent_wiki_cli.py index --incremental --vault /path/to/vault
-python scripts/agent_wiki_cli.py doctor --vault /path/to/vault
 python scripts/agent_wiki_cli.py normalize-source-type --vault /path/to/vault
 python scripts/agent_wiki_cli.py gen-base --name sources --vault /path/to/vault
 python scripts/agent_wiki_cli.py save-report <name> --vault /path/to/vault
 python scripts/agent_wiki_cli.py gen-canvas --topic <name> --vault /path/to/vault
 python scripts/agent_wiki_cli.py gen-canvas --all --vault /path/to/vault
 python scripts/agent_wiki_cli.py gen-home --vault /path/to/vault
-python scripts/agent_wiki_cli.py gen-home --cards off --no-rest --vault /path/to/vault
+python scripts/agent_wiki_cli.py gen-home --cards off --vault /path/to/vault
+python scripts/agent_wiki_cli.py gen-home --emit-only --vault /path/to/vault
 python scripts/agent_wiki_cli.py extract-authors --vault /path/to/vault
 python scripts/agent_wiki_cli.py aggregate-authors --vault /path/to/vault
 python scripts/agent_wiki_cli.py quality --vault /path/to/vault
@@ -91,7 +89,6 @@ python scripts/agent_wiki_cli.py coverage --vault /path/to/vault
 python scripts/agent_wiki_cli.py keywords --vault /path/to/vault
 python scripts/agent_wiki_cli.py worklist --vault /path/to/vault
 python scripts/agent_wiki_cli.py gen-site --vault /path/to/vault
-python scripts/agent_wiki_cli.py completion --shell bash
 ```
 
 | Command | Purpose |
@@ -103,14 +100,13 @@ python scripts/agent_wiki_cli.py completion --shell bash
 | `cache-get` | Return the cached ingest record for one source path |
 | `cache-put` | Record a completed ingest for one source path and derived topics |
 | `cleanup` | Remove deleted-source references and archive orphaned topics |
-| `status` | Emit machine-readable wiki health metrics, including index and batch progress (read-only) |
+| `status` | Emit machine-readable wiki health metrics — index freshness (mtime + page set vs a rebuild), parse errors, orphan topics, batch progress, quality distribution, worklist counts, site/graph staleness (read-only) |
 | `index` | Rebuild `wiki/.wiki-index.json` from topic frontmatter (no `.base` written). `--incremental` reuses entries whose file mtime is unchanged; changed/new files are parsed in parallel |
-| `doctor` | Run read-only vault health checks (index freshness/corruption, topic parse errors, orphan topics and sources) and emit `ok`/`checks` |
 | `normalize-source-type` | Rewrite each topic's `source_type` frontmatter to its `sources[]` file format (in place; no-source topics skipped) |
 | `gen-base` | Rebuild the index, then write Obsidian Bases views: `wiki/index.base` + `<name>.base` source master table |
 | `save-report` | Register an Agent-authored research report under `wiki/queries/`, ensure `kind: query`, and log it |
 | `gen-canvas` | Generate deterministic per-topic JSON Canvas 1.0 graph(s) under `wiki/graphs/` (`--topic <name>` or `--all`) |
-| `gen-home` | Build/refresh the `wiki/index.md` skeleton (overview, Bases embed, topic-nav scaffold, relationship placeholder) plus one managed "工作区" block — a Dataview card grid when Dataview + its JS queries are detected, else a static list (`--cards auto\|on\|off`, default auto). Re-runs refresh **only** the managed block (agent prose preserved); a content-bearing index without markers gets the block appended (never clobbered); prefers the Obsidian Local REST API for `index.md` when configured (else atomic write; `--no-rest` forces atomic); `--emit-only` renders the content without writing for an MCP-side conditional write; leaves `index.base` untouched |
+| `gen-home` | Build/refresh the `wiki/index.md` skeleton (overview, Bases embed, topic-nav scaffold, relationship placeholder) plus one managed "工作区" block — a Dataview card grid when Dataview + its JS queries are detected, else a static list (`--cards auto\|on\|off`, default auto). Re-runs refresh **only** the managed block (agent prose preserved); a content-bearing index without markers gets the block appended (never clobbered); writes atomically, or with `--emit-only` renders the content without writing for an MCP-side conditional write; leaves `index.base` untouched |
 | `extract-authors` | Raw `作者:` row per topic source note (read-only) |
 | `aggregate-authors` | Deduplicated first author per topic for frontmatter backfill (read-only) |
 | `quality` | Compute quality tier distribution and per-topic metrics (read-only) |
@@ -118,9 +114,8 @@ python scripts/agent_wiki_cli.py completion --shell bash
 | `keywords` | Inventory keywords across topics, frequency-descending, plus uncategorized topic keys — the input for deriving subject categories (read-only) |
 | `worklist` | Read-only queues: `wanted` (missing dedicated pages), `unresolved` (ambiguous links), `review` (source-changed topics/reports), and `stale` (low-quality/index-stale topics) |
 | `gen-site` | Generate self-contained static HTML for topics and reports under `wiki/site/` (optional `markdown`; footnotes/internal fragments/local image embeds supported; imported HTML is allowlisted) |
-| `completion` | Print a bash/zsh completion script (`--shell bash|zsh`) covering subcommands and global options |
 
-All command outputs are JSON by default; `--format yaml|table` selects other formats, and `-v/--verbose` prints progress to stderr without disturbing stdout.
+All command outputs are JSON on stdout; `-v/--verbose` prints progress to stderr without disturbing stdout.
 
 ## Understanding "Broken Wikilinks"
 
@@ -150,15 +145,14 @@ The `wanted` list is a feature, not a bug — it surfaces which source materials
     ├── graphs/              # generated JSON Canvas graphs (<topic>.canvas)
     ├── _archived/YYYY-MM-DD/
     ├── .wiki-cache.json
-    ├── .wiki-index.json     # derived retrieval index (topics + queries)
-    └── .wiki-url-cache/
+    └── .wiki-index.json     # derived retrieval index (topics + queries)
 ```
 
 Source markdown files remain outside the selected scope's `wiki/`. The scanner skips `wiki/`, `.obsidian/`, `attachments/`, `.git/`, `.trash/`, `.wikiignore` matches, and symlinked markdown files.
 
 **Capture & graphs**: `save-report` registers an Agent-authored report already written under `wiki/queries/` as a first-class, index-visible, cross-linkable node (it gains a directory-derived `kind: query`, academic identity fields, and shared `link_records[]` in the index). `gen-canvas` renders deterministic per-topic JSON Canvas graphs (topic center + `sources[]` ring + 1-hop neighbour topics, derived from `sources[]` overlap and the shared link resolver) under `wiki/graphs/`. `gen-home` builds/refreshes the `wiki/index.md` skeleton plus a single managed "工作区" block that surfaces reports/graphs as a centered Dataview card grid (auto-detected; static list fallback) without touching `index.base`; the agent fills the surrounding prose, and re-runs refresh only the managed block (a content-bearing index without markers gets the block appended, never clobbered).
 
-**index.md & Obsidian-open conflicts**: `index.md` is the file you most often keep open in an Obsidian tab, where an external write can be clobbered by the editor buffer. It is written through the most conflict-safe channel available, always falling back rather than guessing: **MCP → REST → atomic file**. If an Obsidian MCP server is connected, render with `gen-home --emit-only` (returns `write_via: "none"` and never touches disk), then apply the content with a conditional MCP write (`vault_get_document_map` version + `vault_patch` with `ifMatch`) so the open tab is not blindly replaced. If MCP is absent, `gen-home` falls back to the [Obsidian Local REST API](https://github.com/coddingtonbear/obsidian-local-rest-api) plugin when configured via env vars: it verifies an explicit marker file for the registered Obsidian root, reads the document-map version, verifies the returned root-relative target and current content, then uses a conditional root `PATCH` through Obsidian; a conflict, unknown target, or uncertain result stops without a disk fallback. The `PATCH` receives `ifMatch`, so a change between verification and write returns a conflict instead of overwriting it. A configured agent-wiki scope may be a child directory: its prefix is added to REST targets automatically, so several scopes can safely produce independent `wiki/` trees in one registered vault. If either marker variable is missing, the first run creates a unique non-hidden marker under the selected scope's `wiki/`, prints the two generated env values, and stops; set them and retry. The generated marker path is relative to the registered Obsidian root. An unavailable API uses atomic file write (`--no-rest` forces atomic). The output's `write_via` reports `rest` or `atomic`. Set `AGENT_WIKI_OBSIDIAN_API_KEY` and (after the bootstrap prompt) `AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH`/`AGENT_WIKI_OBSIDIAN_VAULT_ID` (and optionally `AGENT_WIKI_OBSIDIAN_API_URL`, default `https://127.0.0.1:27124`) — see `.env.example`. The API key is read from the environment only; generated marker values are create-only and existing markers are never overwritten. A plugin that does not expose both the document-map version and conditional root `PATCH` is rejected; use `--no-rest` or a compatible plugin. TLS verification is skipped only for loopback hosts.
+**index.md & Obsidian-open conflicts**: `index.md` is the file you most often keep open in an Obsidian tab, where an external write can be clobbered by the editor buffer. It is written through the most conflict-safe channel available: **MCP → atomic file**. If an Obsidian MCP server is connected, render with `gen-home --emit-only` (returns `write_via: "none"` and never touches disk), then apply the content with a conditional MCP write (`vault_get_document_map` version + `vault_patch` with `ifMatch`) so the open tab is not blindly replaced. Otherwise plain `gen-home` writes the file atomically (`write_via: "atomic"`).
 
 ## Agent Workflow
 

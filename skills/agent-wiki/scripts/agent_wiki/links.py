@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import html
 import re
-import unicodedata
 import urllib.parse
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from typing import Any
+
+from .config import nfc as _nfc
 
 _FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})([^\r\n]*)(?:\r?\n)?$")
 _CODE_RUN_RE = re.compile(r"`+")
@@ -40,10 +41,6 @@ class Resolution:
     target: str
     key: str | None = None
     candidates: tuple[str, ...] = ()
-
-
-def _nfc(value: str) -> str:
-    return unicodedata.normalize("NFC", value)
 
 
 def normalize_target(value: str) -> str:

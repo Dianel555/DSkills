@@ -1,7 +1,7 @@
 # Homepage (gen-home) Reference
 
 Loaded on demand from SKILL.md. Covers layout templates, the managed cards block,
-re-run semantics, REST write-through, and the optional CSS snippet.
+re-run semantics, the MCP write path, and the optional CSS snippet.
 
 ## Layout Templates
 
@@ -47,36 +47,15 @@ timestamps). It **does not** modify `index.base` or create any `.base` file — 
 topic data provider and `index.md` the layout controller, so the two-file `gen-base` contract is
 preserved.
 
-## Conflict-Safe Write (Obsidian open)
+## Write Decision Chain (MCP → file)
 
-`index.md` is the one wiki file users keep open in an Obsidian tab, so an external `os.replace` can
-race the editor buffer. When the **Obsidian Local REST API** plugin is configured (env vars below),
-`gen-home` first verifies an explicit marker file for the registered Obsidian root because the API
-exposes only root-relative paths. The configured agent-wiki vault may be a child source scope; its
-path prefix is added to the target automatically, so one Obsidian vault can contain multiple
-independent `wiki/` trees. If either marker env variable is missing, the first run creates a unique
-non-hidden marker under the selected scope's `wiki/`, prints both generated root-relative variables, and stops;
-set them and retry. It then reads a document map (`GET /vault/{path}` with
-`Accept: application/vnd.olrapi.document-map+json`) to capture its `version`, verifies the returned
-root-relative target and current content, and finally replaces the document root with a conditional
-`PATCH` carrying `ifMatch`. A mismatch, changed content, unsupported plugin capability, or uncertain
-PATCH stops; it never falls back to disk after an attempted REST write. An unavailable API uses atomic
-file write.
-`write_via` in the output reports
-which path was taken (`rest` / `atomic`). Only `index.md` uses this; canvas/capture/index files stay
-atomic. Pass `--no-rest` to always write directly. Configure (key from Obsidian → Settings → Local
-REST API; read from the environment only, never persisted — see `.env.example`):
+`wiki/index.md` is the one wiki file users keep open in an Obsidian tab, so an external `os.replace`
+can race the editor buffer. It is written through the most conflict-safe channel available:
 
-```bash
-export AGENT_WIKI_OBSIDIAN_API_KEY=<your-key>          # required to enable REST write
-# First missing-env gen-home run prints these two generated values.
-export AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH=<generated-root-relative-marker-path>
-export AGENT_WIKI_OBSIDIAN_VAULT_ID=<exact-marker-content>
-export AGENT_WIKI_OBSIDIAN_API_URL=https://127.0.0.1:27124  # optional, this is the default
-```
+1. **MCP** (preferred): if an Obsidian MCP server is connected, probe the target with `vault_get_document_map` to capture its `version`, render the content with `gen-home --emit-only`, then apply it with `vault_patch` (`targetType: heading`, `target: null`, `operation: replace`, `ifMatch: <version>`) so an open editor tab is never blindly replaced. `--emit-only` returns `write_via: "none"` plus `obsidian_path` (root-relative, scope prefix included) and `content`; it never touches disk.
+2. **Atomic file write**: otherwise run plain `gen-home`; it writes via same-directory temp file + `os.replace` and reports `write_via: "atomic"`.
 
-The HTTPS endpoint uses a self-signed cert; agent-wiki skips TLS verification **only for loopback
-hosts** (127.0.0.1/localhost/::1). A plugin without document-map version and conditional root `PATCH` support is rejected; use `--no-rest` or a compatible plugin. This is a target guard, not a transactional guarantee; the installed plugin reads the saved vault adapter content rather than an unsaved editor buffer. The bootstrap marker is deliberately non-hidden because the plugin's structured JSON media types omit dotfiles. Its path is relative to the registered Obsidian root, even when `AGENT_WIKI_VAULT` points to a child scope; use the generated value rather than hand-writing `wiki/...`.
+Never do both for the same write — pick the first available and stop. Only `index.md` gets the MCP treatment; canvas/capture/index files stay atomic.
 
 ## Optional Homepage CSS
 

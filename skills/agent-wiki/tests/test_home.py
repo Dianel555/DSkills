@@ -5,16 +5,14 @@ import sys
 from pathlib import Path
 
 import pytest
-from agent_wiki import commands, config, frontmatter, home
+from agent_wiki import config, frontmatter, home
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agent_wiki_cli.py"
 
 
 def run_cli(*args):
-    # Strip API env so subprocess gen-home is deterministically atomic regardless of the dev shell.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("AGENT_WIKI_OBSIDIAN_API")}
-    env["DOTENV_DISABLE"] = "1"
+    env = {**os.environ, "DOTENV_DISABLE": "1"}
     return subprocess.run([sys.executable, str(CLI), *args], text=True, encoding="utf-8", capture_output=True, env=env)
 
 
@@ -184,6 +182,6 @@ def test_atomic_write_text_cleans_tmp_and_preserves_old_on_failure(tmp_path, mon
 
     monkeypatch.setattr(os, "replace", boom)
     with pytest.raises(OSError):
-        commands._atomic_write_text(path, "NEW")
+        config.atomic_write_text(path, "NEW")
     assert path.read_text(encoding="utf-8") == "OLD"
     assert not path.with_name(path.name + ".tmp").exists()

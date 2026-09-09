@@ -81,6 +81,18 @@ def test_index_stale_watches_queries(tmp_path):
     assert _status(tmp_path)["index_stale"] is True
 
 
+def test_index_stale_after_topic_deleted(tmp_path):
+    """Deleting a topic leaves no newer mtime; content comparison must still flag it."""
+    run_cli("init", "--vault", str(tmp_path))
+    _topic(tmp_path, "A.md")
+    _topic(tmp_path, "B.md")
+    run_cli("index", "--vault", str(tmp_path))
+    assert _status(tmp_path)["index_stale"] is False
+
+    (config.topics_dir(tmp_path) / "B.md").unlink()
+    assert _status(tmp_path)["index_stale"] is True
+
+
 # --- status writes nothing -------------------------------------------------
 
 def test_status_never_writes_any_artifact(tmp_path):

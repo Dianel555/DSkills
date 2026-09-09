@@ -9,9 +9,7 @@ archive directory; each round is gated behind an explicit completion check.
 
 from __future__ import annotations
 
-import contextlib
 import json
-import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -73,14 +71,10 @@ def load_state(vault: str | Path) -> dict[str, Any] | None:
 
 def save_state(vault: str | Path, data: dict[str, Any]) -> None:
     path = config.batch_path(vault)
-    tmp = path.with_name(path.name + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, path)
+        config.atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     except OSError as exc:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
         raise BatchStateError(str(exc)) from exc
 
 

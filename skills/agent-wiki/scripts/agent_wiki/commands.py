@@ -3,21 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
-import os
-import secrets
 import stat
 import sys
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any, NoReturn
-
-try:
-    import yaml as yaml_module
-except ImportError:
-    yaml_module = None  # type: ignore[assignment]
 
 from . import (
     authors,
@@ -28,11 +20,9 @@ from . import (
     cleanup,
     config,
     coverage,
-    doctor,
     frontmatter,
     home,
     keywords,
-    obsidian_api,
     plugins,
     quality,
     scanner,
@@ -45,35 +35,6 @@ from . import (
 
 def emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False))
-
-
-def emit_formatted(args: argparse.Namespace, payload: dict[str, Any]) -> None:
-    """Emit output in the requested format (json/yaml/table)."""
-    fmt = getattr(args, "format", "json")
-
-    if fmt == "yaml":
-        if yaml_module is None:
-            fail({"error": "yaml_not_available", "hint": "pip install PyYAML"}, 1)
-        print(yaml_module.safe_dump(payload, allow_unicode=True, sort_keys=False))
-    elif fmt == "table":
-        _emit_table(payload)
-    else:
-        print(json.dumps(payload, ensure_ascii=False))
-
-
-def _emit_table(payload: dict[str, Any]) -> None:
-    """Emit simple key-value table format."""
-    if "error" in payload:
-        print(f"ERROR: {payload.get('error')}", file=sys.stderr)
-        if "hint" in payload:
-            print(f"  Hint: {payload['hint']}", file=sys.stderr)
-        return
-
-    for key, value in payload.items():
-        if isinstance(value, (dict, list)):
-            print(f"{key}: {json.dumps(value, ensure_ascii=False)}")
-        else:
-            print(f"{key}: {value}")
 
 
 def fail(payload: dict[str, Any], code: int = 1) -> NoReturn:
@@ -122,7 +83,6 @@ def cmd_init(args: argparse.Namespace) -> None:
     for directory in (
         config.topics_dir(vault),
         config.archive_dir(vault),
-        config.url_cache_dir(vault),
         config.queries_dir(vault),
         config.graphs_dir(vault),
     ):
@@ -161,7 +121,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
     report = scanner.format_report(classified, vault)
     if "error" in report:
         fail(report, 1)
-    emit_formatted(args, report)
+    emit(report)
 
 
 def cmd_plan(args: argparse.Namespace) -> None:
@@ -188,7 +148,7 @@ def cmd_plan(args: argparse.Namespace) -> None:
         batch.save_state(vault, state)
 
     batch.write_report(vault, state)
-    emit_formatted(args, {
+    emit({
         "ok": True,
         "total": state["total"],
         "batch_size": state["batch_size"],
@@ -332,17 +292,6 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
     emit({"removed": removed, "archived": archived, "details": details, "errors": errors})
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    try:
-        tmp.write_text(text, encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
-        raise
-
-
 def _safe_md_name(value: str) -> str:
     """Sanitize a capture/topic name to a single ``<name>.md`` component."""
     safe = Path(config.normalize_relpath(value)).name
@@ -365,20 +314,13 @@ def _capture(args: argparse.Namespace, dir_func: Callable[[Path], Path], kind: s
         fail({"error": "capture_parse_failed", "path": rel}, 1)
     if meta.get("kind") != kind:
         meta["kind"] = kind
-        _atomic_write_text(target, frontmatter.dump(meta, body))
+        config.atomic_write_text(target, frontmatter.dump(meta, body))
     _append_log(vault, "capture", action, rel)
     emit({"ok": True, "path": rel, "kind": kind})
 
 
 def cmd_save_report(args: argparse.Namespace) -> None:
     _capture(args, config.queries_dir, "query", "save_report")
-
-
-def _topic_meta(path: Path) -> tuple[dict[str, Any], str] | None:
-    try:
-        return frontmatter.parse(path.read_text(encoding="utf-8-sig"))
-    except (UnicodeDecodeError, frontmatter.FrontmatterError):
-        return None
 
 
 def _rebuild_index(vault: Path, *, incremental: bool = False) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -424,7 +366,7 @@ def cmd_index(args: argparse.Namespace) -> None:
     verbose(args, f"Building index (incremental={incremental})...")
     data, errors = _rebuild_index(vault, incremental=incremental)
     verbose(args, f"Index built: {len(data['topics'])} topics, {len(errors)} errors")
-    emit_formatted(args, {"ok": True, "topics": len(data["topics"]), "errors": errors})
+    emit({"ok": True, "topics": len(data["topics"]), "errors": errors})
 
 
 def cmd_normalize_source_type(args: argparse.Namespace) -> None:
@@ -451,7 +393,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     orphaned = 0
 
     for topic in topics:
-        parsed = _topic_meta(topic)
+        parsed = frontmatter.parse_file(topic)
         if parsed is None:
             errors.append({"path": config.to_rel_posix(topic, vault), "error": "frontmatter_parse_failed"})
             continue
@@ -468,6 +410,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     index_file = config.index_path(vault)
     index_exists = index_file.exists()
     index_topics = 0
+    raw_index: Any = None
     if index_exists:
         try:
             raw_index = json.loads(index_file.read_text(encoding="utf-8"))
@@ -480,6 +423,11 @@ def cmd_status(args: argparse.Namespace) -> None:
     except wiki_index.NormalizedPathCollisionError as exc:
         _index_data = {}
         index_errors = [{"path": exc.path, "error": "normalized_path_collision"}]
+    # Stale when any page is newer than the index file, or when the indexed page
+    # set differs from disk (a deleted topic leaves no newer mtime behind).
+    index_stale = _index_stale(vault, index_file) or not isinstance(raw_index, dict) or any(
+        set(raw_index.get(key) or {}) != set(_index_data.get(key) or {}) for key in ("topics", "queries")
+    )
 
     # Compute quality metrics from in-memory rebuild
     quality_distribution = {"stub": 0, "basic": 0, "standard": 0, "rich": 0, "premium": 0}
@@ -498,23 +446,20 @@ def cmd_status(args: argparse.Namespace) -> None:
         if backlinks_count > backlinks_max:
             backlinks_max = backlinks_count
 
-    # Compute coverage metrics
+    # Coverage / worklist reuse the index built above; failures are reported, not hidden.
+    index_arg = _index_data or None
+    gaps_count = wanted_count = stale_count = review_count = 0
     try:
-        coverage_result = coverage.compute_coverage(vault)
-        gaps_count = len(coverage_result.get("gaps", []))
-    except (ValueError, Exception):
-        gaps_count = 0  # Graceful fallback
-
-    # Compute worklist metrics
+        gaps_count = len(coverage.compute_coverage(vault, index_arg).get("gaps", []))
+    except (ValueError, OSError) as exc:
+        errors.append({"error": "coverage_failed", "detail": str(exc)})
     try:
-        worklist_result = worklist.compute_worklist(vault)
+        worklist_result = worklist.compute_worklist(vault, index_arg)
         wanted_count = len(worklist_result.get("wanted", []))
         stale_count = len(worklist_result.get("stale", []))
         review_count = len(worklist_result.get("review", []))
-    except (ValueError, Exception):
-        wanted_count = 0
-        stale_count = 0
-        review_count = 0
+    except (ValueError, OSError) as exc:
+        errors.append({"error": "worklist_failed", "detail": str(exc)})
 
     # Check site status
     site_dir = config.wiki_root(vault) / "site"
@@ -558,7 +503,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         "index_exists": index_exists,
         "index_size_bytes": index_file.stat().st_size if index_exists else 0,
         "index_topics": index_topics,
-        "index_stale": _index_stale(vault, index_file),
+        "index_stale": index_stale,
         "index_errors": index_errors,
         "batch": batch_summary,
         "quality_distribution": quality_distribution,
@@ -593,7 +538,7 @@ def cmd_gen_base(args: argparse.Namespace) -> None:
             fail({"error": "base_not_writable", "path": config.to_rel_posix(path, vault)}, 1)
     written: list[str] = []
     for path, content in targets:
-        path.write_text(content, encoding="utf-8")
+        config.atomic_write_text(path, content)
         written.append(config.to_rel_posix(path, vault))
     emit({"ok": True, "prefix": prefix, "written": written})
 
@@ -638,74 +583,6 @@ def _obsidian_index_relpath(vault: Path) -> str:
     return "/".join(part for part in (prefix, "wiki", "index.md") if part)
 
 
-# The REST plugin omits dotfiles from its structured JSON media types.
-_IDENTITY_MARKER_NAME = "agent-wiki-vault-id.md"
-
-
-def _bootstrap_vault_identity(vault: Path) -> obsidian_api.VaultIdentitySetupRequiredError:
-    """Create a marker and return the env setup needed for the next run."""
-    wiki = config.wiki_root(vault)
-    token = secrets.token_urlsafe(24)
-    marker_path: Path | None = None
-    marker_name = _IDENTITY_MARKER_NAME
-    for attempt in range(10):
-        if attempt:
-            marker_name = f"agent-wiki-vault-id-{token[:10]}.md"
-        candidate = wiki / marker_name
-        try:
-            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            token = secrets.token_urlsafe(24)
-            continue
-        marker_path = candidate
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="") as marker:
-                marker.write(token)
-        except BaseException:
-            with contextlib.suppress(OSError):
-                candidate.unlink()
-            raise
-        break
-    if marker_path is None:
-        raise OSError("could not create a unique vault identity marker")
-    api_marker_path = "/".join(
-        part for part in (bases.obsidian_prefix(vault), "wiki", marker_path.name) if part
-    )
-    return obsidian_api.VaultIdentitySetupRequiredError(
-        {
-            "AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH": api_marker_path,
-            "AGENT_WIKI_OBSIDIAN_VAULT_ID": token,
-        },
-        config.to_rel_posix(marker_path, vault),
-    )
-
-
-def _write_index(
-    vault: Path,
-    text: str,
-    use_rest: bool,
-    expected_content: str | None = None,
-) -> str:
-    """Write ``wiki/index.md`` without falling back after an uncertain REST write.
-    REST writes are verified against the intended target before replacement.
-    No local fallback is used after a configured REST write is attempted."""
-    if use_rest and expected_content is not None and obsidian_api.configured():
-        if not obsidian_api.identity_configured():
-            try:
-                raise _bootstrap_vault_identity(vault)
-            except OSError as exc:
-                raise obsidian_api.WriteSafetyError("obsidian_vault_identity_setup_failed") from exc
-        if obsidian_api.available():
-            ok = obsidian_api.put_file(
-                _obsidian_index_relpath(vault), text, expected_content=expected_content
-            )
-            if ok:
-                return "rest"
-            raise obsidian_api.WriteSafetyError("obsidian_write_failed")
-    _atomic_write_text(config.wiki_root(vault) / "index.md", text)
-    return "atomic"
-
-
 def _resolve_cards(mode: str, vault: Path) -> bool:
     """Whether to emit the dynamic dataviewjs card block. ``auto`` detects
     Dataview + its JS queries; ``on``/``off`` force the choice."""
@@ -736,26 +613,8 @@ def cmd_gen_home(args: argparse.Namespace) -> None:
             "content": text,
         })
         return
-    try:
-        write_via = _write_index(
-            vault, text, use_rest=not args.no_rest, expected_content=existing
-        )
-    except obsidian_api.VaultIdentitySetupRequiredError as exc:
-        fail(
-            {
-                "error": exc.code,
-                "env": exc.environment,
-                "marker_file": exc.marker_file,
-                "hint": "set the two generated environment variables, then retry; the marker is create-only",
-            },
-            1,
-        )
-    except obsidian_api.WriteSafetyError as exc:
-        hint = "install a REST plugin with document-map version and conditional root PATCH support, or use --no-rest"
-        if exc.code != "obsidian_conditional_write_unsupported":
-            hint = "refresh the vault target and retry"
-        fail({"error": exc.code, "hint": hint}, 1)
-    emit({"ok": True, "path": "wiki/index.md", "cards": cards, "write_via": write_via})
+    config.atomic_write_text(index_file, text)
+    emit({"ok": True, "path": "wiki/index.md", "cards": cards, "write_via": "atomic"})
 
 
 def cmd_quality(args: argparse.Namespace) -> None:
@@ -790,7 +649,7 @@ def cmd_quality(args: argparse.Namespace) -> None:
         sources = meta.get("sources")
         items = sources if isinstance(sources, list) else [] if sources is None else [sources]
         unique_sources = len({config.normalize_relpath(str(item)) for item in items})
-        tier = quality.compute_tier(body, source_count=unique_sources)
+        tier = quality.compute_tier(body, source_count=unique_sources, metrics=metrics)
 
         tiers[rel] = {"tier": tier, "metrics": metrics}
         distribution[tier] += 1
@@ -845,14 +704,8 @@ def cmd_gen_site(args: argparse.Namespace) -> None:
     verbose(args, "Generating static site...")
     try:
         result = site.generate_site(vault)
-        verbose(args, f"Generated {result.get('pages_written', 0)} pages")
+        verbose(args, f"Generated {result.get('pages', 0)} pages")
     except ValueError as exc:
         fail({"error": str(exc)}, 1)
 
     emit(result)
-
-
-def cmd_doctor(args: argparse.Namespace) -> None:
-    vault = _vault(args)
-    verbose(args, f"Running health checks on: {vault}")
-    emit_formatted(args, doctor.run(vault))

@@ -58,7 +58,6 @@ def test_init_fresh_partial_and_idempotent(tmp_path):
     assert (tmp_path / "wiki" / "index.md").exists()
     assert (tmp_path / "wiki" / "log.md").exists()
     assert (tmp_path / "wiki" / "topics").is_dir()
-    assert (tmp_path / "wiki" / ".wiki-url-cache").is_dir()
 
     second = run_cli("init", "--vault", str(tmp_path))
     assert json.loads(second.stdout) == {"status": "already_initialized", "created": []}
@@ -133,22 +132,38 @@ def test_status_reports_health(tmp_path):
     assert "last_log_entry" in payload
 
 
-def test_completion_bash_script(tmp_path):
-    result = run_cli("completion", "--shell", "bash", env={"DOTENV_DISABLE": "1"})
+def test_plan_resume_reuses_existing_state(tmp_path):
+    (tmp_path / "a.md").write_text("a", encoding="utf-8")
+    run_cli("init", "--vault", str(tmp_path))
+    first = json.loads(run_cli("plan", "--batch-size", "5", "--vault", str(tmp_path)).stdout)
+    assert first["resumed"] is False and first["total"] == 1
+
+    resumed = json.loads(run_cli("plan", "--resume", "--vault", str(tmp_path)).stdout)
+    assert resumed["resumed"] is True
+    assert resumed["batches"] == first["batches"]
+
+    (tmp_path / "wiki" / ".wiki-batch.json").unlink()
+    missing = run_cli("plan", "--resume", "--vault", str(tmp_path))
+    assert missing.returncode == 1
+    assert json.loads(missing.stderr)["error"] == "no_existing_plan"
+
+
+def test_normalize_source_type_backfills_from_sources(tmp_path):
+    run_cli("init", "--vault", str(tmp_path))
+    topic = tmp_path / "wiki" / "topics" / "T.md"
+    topic.write_text(frontmatter.dump({"title": "T", "sources": ["paper.pdf"]}, "body"), encoding="utf-8")
+
+    payload = json.loads(run_cli("normalize-source-type", "--vault", str(tmp_path)).stdout)
+    assert payload["changed"] == [{"path": "T.md", "source_type": "pdf"}]
+    assert frontmatter.parse(topic.read_text(encoding="utf-8"))[0]["source_type"] == "pdf"
+
+    again = json.loads(run_cli("normalize-source-type", "--vault", str(tmp_path)).stdout)
+    assert again["changed"] == [] and again["skipped"] == 1
+
+
+def test_verbose_writes_progress_to_stderr_only(tmp_path):
+    run_cli("init", "--vault", str(tmp_path))
+    result = run_cli("--verbose", "scan", "--vault", str(tmp_path))
     assert result.returncode == 0
-    assert "complete -F _agent_wiki_complete agent-wiki agent_wiki" in result.stdout
-    for subcommand in ("init", "gen-site", "doctor", "batch-done"):
-        assert subcommand in result.stdout
-
-
-def test_completion_zsh_script():
-    result = run_cli("completion", "--shell", "zsh", env={"DOTENV_DISABLE": "1"})
-    assert result.returncode == 0
-    assert "#compdef agent-wiki agent_wiki" in result.stdout
-    assert "init" in result.stdout and "doctor" in result.stdout
-
-
-def test_doctor_subcommand(tmp_path):
-    result = run_cli("doctor", "--vault", str(tmp_path), env={"DOTENV_DISABLE": "1"})
-    assert result.returncode == 0
-    assert json.loads(result.stdout)["ok"] is False  # uninitialized vault
+    assert "[agent-wiki]" in result.stderr
+    assert json.loads(result.stdout)["stats"]["total_sources"] == 0

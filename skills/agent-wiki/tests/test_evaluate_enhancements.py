@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import urllib.error
 from pathlib import Path
 
 import pytest
@@ -289,75 +288,6 @@ def test_site_escapes_raw_text_payloads(tmp_path: Path) -> None:
     assert "<style" not in article.lower()
     assert "<textarea" not in article.lower()
     assert "<img" not in article.lower()
-
-
-def test_rest_write_failure_never_falls_back_to_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _init(tmp_path)
-    index = config.wiki_root(tmp_path) / "index.md"
-    index.parent.mkdir(parents=True, exist_ok=True)
-    index.write_text("OLD", encoding="utf-8")
-    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "k")
-    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "wiki/.agent-wiki-vault-id.md")
-    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", "vault-one")
-    monkeypatch.setattr(commands.obsidian_api, "available", lambda timeout=2.0: True)
-    monkeypatch.setattr(commands.obsidian_api, "put_file", lambda *args, **kwargs: False)
-
-    with pytest.raises(commands.obsidian_api.WriteSafetyError):
-        commands._write_index(tmp_path, "NEW", use_rest=True, expected_content="OLD")
-
-    assert index.read_text(encoding="utf-8") == "OLD"
-
-
-def test_rest_412_is_a_conflict_not_a_false_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_wiki import obsidian_api
-
-    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "secret")
-
-    def fail(req: object, **kwargs: object) -> None:
-        raise urllib.error.HTTPError("url", 412, "conflict", {}, None)
-
-    monkeypatch.setattr("urllib.request.urlopen", fail)
-    with pytest.raises(obsidian_api.WriteConflictError):
-        obsidian_api.put_file("wiki/index.md", "NEW")
-
-
-def test_rest_preflight_rejects_wrong_target_or_changed_content(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from agent_wiki import obsidian_api
-
-    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_API_KEY", "secret")
-    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID_PATH", "wiki/.agent-wiki-vault-id.md")
-    monkeypatch.setenv("AGENT_WIKI_OBSIDIAN_VAULT_ID", "vault-one")
-    responses = iter(
-        [
-            {"path": "wiki/.agent-wiki-vault-id.md", "content": "vault-one"},
-            {"version": "v1"},
-            {"path": "Other/wiki/index.md", "content": "OLD"},
-            {"path": "wiki/.agent-wiki-vault-id.md", "content": "vault-one"},
-            {"version": "v2"},
-            {"path": "wiki/index.md", "content": "NEWER"},
-        ]
-    )
-
-    class Response:
-        status = 200
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args: object) -> bool:
-            return False
-
-        def read(self) -> bytes:
-            return json.dumps(next(responses)).encode()
-
-    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: Response())
-
-    with pytest.raises(obsidian_api.TargetVerificationError):
-        obsidian_api.put_file("wiki/index.md", "NEW", expected_content="OLD")
-    with pytest.raises(obsidian_api.WriteConflictError):
-        obsidian_api.put_file("wiki/index.md", "NEW", expected_content="OLD")
 
 
 def test_research_metadata_is_normalized_without_affecting_plain_notes(tmp_path: Path) -> None:

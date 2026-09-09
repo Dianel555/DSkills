@@ -6,20 +6,17 @@ are gaps. Read-only, no file writes, no LLM, no network.
 
 from __future__ import annotations
 
-import unicodedata
 from pathlib import Path
 from typing import Any
 
 from . import config, scanner, wiki_index
+from .config import nfc as _nfc
 
 
-def _nfc(text: str) -> str:
-    """Normalize to NFC Unicode form."""
-    return unicodedata.normalize("NFC", text)
-
-
-def compute_coverage(vault: str | Path) -> dict[str, Any]:
+def compute_coverage(vault: str | Path, data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Compute coverage and gaps for the vault.
+
+    ``data`` is a prebuilt ``wiki_index.rebuild`` result; ``None`` rebuilds here.
 
     Returns dict with:
     - ok: bool
@@ -41,10 +38,11 @@ def compute_coverage(vault: str | Path) -> dict[str, Any]:
             scan_set.add(_nfc(rel))
 
     # Collect covered sources from topics
-    try:
-        data, _ = wiki_index.rebuild(vault)
-    except wiki_index.NormalizedPathCollisionError:
-        raise ValueError("normalized_path_collision") from None
+    if data is None:
+        try:
+            data, _ = wiki_index.rebuild(vault)
+        except wiki_index.NormalizedPathCollisionError:
+            raise ValueError("normalized_path_collision") from None
 
     covered_set = set()
     for topic_entry in data.get("topics", {}).values():
