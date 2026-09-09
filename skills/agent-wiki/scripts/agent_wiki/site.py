@@ -165,8 +165,6 @@ h1,h2,h3,h4{font-family:var(--font-serif);line-height:1.3;color:var(--ink);}
 .info-row{display:grid;grid-template-columns:84px 1fr;gap:var(--s2);padding:6px 0;border-bottom:1px solid var(--rule);}
 .info-label{color:var(--muted);}
 .info-value{color:var(--ink);word-break:break-word;}
-.chip{display:inline-flex;align-items:center;gap:6px;padding:1px 10px;border-radius:var(--pill);background:var(--vellum);color:var(--ink);border:1px solid var(--rule);font-size:12px;}
-.chip-dot{width:8px;height:8px;border-radius:50%;background:var(--dot,var(--faint));}
 .badge{display:inline-block;padding:1px 10px;border-radius:var(--pill);font-size:12px;font-weight:600;color:#14110D;}
 .badge--premium{background:var(--cinnabar);color:#FFFDF7;}
 .badge--rich{background:var(--green);color:#FFFDF7;}
@@ -509,12 +507,6 @@ def _render_toc(toc: list[tuple[str, str, str]]) -> str:
 
 # --- Components ----------------------------------------------------------------
 
-def _chip(type_str: str, type_accent: dict[str, str]) -> str:
-    accent = type_accent.get(_nfc(type_str), "--faint")
-    return (f'<span class="chip"><span class="chip-dot" style="--dot:var({accent})"></span>'
-            f'{_esc(type_str)}</span>')
-
-
 def _render_infobox(entry: dict[str, Any], type_accent: dict[str, str], asset_prefix: str = "../../") -> str:
     rows = []
 
@@ -523,9 +515,6 @@ def _render_infobox(entry: dict[str, Any], type_accent: dict[str, str], asset_pr
                     f'<span class="info-value">{value_html}</span></div>')
 
     row("Title", _esc(entry.get("title", "")))
-    type_str = entry.get("type", "") or ("query" if entry.get("kind") == "query" else "")
-    if type_str:
-        row("Type", _chip(type_str, type_accent))
     tier = entry.get("quality_tier", "")
     if tier:
         row("Quality / 结构完整度", f'<span class="badge badge--{_esc(tier)}">{_esc(tier)}</span>')
@@ -595,7 +584,6 @@ def _render_provenance(entry: dict[str, Any], asset_prefix: str = "../../") -> s
 
 def _card(key: str, entry: dict[str, Any], type_accent: dict[str, str], slug_map: dict[str, str]) -> str:
     title = str(entry.get("title", ""))
-    type_str = _nfc(str(entry.get("type", "") or ("query" if entry.get("kind") == "query" else "")))
     tier = str(entry.get("quality_tier", ""))
     summary = str(entry.get("summary", ""))
     keywords = [str(value) for value in (entry.get("keywords") or [])]
@@ -606,8 +594,6 @@ def _card(key: str, entry: dict[str, Any], type_accent: dict[str, str], slug_map
     searchable = [title, category, *keywords, *authors, *aliases, *years, summary, str(entry.get("citekey", "")), str(entry.get("doi", ""))]
     search_payload = _esc(" ".join(searchable).lower())
     meta = ""
-    if type_str:
-        meta += _chip(type_str, type_accent)
     if tier:
         meta += f'<span class="badge badge--{_esc(tier)}">{_esc(tier)}</span>'
     if entry.get("featured"):
@@ -777,15 +763,9 @@ def generate_site(vault: str | Path) -> dict[str, Any]:
     # Build one slug map for topics and captured reports.
     slug_map = _build_slug_map(list(page_keys))
 
-    # Deterministic accent assignment covering both the section key (subject,
-    # else genre, else kind) and the bare genre/kind so the Type chip keeps its
-    # color even when a topic carries both `topic_category` and `type`.
+    # Deterministic accent assignment per index section key.
     all_entries = list(topics.values()) + list(queries.values())
-    accent_keys = sorted({
-        v for e in all_entries
-        for v in (_group_key(e), _nfc(str(e.get("type", "") or ("query" if e.get("kind") == "query" else ""))))
-        if v
-    })
+    accent_keys = sorted({_group_key(e) for e in all_entries} - {""})
     type_accent = {t: _TYPE_ACCENTS[i % len(_TYPE_ACCENTS)] for i, t in enumerate(accent_keys)}
 
     site_dir = wiki_root / "site"
