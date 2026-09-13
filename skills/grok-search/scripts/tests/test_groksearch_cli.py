@@ -184,18 +184,18 @@ class TestTavilyCallFunctions:
         body = call_args.kwargs["json"]
         assert body["query"] == "test query"
         assert body["max_results"] == 3
-        assert body["search_depth"] == "advanced"
+        assert body["search_depth"] == "basic"
         assert body["include_raw_content"] is False
         assert body["include_answer"] is False
 
     @pytest.mark.asyncio
-    async def test_call_tavily_search_exception_returns_none(self, monkeypatch):
+    async def test_call_tavily_search_exception_returns_none(self, monkeypatch, capsys):
         monkeypatch.setenv("TAVILY_API_KEY", "tvly-test")
         import groksearch_cli
         groksearch_cli.Config._instance = None
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=Exception("network"))
+        mock_client.post = AsyncMock(side_effect=httpx.NetworkError("network"))
 
         async def _get_client():
             return mock_client
@@ -203,6 +203,8 @@ class TestTavilyCallFunctions:
 
         result = await groksearch_cli._call_tavily_search("q")
         assert result is None
+        captured = capsys.readouterr()
+        assert "network failure" in captured.err
 
     @pytest.mark.asyncio
     async def test_call_tavily_extract_returns_content(self, monkeypatch):
@@ -371,6 +373,7 @@ class TestWebSearchExtraSources:
 class TestGrokStreamingPreference:
     @pytest.mark.asyncio
     async def test_search_uses_streaming_request(self, monkeypatch):
+        monkeypatch.setenv("GROK_API_URL", "https://api.example/v1")
         from groksearch.provider import GrokSearchProvider
 
         provider = GrokSearchProvider("https://api.example/v1", "sk-test", "grok-test")
@@ -387,6 +390,7 @@ class TestGrokStreamingPreference:
 
     @pytest.mark.asyncio
     async def test_fetch_uses_streaming_request(self, monkeypatch):
+        monkeypatch.setenv("GROK_API_URL", "https://api.example/v1")
         from groksearch.provider import GrokSearchProvider
 
         provider = GrokSearchProvider("https://api.example/v1", "sk-test", "grok-test")
@@ -403,6 +407,7 @@ class TestGrokStreamingPreference:
 
     @pytest.mark.asyncio
     async def test_stream_failure_falls_back_to_non_stream(self, monkeypatch):
+        monkeypatch.setenv("GROK_API_URL", "https://api.example/v1")
         from groksearch.provider import GrokSearchProvider
 
         provider = GrokSearchProvider("https://api.example/v1", "sk-test", "grok-test")
@@ -426,6 +431,7 @@ class TestGrokStreamingPreference:
 
     @pytest.mark.asyncio
     async def test_empty_stream_falls_back_to_non_stream(self, monkeypatch):
+        monkeypatch.setenv("GROK_API_URL", "https://api.example/v1")
         from groksearch.provider import GrokSearchProvider
 
         provider = GrokSearchProvider("https://api.example/v1", "sk-test", "grok-test")

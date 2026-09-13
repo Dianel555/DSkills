@@ -1,4 +1,5 @@
 import json
+import sys
 from typing import List, Optional
 
 import httpx
@@ -43,7 +44,7 @@ async def _call_tavily_search(query: str, max_results: int = 6) -> Optional[List
     body = {
         "query": query,
         "max_results": max_results,
-        "search_depth": "advanced",
+        "search_depth": "basic",
         "include_raw_content": False,
         "include_answer": False,
     }
@@ -61,7 +62,21 @@ async def _call_tavily_search(query: str, max_results: int = 6) -> Optional[List
             }
             for r in results
         ]
-    except Exception:
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        if status == 401:
+            print("ERROR: TAVILY_API_KEY invalid or missing", file=sys.stderr)
+        elif status == 429:
+            print("ERROR: Tavily quota exceeded (rate limit or usage cap)", file=sys.stderr)
+        elif status == 432:
+            print("ERROR: Tavily account suspended or payment required", file=sys.stderr)
+        elif status == 400:
+            print(f"ERROR: Tavily rejected search parameters: {e.response.text[:200]}", file=sys.stderr)
+        else:
+            print(f"ERROR: Tavily search HTTP {status}: {e.response.text[:200]}", file=sys.stderr)
+        return None
+    except (httpx.TimeoutException, httpx.NetworkError) as e:
+        print(f"ERROR: Tavily search network failure: {e}", file=sys.stderr)
         return None
 
 
@@ -73,11 +88,28 @@ async def _call_tavily_extract(url: str) -> Optional[str]:
     try:
         data = await _post_tavily_json(endpoint, body)
         results = data.get("results", [])
+        failed = data.get("failed_results", [])
+        if failed:
+            print(f"WARNING: Tavily extract failed for {len(failed)} URL(s): {failed}", file=sys.stderr)
         if results:
             content = results[0].get("raw_content", "")
             return content if content and content.strip() else None
         return None
-    except Exception:
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        if status == 401:
+            print("ERROR: TAVILY_API_KEY invalid or missing", file=sys.stderr)
+        elif status == 429:
+            print("ERROR: Tavily quota exceeded (rate limit or usage cap)", file=sys.stderr)
+        elif status == 432:
+            print("ERROR: Tavily account suspended or payment required", file=sys.stderr)
+        elif status == 400:
+            print(f"ERROR: Tavily rejected extract parameters: {e.response.text[:200]}", file=sys.stderr)
+        else:
+            print(f"ERROR: Tavily extract HTTP {status}: {e.response.text[:200]}", file=sys.stderr)
+        return None
+    except (httpx.TimeoutException, httpx.NetworkError) as e:
+        print(f"ERROR: Tavily extract network failure: {e}", file=sys.stderr)
         return None
 
 

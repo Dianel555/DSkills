@@ -77,7 +77,27 @@ python scripts/groksearch_cli.py toggle_builtin_tools --action on|off|status [--
 2. Use `web_fetch` on key URLs if summaries insufficient
 3. Retry with adjusted query if first round unsatisfactory
 
-### Phase 3: Result Synthesis
+### Phase 3: URL Verification & Hallucination Guard (MANDATORY)
+
+**Background**: Grok API calls without explicit web-search activation return results from parametric memory, which frequently fabricates URLs (observed 25% liveness rate in testing). All Grok-returned URLs MUST be verified before citation.
+
+**Verification Protocol**:
+1. **URL Liveness Check**: Issue HEAD/GET request to each Grok-returned URL; non-2xx status = unreliable
+2. **Tavily Fallback Triggers** (invoke `web_search` with `--extra-sources N` when ANY apply):
+   - URL liveness rate < 50% in Grok results
+   - Query contains version numbers, release dates, API signatures, or "latest"/"recent" temporal markers (high hallucination surface)
+   - Multiple Grok runs return contradictory URLs for the same factual claim
+   - Grok result descriptions contain specifics (dates/versions/methods) that cannot be confirmed from live URLs
+3. **Tavily Grounding**: When triggered, re-run the same query with `--extra-sources 5-10` to obtain Tavily search results; prioritize these over failed Grok URLs
+4. **Content Extraction**: For critical factual claims, use `web_fetch --via tavily` on verified URLs to extract authoritative source text
+
+**Citation Discipline**:
+- **ONLY** verified-live URLs may appear in final output
+- Fabricated Grok URLs must be dropped entirely (do not present them with a disclaimer; omit them)
+- When Tavily sources replace Grok sources, cite Tavily URLs and mark provider as `tavily`
+- For time-sensitive queries with no live sources, state "Unable to verify current information" rather than citing dead links
+
+### Phase 4: Result Synthesis
 1. Cross-reference multiple sources
 2. **Must annotate source and date** for time-sensitive info
 3. **Must include source URLs**: `Title [<sup>1</sup>](URL)`

@@ -57,6 +57,12 @@ class GrokSearchProvider:
                 {"role": "user", "content": time_context + query + platform_prompt + return_prompt},
             ],
         }
+
+        # Enable web search for supported endpoints
+        if "openrouter" not in config.grok_api_url:
+            # xAI native and compatible endpoints: explicit tools array
+            payload["tools"] = [{"type": "web_search"}]
+
         return await self._execute(payload)
 
     async def fetch(self, url: str) -> str:
