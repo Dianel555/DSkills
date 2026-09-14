@@ -34,7 +34,7 @@ options:
   --PROMPT PROMPT                Instruction for the task to send to Claude Code.
   --cd CD                        Workspace root for Claude Code (cwd + --add-dir).
   --SESSION_ID SESSION_ID        Resume a conversation by session UUID.
-  --model MODEL                  Claude model override.
+  --model MODEL                  Claude model override. Aliases resolve against the active endpoint.
   --permission-mode ...          Claude permission mode override.
   --dangerously-skip-permissions Bypass Claude permission checks.
   --timeout TIMEOUT              Bridge-level timeout in seconds. Omit for no bridge deadline.

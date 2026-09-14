@@ -14,7 +14,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 _SRC = Path(__file__).resolve().parents[1] / "scripts" / "claude_bridge.py"
 _spec = importlib.util.spec_from_file_location("claude_bridge", _SRC)
 cb = importlib.util.module_from_spec(_spec)
@@ -126,7 +125,9 @@ def test_success_envelope_and_workspace_coherence(monkeypatch, capsys, tmp_path)
         captured["workspace"] = workspace
         captured["timeout"] = timeout
         stderr_sink.append("warning")
-        yield _stream_event({"type": "system", "subtype": "init", "session_id": str(fixed_uuid)})
+        yield _stream_event(
+            {"type": "system", "subtype": "init", "session_id": str(fixed_uuid)}
+        )
         yield _stream_event(
             {
                 "type": "assistant",
@@ -167,10 +168,16 @@ def test_success_envelope_and_workspace_coherence(monkeypatch, capsys, tmp_path)
     assert out["SESSION_ID"] == str(fixed_uuid)
     assert out["agent_messages"] == "final answer"
     assert out["stream_file"] == str(stream_file)
-    assert [item["type"] for item in out["all_messages"]] == ["system", "assistant", "result"]
+    assert [item["type"] for item in out["all_messages"]] == [
+        "system",
+        "assistant",
+        "result",
+    ]
     assert out["stderr"] == "warning"
     assert captured["workspace"] == workspace
-    assert captured["popen_cmd"][captured["popen_cmd"].index("--add-dir") + 1] == workspace
+    assert (
+        captured["popen_cmd"][captured["popen_cmd"].index("--add-dir") + 1] == workspace
+    )
     assert stream_file.read_text(encoding="utf-8").count("\n") == 3
 
 
@@ -222,9 +229,13 @@ def test_timeout_failure_is_not_reported_as_success(monkeypatch, capsys, tmp_pat
     fixed_uuid = uuid.UUID("44444444-4444-4444-4444-444444444444")
 
     def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
-        yield _stream_event({"type": "system", "subtype": "init", "session_id": str(fixed_uuid)})
+        yield _stream_event(
+            {"type": "system", "subtype": "init", "session_id": str(fixed_uuid)}
+        )
         stderr_sink.append("still running")
-        raise subprocess.TimeoutExpired(cmd=popen_cmd, timeout=5, stderr="still running")
+        raise subprocess.TimeoutExpired(
+            cmd=popen_cmd, timeout=5, stderr="still running"
+        )
 
     monkeypatch.setattr(cb.uuid, "uuid4", lambda: fixed_uuid)
     monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
@@ -245,6 +256,67 @@ def test_timeout_failure_is_not_reported_as_success(monkeypatch, capsys, tmp_pat
     assert "timed out" in out["error"]
     assert "agent_messages" not in out
     assert Path(out["stream_file"]).read_text(encoding="utf-8").count("\n") == 1
+
+
+def test_timeout_reports_last_transport_error(monkeypatch, capsys, tmp_path):
+    """A 502 during retry must be visible in the timeout envelope, not just the stream."""
+
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
+        yield _stream_event(
+            {
+                "type": "system",
+                "subtype": "api_retry",
+                "attempt": 1,
+                "max_retries": 10,
+                "retry_delay_ms": 576,
+                "error_status": 502,
+                "error": "server_error",
+            }
+        )
+        raise subprocess.TimeoutExpired(cmd=popen_cmd, timeout=5)
+
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
+    args = SimpleNamespace(
+        PROMPT="Analyze auth",
+        cd=tmp_path,
+        SESSION_ID="",
+        model="",
+        permission_mode="",
+        dangerously_skip_permissions=False,
+        timeout=5.0,
+    )
+
+    cb.cmd_run(args)
+    out = json.loads(capsys.readouterr().out)
+
+    assert out["success"] is False
+    assert "timed out" in out["error"]
+    assert "HTTP 502" in out["error"]
+    assert "server_error" in out["error"]
+    assert "attempt 1/10" in out["error"]
+
+
+def test_timeout_without_retry_events_keeps_plain_error(monkeypatch, capsys, tmp_path):
+    """Absent transport failures the timeout message stays unembellished."""
+
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
+        raise subprocess.TimeoutExpired(cmd=popen_cmd, timeout=5)
+
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
+    args = SimpleNamespace(
+        PROMPT="Analyze auth",
+        cd=tmp_path,
+        SESSION_ID="",
+        model="",
+        permission_mode="",
+        dangerously_skip_permissions=False,
+        timeout=5.0,
+    )
+
+    cb.cmd_run(args)
+    out = json.loads(capsys.readouterr().out)
+
+    assert out["error"] == "claude timed out after 5.0s"
 
 
 def test_omitted_timeout_disables_bridge_deadline(monkeypatch, capsys, tmp_path):
@@ -362,18 +434,32 @@ def test_passthrough_timeout_returns_failure(monkeypatch, capsys):
     assert "timed out" in out["error"]
 
 
-def test_windows_resolution_falls_back_to_npm_global(monkeypatch, tmp_path):
+def test_windows_resolution_falls_back_to_bin_dirs(monkeypatch, tmp_path):
     npm_dir = tmp_path / "npm"
     npm_dir.mkdir()
     claude_cmd = npm_dir / "claude.cmd"
     claude_cmd.write_text("@echo off\n", encoding="utf-8")
 
     monkeypatch.setattr(cb.os, "name", "nt", raising=False)
-    monkeypatch.setattr(cb, "_get_windows_npm_paths", lambda: [npm_dir])
+    monkeypatch.setattr(cb, "_get_windows_bin_paths", lambda: [npm_dir])
     monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
 
     resolved = cb._resolve_executable("claude", {"PATH": ""})
     assert resolved == str(claude_cmd)
+
+
+def test_windows_bin_paths_prioritize_native_installer(monkeypatch, tmp_path):
+    """The native installer dir must outrank npm dirs so a fresh install resolves."""
+    home = tmp_path / "home"
+    local = tmp_path / "localappdata"
+    monkeypatch.setattr(cb.os, "name", "nt", raising=False)
+    monkeypatch.setattr(cb.Path, "home", lambda: home)
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+
+    paths = cb._get_windows_bin_paths()
+
+    assert paths[0] == home / ".local" / "bin"
 
 
 def test_prepare_popen_cmd_escapes_windows_prompt(monkeypatch, tmp_path):
@@ -383,7 +469,9 @@ def test_prepare_popen_cmd_escapes_windows_prompt(monkeypatch, tmp_path):
     monkeypatch.setattr(cb.os, "name", "nt", raising=False)
     monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: str(claude_cmd))
 
-    popen_cmd = cb._prepare_popen_cmd(["claude", "-p", prompt], {"PATH": "", "COMSPEC": "cmd.exe"})
+    popen_cmd = cb._prepare_popen_cmd(
+        ["claude", "-p", prompt], {"PATH": "", "COMSPEC": "cmd.exe"}
+    )
 
     assert isinstance(popen_cmd, str)
     assert "claude.cmd" in popen_cmd
@@ -397,10 +485,14 @@ def test_prepare_popen_cmd_escapes_windows_prompt(monkeypatch, tmp_path):
 def test_repository_catalog_registers_codex_cc():
     root = Path(__file__).resolve().parents[3]
     readme = (root / "README.md").read_text(encoding="utf-8")
-    marketplace = json.loads((root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    marketplace = json.loads(
+        (root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+    )
 
     assert "[codex-cc](skills/codex-cc/)" in readme
-    entry = next((item for item in marketplace["plugins"] if item["name"] == "codex-cc"), None)
+    entry = next(
+        (item for item in marketplace["plugins"] if item["name"] == "codex-cc"), None
+    )
     assert entry is not None
     assert entry["source"] == "./skills/codex-cc"
     assert "Claude Code" in entry["description"]

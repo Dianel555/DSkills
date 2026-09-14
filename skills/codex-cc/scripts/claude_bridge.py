@@ -17,9 +17,8 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Iterator, List, Sequence
-
 
 PERMISSION_MODES = [
     "acceptEdits",
@@ -31,12 +30,13 @@ PERMISSION_MODES = [
 ]
 
 
-def _get_windows_npm_paths() -> List[Path]:
-    """Return candidate directories for npm global installs on Windows."""
+def _get_windows_bin_paths() -> list[Path]:
+    """Return candidate directories that may hold the Claude Code launcher on Windows."""
     if os.name != "nt":
         return []
-    paths: List[Path] = []
+    paths: list[Path] = []
     env = os.environ
+    paths.append(Path.home() / ".local" / "bin")
     if prefix := env.get("NPM_CONFIG_PREFIX") or env.get("npm_config_prefix"):
         paths.append(Path(prefix))
     if appdata := env.get("APPDATA"):
@@ -49,13 +49,13 @@ def _get_windows_npm_paths() -> List[Path]:
 
 
 def _augment_path_env(env: dict) -> None:
-    """Prepend npm global directories to PATH if missing."""
+    """Prepend known Claude Code install directories to PATH if missing."""
     if os.name != "nt":
         return
     path_key = next((key for key in env if key.upper() == "PATH"), "PATH")
     path_entries = [entry for entry in env.get(path_key, "").split(os.pathsep) if entry]
     lower_set = {entry.lower() for entry in path_entries}
-    for candidate in _get_windows_npm_paths():
+    for candidate in _get_windows_bin_paths():
         if candidate.is_dir() and str(candidate).lower() not in lower_set:
             path_entries.insert(0, str(candidate))
             lower_set.add(str(candidate).lower())
@@ -82,7 +82,7 @@ def _resolve_executable(name: str, env: dict) -> str:
                 return resolved
         return resolved
     if os.name == "nt":
-        for base in _get_windows_npm_paths():
+        for base in _get_windows_bin_paths():
             for ext in (".cmd", ".bat", ".exe", ".com"):
                 candidate = base / f"{name}{ext}"
                 if candidate.is_file():
@@ -144,7 +144,7 @@ def _normalize_workspace(path_value) -> Path:
     return Path(path_value).expanduser().resolve()
 
 
-def build_claude_cmd(args) -> tuple[List[str], str]:
+def build_claude_cmd(args) -> tuple[list[str], str]:
     """Build `claude -p ...` argv from parsed run args."""
     workspace = str(_normalize_workspace(args.cd))
     session_id = args.SESSION_ID or str(uuid.uuid4())
@@ -200,7 +200,7 @@ def _stream_claude_output(
     workspace: str,
     env: dict,
     timeout: float | None,
-    stderr_sink: List[str],
+    stderr_sink: list[str],
 ) -> Iterator[str]:
     """Yield Claude JSONL records while draining stderr concurrently."""
     process = subprocess.Popen(
@@ -279,7 +279,27 @@ def _event_text(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def run_passthrough(subcommand: str, extra: List[str], timeout: float = 120.0) -> None:
+def _describe_retry_events(retry_events: list[dict]) -> str:
+    """Summarize the last transport-level retry so a timeout is diagnosable."""
+    if not retry_events:
+        return ""
+    last = retry_events[-1]
+    status = last.get("error_status")
+    detail = _event_text(last.get("error"))
+    attempt = last.get("attempt")
+    max_retries = last.get("max_retries")
+    parts = []
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    if detail:
+        parts.append(detail)
+    summary = " ".join(parts) or "unknown transport error"
+    if attempt is not None and max_retries is not None:
+        summary += f", attempt {attempt}/{max_retries}"
+    return f"last transport error: {summary}"
+
+
+def run_passthrough(subcommand: str, extra: list[str], timeout: float = 120.0) -> None:
     """Thin passthrough to `claude <subcommand> ...` for management flows."""
     env = os.environ.copy()
     _augment_path_env(env)
@@ -290,8 +310,8 @@ def run_passthrough(subcommand: str, extra: List[str], timeout: float = 120.0) -
             popen_cmd,
             shell=False,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
+            check=False,
             timeout=timeout,
             text=True,
             encoding="utf-8",
@@ -356,9 +376,10 @@ def cmd_run(args) -> None:
     except OSError as exc:
         emit({"success": False, "error": f"Could not open Claude stream file: {exc}"})
         return
-    stderr_lines: List[str] = []
-    all_messages: List[dict] = []
-    parse_errors: List[str] = []
+    stderr_lines: list[str] = []
+    all_messages: list[dict] = []
+    parse_errors: list[str] = []
+    retry_events: list[dict] = []
     result_seen = False
     result_success = False
     result_text = ""
@@ -388,15 +409,22 @@ def cmd_run(args) -> None:
                 event_session_id = event.get("session_id")
                 if isinstance(event_session_id, str) and event_session_id:
                     session_id = event_session_id
+                if event.get("subtype") == "api_retry":
+                    retry_events.append(event)
                 if event.get("type") == "result":
                     result_seen = True
-                    result_success = event.get("subtype") == "success" and not event.get("is_error", False)
+                    result_success = event.get(
+                        "subtype"
+                    ) == "success" and not event.get("is_error", False)
                     result_text = _event_text(event.get("result"))
     except subprocess.TimeoutExpired as exc:
+        error = f"claude timed out after {args.timeout}s"
+        if retry_detail := _describe_retry_events(retry_events):
+            error += f" ({retry_detail})"
         result = {
             "success": False,
             "SESSION_ID": session_id,
-            "error": f"claude timed out after {args.timeout}s",
+            "error": error,
             "stream_file": str(stream_file),
         }
         stderr = "\n".join(stderr_lines).strip()
@@ -471,10 +499,25 @@ def main() -> None:
         return
 
     parser = argparse.ArgumentParser(description="Claude Bridge")
-    parser.add_argument("--PROMPT", required=True, help="Instruction for the task to send to Claude Code.")
-    parser.add_argument("--cd", required=True, type=Path, help="Workspace root for Claude Code (cwd + --add-dir).")
-    parser.add_argument("--SESSION_ID", default="", help="Resume a conversation by session UUID.")
-    parser.add_argument("--model", default="", help="Claude model override. Omit to inherit the configured default.")
+    parser.add_argument(
+        "--PROMPT",
+        required=True,
+        help="Instruction for the task to send to Claude Code.",
+    )
+    parser.add_argument(
+        "--cd",
+        required=True,
+        type=Path,
+        help="Workspace root for Claude Code (cwd + --add-dir).",
+    )
+    parser.add_argument(
+        "--SESSION_ID", default="", help="Resume a conversation by session UUID."
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Claude model override. Omit to inherit the configured default.",
+    )
     parser.add_argument(
         "--permission-mode",
         default="",
