@@ -440,7 +440,7 @@ def test_windows_resolution_falls_back_to_bin_dirs(monkeypatch, tmp_path):
     claude_cmd = npm_dir / "claude.cmd"
     claude_cmd.write_text("@echo off\n", encoding="utf-8")
 
-    monkeypatch.setattr(cb.os, "name", "nt", raising=False)
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
     monkeypatch.setattr(cb, "_get_windows_bin_paths", lambda: [npm_dir])
     monkeypatch.setattr(cb.shutil, "which", lambda name, path=None: None)
 
@@ -448,25 +448,40 @@ def test_windows_resolution_falls_back_to_bin_dirs(monkeypatch, tmp_path):
     assert resolved == str(claude_cmd)
 
 
-def test_windows_bin_paths_prioritize_native_installer(monkeypatch, tmp_path):
-    """The native installer dir must outrank npm dirs so a fresh install resolves."""
-    home = tmp_path / "home"
-    local = tmp_path / "localappdata"
-    monkeypatch.setattr(cb.os, "name", "nt", raising=False)
-    monkeypatch.setattr(cb.Path, "home", lambda: home)
-    monkeypatch.setenv("LOCALAPPDATA", str(local))
-    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+def test_windows_bin_paths_prioritize_native_installer():
+    """The native installer dir must be probed before npm dirs.
 
-    paths = cb._get_windows_bin_paths()
+    Guards the regression where the candidate list held only npm locations, so a
+    machine whose launcher lives in ~/.local/bin fell through to a bare name.
+    """
+    env = {
+        "NPM_CONFIG_PREFIX": "C:\\npm-prefix",
+        "APPDATA": "C:\\Users\\test\\AppData\\Roaming",
+        "LOCALAPPDATA": "C:\\Users\\test\\AppData\\Local",
+        "ProgramFiles": "C:\\Program Files",
+    }
 
-    assert paths[0] == home / ".local" / "bin"
+    candidates = cb._windows_bin_dir_candidates("C:\\Users\\test", env)
+
+    native = candidates[0]
+    assert native.endswith("bin") and ".local" in native
+    npm_index = next(i for i, c in enumerate(candidates) if "npm-prefix" in c)
+    assert 0 < npm_index
+
+
+def test_windows_bin_dir_candidates_skip_unset_env():
+    candidates = cb._windows_bin_dir_candidates(r"C:\Users\test", {})
+
+    assert len(candidates) == 1
+    assert candidates[0].endswith("bin")
+    assert ".local" in candidates[0]
 
 
 def test_prepare_popen_cmd_escapes_windows_prompt(monkeypatch, tmp_path):
     claude_cmd = tmp_path / "claude.cmd"
     prompt = 'line 1\nline 2\t"quoted" 100%'
 
-    monkeypatch.setattr(cb.os, "name", "nt", raising=False)
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
     monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: str(claude_cmd))
 
     popen_cmd = cb._prepare_popen_cmd(

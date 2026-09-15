@@ -30,27 +30,41 @@ PERMISSION_MODES = [
 ]
 
 
-def _get_windows_bin_paths() -> list[Path]:
-    """Return candidate directories that may hold the Claude Code launcher on Windows."""
-    if os.name != "nt":
-        return []
-    paths: list[Path] = []
-    env = os.environ
-    paths.append(Path.home() / ".local" / "bin")
+def _is_windows() -> bool:
+    """Platform seam: patched in tests so no test mutates the shared os.name."""
+    return os.name == "nt"
+
+
+def _windows_bin_dir_candidates(home: str, env: dict) -> list[str]:
+    """Candidate launcher directories for Windows, native installer first.
+
+    Returns plain strings so the ordering contract stays testable on any platform.
+    """
+    candidates = [os.path.join(home, ".local", "bin")]
     if prefix := env.get("NPM_CONFIG_PREFIX") or env.get("npm_config_prefix"):
-        paths.append(Path(prefix))
+        candidates.append(prefix)
     if appdata := env.get("APPDATA"):
-        paths.append(Path(appdata) / "npm")
+        candidates.append(os.path.join(appdata, "npm"))
     if localappdata := env.get("LOCALAPPDATA"):
-        paths.append(Path(localappdata) / "npm")
+        candidates.append(os.path.join(localappdata, "npm"))
     if programfiles := env.get("ProgramFiles"):
-        paths.append(Path(programfiles) / "nodejs")
-    return paths
+        candidates.append(os.path.join(programfiles, "nodejs"))
+    return candidates
+
+
+def _get_windows_bin_paths() -> list[Path]:
+    """Resolve the Windows launcher candidate directories to existing paths."""
+    if not _is_windows():
+        return []
+    return [
+        Path(entry)
+        for entry in _windows_bin_dir_candidates(str(Path.home()), os.environ)
+    ]
 
 
 def _augment_path_env(env: dict) -> None:
     """Prepend known Claude Code install directories to PATH if missing."""
-    if os.name != "nt":
+    if not _is_windows():
         return
     path_key = next((key for key in env if key.upper() == "PATH"), "PATH")
     path_entries = [entry for entry in env.get(path_key, "").split(os.pathsep) if entry]
@@ -70,7 +84,7 @@ def _resolve_executable(name: str, env: dict) -> str:
     path_val = env.get(path_key)
     win_exts = {".exe", ".cmd", ".bat", ".com"}
     if resolved := shutil.which(name, path=path_val):
-        if os.name == "nt":
+        if _is_windows():
             suffix = Path(resolved).suffix.lower()
             if not suffix:
                 resolved_dir = str(Path(resolved).parent)
@@ -81,7 +95,7 @@ def _resolve_executable(name: str, env: dict) -> str:
             elif suffix not in win_exts:
                 return resolved
         return resolved
-    if os.name == "nt":
+    if _is_windows():
         for base in _get_windows_bin_paths():
             for ext in (".cmd", ".bat", ".exe", ".com"):
                 candidate = base / f"{name}{ext}"
@@ -104,7 +118,7 @@ def _prepare_popen_cmd(cmd: Sequence[str], env: dict):
     exe_path = _resolve_executable(popen_cmd[0], env)
     popen_cmd[0] = exe_path
 
-    if os.name == "nt" and Path(exe_path).suffix.lower() in {".cmd", ".bat"}:
+    if _is_windows() and Path(exe_path).suffix.lower() in {".cmd", ".bat"}:
         popen_cmd = [windows_escape(arg) for arg in popen_cmd]
 
         def _cmd_quote(arg: str) -> str:
@@ -125,7 +139,7 @@ def _prepare_popen_cmd(cmd: Sequence[str], env: dict):
 
 def configure_windows_stdio() -> None:
     """Configure stdout/stderr to use UTF-8 encoding on Windows."""
-    if os.name != "nt":
+    if not _is_windows():
         return
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
