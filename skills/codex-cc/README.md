@@ -63,7 +63,7 @@ python scripts/claude_bridge.py plugin marketplace list
 | `--PROMPT` | Yes* | Task instruction for Claude Code |
 | `--cd` | Yes* | Workspace root used for both process `cwd` and `--add-dir` |
 | `--SESSION_ID` | No | Resume an existing Claude conversation |
-| `--model` | No | Claude model override |
+| `--model` | No | Claude model override. Aliases (e.g. `haiku`, `sonnet`) are resolved by Claude Code against the active endpoint, so a custom `ANTHROPIC_BASE_URL` may map them to a differently-named backend model |
 | `--permission-mode` | No | Claude permission mode override |
 | `--dangerously-skip-permissions` | No | Opt-in permission bypass |
 | `--timeout` | No | Bridge-level timeout in seconds; omit it to wait without a bridge deadline |
@@ -90,6 +90,11 @@ The bridge reads Claude's streaming output incrementally and treats the final
 `result` record as the authoritative completion message. Intermediate
 `assistant` records remain available in `stream_file` and, when
 `--return-all-messages` is set, in `all_messages`.
+
+When the bridge deadline fires, the error also reports the last transport-level
+retry it observed (for example `claude timed out after 300.0s (last transport
+error: HTTP 502 server_error, attempt 1/10)`), so an upstream or proxy outage is
+distinguishable from a genuinely slow task.
 
 Failed task execution:
 

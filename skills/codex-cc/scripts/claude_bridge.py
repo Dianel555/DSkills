@@ -17,9 +17,8 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Iterator, List, Sequence
-
 
 PERMISSION_MODES = [
     "acceptEdits",
@@ -31,31 +30,46 @@ PERMISSION_MODES = [
 ]
 
 
-def _get_windows_npm_paths() -> List[Path]:
-    """Return candidate directories for npm global installs on Windows."""
-    if os.name != "nt":
-        return []
-    paths: List[Path] = []
-    env = os.environ
+def _is_windows() -> bool:
+    """Platform seam: patched in tests so no test mutates the shared os.name."""
+    return os.name == "nt"
+
+
+def _windows_bin_dir_candidates(home: str, env: dict) -> list[str]:
+    """Candidate launcher directories for Windows, native installer first.
+
+    Returns plain strings so the ordering contract stays testable on any platform.
+    """
+    candidates = [os.path.join(home, ".local", "bin")]
     if prefix := env.get("NPM_CONFIG_PREFIX") or env.get("npm_config_prefix"):
-        paths.append(Path(prefix))
+        candidates.append(prefix)
     if appdata := env.get("APPDATA"):
-        paths.append(Path(appdata) / "npm")
+        candidates.append(os.path.join(appdata, "npm"))
     if localappdata := env.get("LOCALAPPDATA"):
-        paths.append(Path(localappdata) / "npm")
+        candidates.append(os.path.join(localappdata, "npm"))
     if programfiles := env.get("ProgramFiles"):
-        paths.append(Path(programfiles) / "nodejs")
-    return paths
+        candidates.append(os.path.join(programfiles, "nodejs"))
+    return candidates
+
+
+def _get_windows_bin_paths() -> list[Path]:
+    """Resolve the Windows launcher candidate directories to existing paths."""
+    if not _is_windows():
+        return []
+    return [
+        Path(entry)
+        for entry in _windows_bin_dir_candidates(str(Path.home()), os.environ)
+    ]
 
 
 def _augment_path_env(env: dict) -> None:
-    """Prepend npm global directories to PATH if missing."""
-    if os.name != "nt":
+    """Prepend known Claude Code install directories to PATH if missing."""
+    if not _is_windows():
         return
     path_key = next((key for key in env if key.upper() == "PATH"), "PATH")
     path_entries = [entry for entry in env.get(path_key, "").split(os.pathsep) if entry]
     lower_set = {entry.lower() for entry in path_entries}
-    for candidate in _get_windows_npm_paths():
+    for candidate in _get_windows_bin_paths():
         if candidate.is_dir() and str(candidate).lower() not in lower_set:
             path_entries.insert(0, str(candidate))
             lower_set.add(str(candidate).lower())
@@ -70,7 +84,7 @@ def _resolve_executable(name: str, env: dict) -> str:
     path_val = env.get(path_key)
     win_exts = {".exe", ".cmd", ".bat", ".com"}
     if resolved := shutil.which(name, path=path_val):
-        if os.name == "nt":
+        if _is_windows():
             suffix = Path(resolved).suffix.lower()
             if not suffix:
                 resolved_dir = str(Path(resolved).parent)
@@ -81,8 +95,8 @@ def _resolve_executable(name: str, env: dict) -> str:
             elif suffix not in win_exts:
                 return resolved
         return resolved
-    if os.name == "nt":
-        for base in _get_windows_npm_paths():
+    if _is_windows():
+        for base in _get_windows_bin_paths():
             for ext in (".cmd", ".bat", ".exe", ".com"):
                 candidate = base / f"{name}{ext}"
                 if candidate.is_file():
@@ -104,7 +118,7 @@ def _prepare_popen_cmd(cmd: Sequence[str], env: dict):
     exe_path = _resolve_executable(popen_cmd[0], env)
     popen_cmd[0] = exe_path
 
-    if os.name == "nt" and Path(exe_path).suffix.lower() in {".cmd", ".bat"}:
+    if _is_windows() and Path(exe_path).suffix.lower() in {".cmd", ".bat"}:
         popen_cmd = [windows_escape(arg) for arg in popen_cmd]
 
         def _cmd_quote(arg: str) -> str:
@@ -125,7 +139,7 @@ def _prepare_popen_cmd(cmd: Sequence[str], env: dict):
 
 def configure_windows_stdio() -> None:
     """Configure stdout/stderr to use UTF-8 encoding on Windows."""
-    if os.name != "nt":
+    if not _is_windows():
         return
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
@@ -144,7 +158,7 @@ def _normalize_workspace(path_value) -> Path:
     return Path(path_value).expanduser().resolve()
 
 
-def build_claude_cmd(args) -> tuple[List[str], str]:
+def build_claude_cmd(args) -> tuple[list[str], str]:
     """Build `claude -p ...` argv from parsed run args."""
     workspace = str(_normalize_workspace(args.cd))
     session_id = args.SESSION_ID or str(uuid.uuid4())
@@ -200,7 +214,7 @@ def _stream_claude_output(
     workspace: str,
     env: dict,
     timeout: float | None,
-    stderr_sink: List[str],
+    stderr_sink: list[str],
 ) -> Iterator[str]:
     """Yield Claude JSONL records while draining stderr concurrently."""
     process = subprocess.Popen(
@@ -279,7 +293,27 @@ def _event_text(value) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def run_passthrough(subcommand: str, extra: List[str], timeout: float = 120.0) -> None:
+def _describe_retry_events(retry_events: list[dict]) -> str:
+    """Summarize the last transport-level retry so a timeout is diagnosable."""
+    if not retry_events:
+        return ""
+    last = retry_events[-1]
+    status = last.get("error_status")
+    detail = _event_text(last.get("error"))
+    attempt = last.get("attempt")
+    max_retries = last.get("max_retries")
+    parts = []
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    if detail:
+        parts.append(detail)
+    summary = " ".join(parts) or "unknown transport error"
+    if attempt is not None and max_retries is not None:
+        summary += f", attempt {attempt}/{max_retries}"
+    return f"last transport error: {summary}"
+
+
+def run_passthrough(subcommand: str, extra: list[str], timeout: float = 120.0) -> None:
     """Thin passthrough to `claude <subcommand> ...` for management flows."""
     env = os.environ.copy()
     _augment_path_env(env)
@@ -290,8 +324,8 @@ def run_passthrough(subcommand: str, extra: List[str], timeout: float = 120.0) -
             popen_cmd,
             shell=False,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
+            check=False,
             timeout=timeout,
             text=True,
             encoding="utf-8",
@@ -356,9 +390,10 @@ def cmd_run(args) -> None:
     except OSError as exc:
         emit({"success": False, "error": f"Could not open Claude stream file: {exc}"})
         return
-    stderr_lines: List[str] = []
-    all_messages: List[dict] = []
-    parse_errors: List[str] = []
+    stderr_lines: list[str] = []
+    all_messages: list[dict] = []
+    parse_errors: list[str] = []
+    retry_events: list[dict] = []
     result_seen = False
     result_success = False
     result_text = ""
@@ -388,15 +423,22 @@ def cmd_run(args) -> None:
                 event_session_id = event.get("session_id")
                 if isinstance(event_session_id, str) and event_session_id:
                     session_id = event_session_id
+                if event.get("subtype") == "api_retry":
+                    retry_events.append(event)
                 if event.get("type") == "result":
                     result_seen = True
-                    result_success = event.get("subtype") == "success" and not event.get("is_error", False)
+                    result_success = event.get(
+                        "subtype"
+                    ) == "success" and not event.get("is_error", False)
                     result_text = _event_text(event.get("result"))
     except subprocess.TimeoutExpired as exc:
+        error = f"claude timed out after {args.timeout}s"
+        if retry_detail := _describe_retry_events(retry_events):
+            error += f" ({retry_detail})"
         result = {
             "success": False,
             "SESSION_ID": session_id,
-            "error": f"claude timed out after {args.timeout}s",
+            "error": error,
             "stream_file": str(stream_file),
         }
         stderr = "\n".join(stderr_lines).strip()
@@ -471,10 +513,25 @@ def main() -> None:
         return
 
     parser = argparse.ArgumentParser(description="Claude Bridge")
-    parser.add_argument("--PROMPT", required=True, help="Instruction for the task to send to Claude Code.")
-    parser.add_argument("--cd", required=True, type=Path, help="Workspace root for Claude Code (cwd + --add-dir).")
-    parser.add_argument("--SESSION_ID", default="", help="Resume a conversation by session UUID.")
-    parser.add_argument("--model", default="", help="Claude model override. Omit to inherit the configured default.")
+    parser.add_argument(
+        "--PROMPT",
+        required=True,
+        help="Instruction for the task to send to Claude Code.",
+    )
+    parser.add_argument(
+        "--cd",
+        required=True,
+        type=Path,
+        help="Workspace root for Claude Code (cwd + --add-dir).",
+    )
+    parser.add_argument(
+        "--SESSION_ID", default="", help="Resume a conversation by session UUID."
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Claude model override. Omit to inherit the configured default.",
+    )
     parser.add_argument(
         "--permission-mode",
         default="",
