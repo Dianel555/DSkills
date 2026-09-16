@@ -12,6 +12,7 @@ This bridge runs agy, discovers the conversation DB, extracts the reply, and
 returns JSON isomorphic to gemini_bridge.py.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -21,7 +22,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 CONVERSATIONS_DIR = Path.home() / ".gemini" / "antigravity-cli" / "conversations"
 SETTINGS_FILE = Path.home() / ".gemini" / "antigravity-cli" / "settings.json"
@@ -65,7 +65,8 @@ OUTPUT_PROTOCOL = (
 
 # --- protobuf parsing (verified against agy v1.0.10 conversation DBs) ---
 
-def read_varint(b: bytes, i: int) -> Tuple[int, int]:
+
+def read_varint(b: bytes, i: int) -> tuple[int, int]:
     shift = val = 0
     while i < len(b):
         c = b[i]
@@ -77,7 +78,7 @@ def read_varint(b: bytes, i: int) -> Tuple[int, int]:
     return val, i
 
 
-def scan_protobuf(b: bytes) -> List[Tuple[int, int, object]]:
+def scan_protobuf(b: bytes) -> list[tuple[int, int, object]]:
     i = 0
     out = []
     while i < len(b):
@@ -91,13 +92,13 @@ def scan_protobuf(b: bytes) -> List[Tuple[int, int, object]]:
             out.append((fn, 0, v))
         elif wt == 2:
             ln, i = read_varint(b, i)
-            out.append((fn, 2, b[i:i + ln]))
+            out.append((fn, 2, b[i : i + ln]))
             i += ln
         elif wt == 1:
-            out.append((fn, 1, b[i:i + 8]))
+            out.append((fn, 1, b[i : i + 8]))
             i += 8
         elif wt == 5:
-            out.append((fn, 5, b[i:i + 4]))
+            out.append((fn, 5, b[i : i + 4]))
             i += 4
         else:
             break
@@ -121,9 +122,7 @@ def max_step_idx(db_path: Path) -> int:
     return row[0] if row and row[0] is not None else -1
 
 
-def extract_answer(db_path: Path, include_reasoning: bool = False,
-                   after_idx: int = -1
-                   ) -> Tuple[str, str, List[dict]]:
+def extract_answer(db_path: Path, include_reasoning: bool = False, after_idx: int = -1) -> tuple[str, str, list[dict]]:
     """Return (answer, reasoning, all_messages) from an agy conversation DB.
 
     Only step_type=15 rows with idx > after_idx belong to this run; the
@@ -134,8 +133,7 @@ def extract_answer(db_path: Path, include_reasoning: bool = False,
     con = sqlite3.connect(str(db_path))
     cur = con.cursor()
     rows = cur.execute(
-        "SELECT idx, step_payload FROM steps "
-        "WHERE step_type=15 AND idx > ? ORDER BY idx",
+        "SELECT idx, step_payload FROM steps WHERE step_type=15 AND idx > ? ORDER BY idx",
         (after_idx,),
     ).fetchall()
     con.close()
@@ -184,8 +182,7 @@ def extract_run_error(db_path: Path, after_idx: int = -1) -> str:
     con = sqlite3.connect(str(db_path))
     try:
         rows = con.execute(
-            "SELECT step_payload FROM steps "
-            "WHERE step_type=17 AND idx > ? ORDER BY idx",
+            "SELECT step_payload FROM steps WHERE step_type=17 AND idx > ? ORDER BY idx",
             (after_idx,),
         ).fetchall()
     finally:
@@ -194,33 +191,29 @@ def extract_run_error(db_path: Path, after_idx: int = -1) -> str:
     for (blob,) in rows:
         if not blob:
             continue
-        f24 = next((v for fn, wt, v in scan_protobuf(blob)
-                    if fn == 24 and wt == 2), None)
+        f24 = next((v for fn, wt, v in scan_protobuf(blob) if fn == 24 and wt == 2), None)
         if f24 is None:
             continue
-        f3 = next((v for fn, wt, v in scan_protobuf(f24)
-                   if fn == 3 and wt == 2), None)
+        f3 = next((v for fn, wt, v in scan_protobuf(f24) if fn == 3 and wt == 2), None)
         if f3 is None:
             continue
         parts = {}
         for fn, wt, v in scan_protobuf(f3):
             if wt == 2 and fn in (1, 2, 9):
-                try:
+                with contextlib.suppress(UnicodeDecodeError):
                     parts[fn] = v.decode("utf-8")
-                except UnicodeDecodeError:
-                    pass
         detail = parts.get(2) or parts.get(9) or parts.get(1)
         if detail:
             return detail
     if rows:
-        return ("agy recorded an error step whose detail could not be decoded "
-                "(fix: extract_run_error())")
+        return "agy recorded an error step whose detail could not be decoded (fix: extract_run_error())"
     return ""
 
 
 # --- agy binary resolution ---
 
-def find_agy() -> Optional[str]:
+
+def find_agy() -> str | None:
     for candidate in AGY_BIN_CANDIDATES:
         resolved = shutil.which(candidate) if candidate == "agy" else None
         if resolved:
@@ -234,8 +227,7 @@ def find_agy() -> Optional[str]:
 def auth_status() -> str:
     if os.environ.get("ANTIGRAVITY_API_KEY"):
         return "api-key"
-    if (Path.home() / ".config/antigravity").is_dir() or \
-            (Path.home() / ".gemini/antigravity-cli").is_dir():
+    if (Path.home() / ".config/antigravity").is_dir() or (Path.home() / ".gemini/antigravity-cli").is_dir():
         return "oauth"
     return "missing"
 
@@ -248,13 +240,14 @@ def resolve_model_alias(user_input: str) -> str:
 
 # --- conversation DB discovery ---
 
+
 def snapshot_db_uuids() -> set:
     if not CONVERSATIONS_DIR.is_dir():
         return set()
     return {p.stem for p in CONVERSATIONS_DIR.glob("*.db")}
 
 
-def new_db_uuid(before: set, after: set) -> Optional[str]:
+def new_db_uuid(before: set, after: set) -> str | None:
     new_uuids = after - before
     if not new_uuids:
         return None
@@ -263,16 +256,19 @@ def new_db_uuid(before: set, after: set) -> Optional[str]:
     # >1 new DB: pick newest by mtime, log warning via stderr
     candidates = [CONVERSATIONS_DIR / f"{u}.db" for u in new_uuids]
     candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    print(f"[agy_bridge] warning: {len(new_uuids)} new conversation DBs detected; "
-          f"picking newest: {candidates[0].stem}", file=sys.stderr)
+    print(
+        f"[agy_bridge] warning: {len(new_uuids)} new conversation DBs detected; picking newest: {candidates[0].stem}",
+        file=sys.stderr,
+    )
     return candidates[0].stem
 
 
 # --- model / timeout helpers ---
 
+
 def current_default_model() -> str:
     try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
             return json.load(f).get("model", "")
     except (OSError, json.JSONDecodeError):
         return ""
@@ -291,29 +287,33 @@ def parse_timeout_to_seconds(s: str) -> int:
 
 # --- core run ---
 
-def short_answer_note(answer: str, all_msgs: List[dict]) -> Optional[str]:
+
+def short_answer_note(answer: str, all_msgs: list[dict]) -> str | None:
     """Warn when the reply is very short but the run had thinking-only steps."""
     if len(answer) < 60 and any(m["reasoning"] and not m["answer"] for m in all_msgs):
-        return ("This run produced a very short text reply and contained thinking-only "
-                "steps; the full deliverable may be in tool outputs rather than the reply.")
+        return (
+            "This run produced a very short text reply and contained thinking-only "
+            "steps; the full deliverable may be in tool outputs rather than the reply."
+        )
     return None
 
 
-def run_agy_print(cmd: List[str], cwd: str, timeout_s: int
-                  ) -> Tuple[int, str, str, bool]:
+def run_agy_print(cmd: list[str], cwd: str, timeout_s: int) -> tuple[int, str, str, bool]:
     try:
         cp = subprocess.run(
             cmd,
             cwd=cwd,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=timeout_s,
+            check=False,
         )
-        return (cp.returncode,
-                cp.stdout.decode("utf-8", "replace"),
-                cp.stderr.decode("utf-8", "replace"),
-                False)
+        return (
+            cp.returncode,
+            cp.stdout.decode("utf-8", "replace"),
+            cp.stderr.decode("utf-8", "replace"),
+            False,
+        )
     except subprocess.TimeoutExpired as e:
         out = (e.stdout or b"").decode("utf-8", "replace") if e.stdout else ""
         err = (e.stderr or b"").decode("utf-8", "replace") if e.stderr else ""
@@ -322,7 +322,7 @@ def run_agy_print(cmd: List[str], cwd: str, timeout_s: int
         return (127, "", "agy binary not found", False)
 
 
-def build_agy_cmd(agy_path: str, args) -> List[str]:
+def build_agy_cmd(agy_path: str, args) -> list[str]:
     cmd = [
         agy_path,
         "--print",
@@ -349,10 +349,8 @@ def configure_windows_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            try:
+            with contextlib.suppress(ValueError, OSError):
                 reconfigure(encoding="utf-8")
-            except (ValueError, OSError):
-                pass
 
 
 def emit(result: dict) -> None:
@@ -361,94 +359,135 @@ def emit(result: dict) -> None:
 
 # --- subcommands ---
 
+
 def cmd_check() -> None:
     path = find_agy()
     if not path:
-        emit({"installed": False, "path": "", "version": "", "auth": "unknown",
-              "model": current_default_model(),
-              "conversations_dir": str(CONVERSATIONS_DIR),
-              "error": f"agy binary not found; {INSTALL_HINT}"})
+        emit(
+            {
+                "installed": False,
+                "path": "",
+                "version": "",
+                "auth": "unknown",
+                "model": current_default_model(),
+                "conversations_dir": str(CONVERSATIONS_DIR),
+                "error": f"agy binary not found; {INSTALL_HINT}",
+            }
+        )
         return
     try:
-        version = subprocess.run(
-            [path, "--version"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            timeout=15, text=True).stdout.strip().splitlines()[0]
+        version = (
+            subprocess.run(
+                [path, "--version"],
+                capture_output=True,
+                timeout=15,
+                text=True,
+                check=False,
+            )
+            .stdout.strip()
+            .splitlines()[0]
+        )
     except (subprocess.TimeoutExpired, IndexError, OSError):
         version = "unknown"
-    emit({"installed": True, "path": path, "version": version,
-          "auth": auth_status(), "model": current_default_model(),
-          "conversations_dir": str(CONVERSATIONS_DIR), "error": ""})
+    emit(
+        {
+            "installed": True,
+            "path": path,
+            "version": version,
+            "auth": auth_status(),
+            "model": current_default_model(),
+            "conversations_dir": str(CONVERSATIONS_DIR),
+            "error": "",
+        }
+    )
 
 
-def cmd_plugin(extra: List[str]) -> None:
+def cmd_plugin(extra: list[str]) -> None:
     path = find_agy()
     if not path:
-        emit({"success": False, "output": "", "error": f"agy not installed; {INSTALL_HINT}"})
+        emit(
+            {
+                "success": False,
+                "output": "",
+                "error": f"agy not installed; {INSTALL_HINT}",
+            }
+        )
         return
     cmd = [path, "plugin"] + extra
     try:
-        cp = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            timeout=120, text=True)
-        emit({"success": cp.returncode == 0, "output": cp.stdout,
-              "error": cp.stderr})
+        cp = subprocess.run(cmd, capture_output=True, timeout=120, text=True, check=False)
+        emit({"success": cp.returncode == 0, "output": cp.stdout, "error": cp.stderr})
     except subprocess.TimeoutExpired:
         emit({"success": False, "output": "", "error": "agy plugin timed out"})
 
 
 # --- main run path ---
 
+
 def cmd_run(args) -> None:
     cd: Path = args.cd
     if not cd.exists():
-        emit({"success": False,
-              "error": f"The workspace root directory `{cd.absolute()}` does not exist. "
-                       f"Please check the path and try again."})
+        emit(
+            {
+                "success": False,
+                "error": f"The workspace root directory `{cd.absolute()}` does not exist. "
+                f"Please check the path and try again.",
+            }
+        )
         return
 
     agy_path = find_agy()
     if not agy_path:
-        emit({"success": False,
-              "error": f"agy is not installed; {INSTALL_HINT}"})
+        emit({"success": False, "error": f"agy is not installed; {INSTALL_HINT}"})
         return
     if auth_status() == "missing":
-        emit({"success": False,
-              "error": "agy is not authenticated. Run `agy` once interactively, "
-                       "or export ANTIGRAVITY_API_KEY."})
+        emit(
+            {
+                "success": False,
+                "error": "agy is not authenticated. Run `agy` once interactively, or export ANTIGRAVITY_API_KEY.",
+            }
+        )
         return
 
     before = snapshot_db_uuids()
-    after_idx = max_step_idx(
-        CONVERSATIONS_DIR / f"{args.SESSION_ID}.db"
-    ) if args.SESSION_ID else -1
+    after_idx = max_step_idx(CONVERSATIONS_DIR / f"{args.SESSION_ID}.db") if args.SESSION_ID else -1
     cmd = build_agy_cmd(agy_path, args)
     outer_timeout = parse_timeout_to_seconds(args.print_timeout) + 60
-    rc, out, err, timed_out = run_agy_print(cmd, cwd=str(cd.absolute()),
-                                            timeout_s=outer_timeout)
+    rc, _, err, timed_out = run_agy_print(cmd, cwd=str(cd.absolute()), timeout_s=outer_timeout)
 
-    if args.SESSION_ID:
-        target_uuid = args.SESSION_ID
-    else:
-        target_uuid = new_db_uuid(before, snapshot_db_uuids())
+    target_uuid = args.SESSION_ID or new_db_uuid(before, snapshot_db_uuids())
 
     if target_uuid is None:
         if timed_out:
-            emit({"success": False,
-                  "error": f"agy timed out after {outer_timeout}s with no conversation DB "
-                           f"created. stderr: {err}"})
+            emit(
+                {
+                    "success": False,
+                    "error": f"agy timed out after {outer_timeout}s with no conversation DB created. stderr: {err}",
+                }
+            )
         else:
-            emit({"success": False,
-                  "error": f"agy exited (rc={rc}) but created no conversation DB. "
-                           f"stderr: {err}"})
+            emit(
+                {
+                    "success": False,
+                    "error": f"agy exited (rc={rc}) but created no conversation DB. stderr: {err}",
+                }
+            )
         return
 
     db_path = CONVERSATIONS_DIR / f"{target_uuid}.db"
     if not db_path.exists():
-        emit({"success": False, "SESSION_ID": target_uuid,
-              "error": f"conversation DB not found: {db_path}"})
+        emit(
+            {
+                "success": False,
+                "SESSION_ID": target_uuid,
+                "error": f"conversation DB not found: {db_path}",
+            }
+        )
         return
 
     answer, reasoning, all_msgs = extract_answer(
-        db_path, include_reasoning=args.return_all_messages, after_idx=after_idx)
+        db_path, include_reasoning=args.return_all_messages, after_idx=after_idx
+    )
     note = short_answer_note(answer, all_msgs)
 
     # Persist every extracted step as JSONL so partial results survive a
@@ -457,8 +496,7 @@ def cmd_run(args) -> None:
     sfd, stream_path = tempfile.mkstemp(prefix="agy_steps_", suffix=".jsonl")
     with os.fdopen(sfd, "w", encoding="utf-8") as fp:
         for m in all_msgs:
-            fp.write(json.dumps({"SESSION_ID": target_uuid, **m},
-                                ensure_ascii=False) + "\n")
+            fp.write(json.dumps({"SESSION_ID": target_uuid, **m}, ensure_ascii=False) + "\n")
 
     result = {"success": bool(answer), "SESSION_ID": target_uuid}
     if answer:
@@ -469,14 +507,10 @@ def cmd_run(args) -> None:
     else:
         upstream = extract_run_error(db_path, after_idx=after_idx)
         if upstream:
-            result["error"] = (
-                f"agy produced no reply because the run failed upstream (rc={rc}): "
-                f"{upstream}"
-            )
+            result["error"] = f"agy produced no reply because the run failed upstream (rc={rc}): {upstream}"
         elif timed_out:
             result["error"] = (
-                f"agy timed out after {outer_timeout}s before producing a reply in DB "
-                f"{target_uuid}. stderr: {err}"
+                f"agy timed out after {outer_timeout}s before producing a reply in DB {target_uuid}. stderr: {err}"
             )
         else:
             result["error"] = (
@@ -497,22 +531,38 @@ def cmd_run(args) -> None:
 def main() -> None:
     configure_windows_stdio()
     import argparse
+
     parser = argparse.ArgumentParser(description="Antigravity (agy) Bridge")
     parser.add_argument("--PROMPT", help="Instruction for the task to send to agy.")
     parser.add_argument("--cd", type=Path, help="Workspace root for agy (cwd + --add-dir).")
-    parser.add_argument("--model", default="",
-                        help="Model alias (flash-low/medium/high, pro-low/high, sonnet, "
-                             "opus, gpt-oss) or canonical string. Omit to use settings default.")
-    parser.add_argument("--SESSION_ID", default="",
-                        help="Resume a conversation by UUID. Maps to agy --conversation.")
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Model alias (flash-low/medium/high, pro-low/high, sonnet, "
+        "opus, gpt-oss) or canonical string. Omit to use settings default.",
+    )
+    parser.add_argument(
+        "--SESSION_ID",
+        default="",
+        help="Resume a conversation by UUID. Maps to agy --conversation.",
+    )
     parser.add_argument("--sandbox", action="store_true", help="Run in agy sandbox mode.")
-    parser.add_argument("--no-skip-permissions", action="store_true",
-                        help="Do NOT pass --dangerously-skip-permissions. WARNING: with "
-                             "default toolPermission=request-review, print mode WILL HANG.")
-    parser.add_argument("--print-timeout", default="10m",
-                        help="agy --print-timeout (e.g. 5m, 10m). Default 10m.")
-    parser.add_argument("--return-all-messages", action="store_true",
-                        help="Include reasoning + all type=15 steps in the response.")
+    parser.add_argument(
+        "--no-skip-permissions",
+        action="store_true",
+        help="Do NOT pass --dangerously-skip-permissions. WARNING: with "
+        "default toolPermission=request-review, print mode WILL HANG.",
+    )
+    parser.add_argument(
+        "--print-timeout",
+        default="10m",
+        help="agy --print-timeout (e.g. 5m, 10m). Default 10m.",
+    )
+    parser.add_argument(
+        "--return-all-messages",
+        action="store_true",
+        help="Include reasoning + all type=15 steps in the response.",
+    )
     sub = parser.add_subparsers(dest="subcommand")
     sub.add_parser("check", help="Probe agy install / version / auth / current model.")
     sub.add_parser("plugin", help="Thin passthrough to `agy plugin`.")
@@ -524,7 +574,7 @@ def main() -> None:
         return
     if args.subcommand == "plugin":
         # re-parse to capture plugin's own args verbatim
-        rest = sys.argv[sys.argv.index("plugin") + 1:]
+        rest = sys.argv[sys.argv.index("plugin") + 1 :]
         cmd_plugin(rest)
         return
 
