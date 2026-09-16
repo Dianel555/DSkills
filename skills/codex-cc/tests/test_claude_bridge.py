@@ -126,9 +126,7 @@ def test_success_envelope_and_workspace_coherence(monkeypatch, capsys, tmp_path)
         captured["workspace"] = workspace
         captured["timeout"] = timeout
         stderr_sink.append("warning")
-        yield _stream_event(
-            {"type": "system", "subtype": "init", "session_id": str(fixed_uuid)}
-        )
+        yield _stream_event({"type": "system", "subtype": "init", "session_id": str(fixed_uuid)})
         yield _stream_event(
             {
                 "type": "assistant",
@@ -176,9 +174,7 @@ def test_success_envelope_and_workspace_coherence(monkeypatch, capsys, tmp_path)
     ]
     assert out["stderr"] == "warning"
     assert captured["workspace"] == workspace
-    assert (
-        captured["popen_cmd"][captured["popen_cmd"].index("--add-dir") + 1] == workspace
-    )
+    assert captured["popen_cmd"][captured["popen_cmd"].index("--add-dir") + 1] == workspace
     assert stream_file.read_text(encoding="utf-8").count("\n") == 3
 
 
@@ -230,13 +226,9 @@ def test_timeout_failure_is_not_reported_as_success(monkeypatch, capsys, tmp_pat
     fixed_uuid = uuid.UUID("44444444-4444-4444-4444-444444444444")
 
     def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
-        yield _stream_event(
-            {"type": "system", "subtype": "init", "session_id": str(fixed_uuid)}
-        )
+        yield _stream_event({"type": "system", "subtype": "init", "session_id": str(fixed_uuid)})
         stderr_sink.append("still running")
-        raise subprocess.TimeoutExpired(
-            cmd=popen_cmd, timeout=5, stderr="still running"
-        )
+        raise subprocess.TimeoutExpired(cmd=popen_cmd, timeout=5, stderr="still running")
 
     monkeypatch.setattr(cb.uuid, "uuid4", lambda: fixed_uuid)
     monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
@@ -469,7 +461,7 @@ def test_windows_bin_paths_prioritize_native_installer():
     native = candidates[0]
     assert native.endswith("bin") and ".local" in native
     npm_index = next(i for i, c in enumerate(candidates) if "npm-prefix" in c)
-    assert 0 < npm_index
+    assert npm_index > 0
 
 
 def test_windows_bin_dir_candidates_skip_unset_env():
@@ -487,9 +479,7 @@ def test_prepare_popen_cmd_escapes_windows_prompt(monkeypatch, tmp_path):
     monkeypatch.setattr(cb, "_is_windows", lambda: True)
     monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: str(claude_cmd))
 
-    popen_cmd = cb._prepare_popen_cmd(
-        ["claude", "-p", prompt], {"PATH": "", "COMSPEC": "cmd.exe"}
-    )
+    popen_cmd = cb._prepare_popen_cmd(["claude", "-p", prompt], {"PATH": "", "COMSPEC": "cmd.exe"})
 
     assert isinstance(popen_cmd, str)
     assert "claude.cmd" in popen_cmd
@@ -503,14 +493,10 @@ def test_prepare_popen_cmd_escapes_windows_prompt(monkeypatch, tmp_path):
 def test_repository_catalog_registers_codex_cc():
     root = Path(__file__).resolve().parents[3]
     readme = (root / "README.md").read_text(encoding="utf-8")
-    marketplace = json.loads(
-        (root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
-    )
+    marketplace = json.loads((root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
 
     assert "[codex-cc](skills/codex-cc/)" in readme
-    entry = next(
-        (item for item in marketplace["plugins"] if item["name"] == "codex-cc"), None
-    )
+    entry = next((item for item in marketplace["plugins"] if item["name"] == "codex-cc"), None)
     assert entry is not None
     assert entry["source"] == "./skills/codex-cc"
     assert "Claude Code" in entry["description"]
@@ -556,12 +542,8 @@ def test_cmd_quote_rust_bat_encoding(monkeypatch):
     """Embedded quotes must survive the npm .cmd shim re-parse: a prompt holding
     "Out of scope" arrives as ONE argv entry, not three (the `of` argv leak)."""
     monkeypatch.setattr(cb, "_is_windows", lambda: True)
-    monkeypatch.setattr(
-        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
-    )
-    command = cb._prepare_popen_cmd(
-        ["claude", "-p", 'A "Out of scope" B 100% done'], {"COMSPEC": "cmd.exe"}
-    )
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd")
+    command = cb._prepare_popen_cmd(["claude", "-p", 'A "Out of scope" B 100% done'], {"COMSPEC": "cmd.exe"})
     assert command.startswith('"cmd.exe" /d /s /c "')
     assert '"A ""Out of scope"" B 100' in command
     assert '"^""' not in command
@@ -571,9 +553,7 @@ def test_cmd_quote_rust_bat_encoding(monkeypatch):
 
 def test_cmd_quote_trailing_backslash(monkeypatch):
     monkeypatch.setattr(cb, "_is_windows", lambda: True)
-    monkeypatch.setattr(
-        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
-    )
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd")
     command = cb._prepare_popen_cmd(["claude", "-p", "\\"], {})
     assert command.endswith('"-p" "\\\\""')
 
@@ -598,9 +578,7 @@ def test_shim_run_moves_prompt_to_stdin(monkeypatch, capsys, tmp_path):
         )
 
     monkeypatch.setattr(cb, "_is_windows", lambda: True)
-    monkeypatch.setattr(
-        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
-    )
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd")
     monkeypatch.setattr(cb, "_prepare_popen_cmd", lambda cmd, env: cmd)
     monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
     args = SimpleNamespace(
@@ -746,9 +724,7 @@ def test_passthrough_keeps_stdin_detached_on_windows(monkeypatch, capsys):
         return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
 
     monkeypatch.setattr(cb, "_is_windows", lambda: True)
-    monkeypatch.setattr(
-        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
-    )
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd")
     monkeypatch.setattr(cb.subprocess, "run", fake_run)
 
     out = _run_main(monkeypatch, capsys, ["mcp", "list"])
@@ -807,9 +783,7 @@ def test_normal_completion_wait_timeout_triggers_tree_kill(monkeypatch):
 
     proc = _Proc()
     monkeypatch.setattr(cb.subprocess, "Popen", lambda command, **kwargs: proc)
-    monkeypatch.setattr(
-        cb.subprocess, "run", lambda command, **kwargs: killed.append(command)
-    )
+    monkeypatch.setattr(cb.subprocess, "run", lambda command, **kwargs: killed.append(command))
 
     list(cb._stream_claude_output("cmdline", ".", {}, None, []))
 

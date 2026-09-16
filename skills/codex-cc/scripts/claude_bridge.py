@@ -7,6 +7,7 @@ delegate work while preserving Claude's normal runtime customizations.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import queue
@@ -56,10 +57,7 @@ def _get_windows_bin_paths() -> list[Path]:
     """Resolve the Windows launcher candidate directories to existing paths."""
     if not _is_windows():
         return []
-    return [
-        Path(entry)
-        for entry in _windows_bin_dir_candidates(str(Path.home()), os.environ)
-    ]
+    return [Path(entry) for entry in _windows_bin_dir_candidates(str(Path.home()), os.environ)]
 
 
 def _augment_path_env(env: dict) -> None:
@@ -161,10 +159,8 @@ def configure_windows_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            try:
+            with contextlib.suppress(ValueError, OSError):
                 reconfigure(encoding="utf-8")
-            except (ValueError, OSError):
-                pass
 
 
 def emit(result: dict) -> None:
@@ -248,10 +244,8 @@ def _stop_process(process: subprocess.Popen) -> None:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         process.kill()
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
             process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
 
 
 def _stream_claude_output(
@@ -278,15 +272,10 @@ def _stream_claude_output(
     if stdin_prompt is not None and process.stdin is not None:
 
         def write_prompt() -> None:
-            try:
+            with contextlib.suppress(BrokenPipeError, OSError, ValueError):
                 process.stdin.write(stdin_prompt)
-            except (BrokenPipeError, OSError, ValueError):
-                pass
-            finally:
-                try:
-                    process.stdin.close()
-                except (BrokenPipeError, OSError, ValueError):
-                    pass
+            with contextlib.suppress(BrokenPipeError, OSError, ValueError):
+                process.stdin.close()
 
         threading.Thread(target=write_prompt, daemon=True).start()
 
@@ -502,9 +491,7 @@ def cmd_run(args) -> None:
                     retry_events.append(event)
                 if event.get("type") == "result":
                     result_seen = True
-                    result_success = event.get(
-                        "subtype"
-                    ) == "success" and not event.get("is_error", False)
+                    result_success = event.get("subtype") == "success" and not event.get("is_error", False)
                     result_text = _event_text(event.get("result"))
     except subprocess.TimeoutExpired as exc:
         error = f"claude timed out after {args.timeout}s"
@@ -599,9 +586,7 @@ def main() -> None:
         type=Path,
         help="Workspace root for Claude Code (cwd + --add-dir).",
     )
-    parser.add_argument(
-        "--SESSION_ID", default="", help="Resume a conversation by session UUID."
-    )
+    parser.add_argument("--SESSION_ID", default="", help="Resume a conversation by session UUID.")
     parser.add_argument(
         "--model",
         default="",
