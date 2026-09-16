@@ -1,0 +1,29 @@
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = [
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "W",     # pycodestyle warnings
+    "I",     # isort
+    "N",     # pep8-naming
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "A",     # flake8-builtins
+    "C4",    # flake8-comprehensions
+    "SIM",   # flake8-simplify
+    "ASYNC", # flake8-async
+    "S",     # flake8-bandit
+    "BLE",   # flake8-blind-except
+]
+ignore = [
+    "E501",    # line too long (handled by line-length above)
+    "BLE001",  # blind except: intentional at the CLI boundary and in stream fallback
+    "ASYNC230", # blocking open(): settings/config IO is small and off the hot path
+    "ASYNC240", # blocking path methods: same
+    "ASYNC109", # `timeout` params are Tavily API fields, not client timeouts
+]
+
+[lint.per-file-ignores]
+"**/tests/*" = ["S101"]  # asserts are the test mechanism

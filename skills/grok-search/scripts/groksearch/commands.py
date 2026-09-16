@@ -9,7 +9,14 @@ import httpx
 from .config import config
 from .formatting import merge_search_results
 from .provider import GrokSearchProvider
-from .tavily import _call_tavily_extract, _call_tavily_map, _call_tavily_search, _tavily_unavailable_reason
+from .tavily import (
+    _call_tavily_crawl,
+    _call_tavily_extract,
+    _call_tavily_map,
+    _call_tavily_research,
+    _call_tavily_search,
+    _tavily_unavailable_reason,
+)
 
 
 async def cmd_web_search(args):
@@ -30,7 +37,7 @@ async def cmd_web_search(args):
             grok_result = await provider.search(args.query, args.platform, args.min_results, args.max_results)
             tavily_results = None
 
-        merged = merge_search_results(grok_result, tavily_results)
+        merged = merge_search_results(grok_result, tavily_results, tavily_requested=extra_sources > 0)
         print(json.dumps(merged, ensure_ascii=False, indent=2))
     except ValueError as e:
         print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
@@ -50,7 +57,10 @@ async def cmd_web_fetch(args):
                 sys.exit(1)
             result = await _call_tavily_extract(args.url)
             if result is None:
-                print(json.dumps({"error": "Tavily extract failed or returned empty content"}, ensure_ascii=False), file=sys.stderr)
+                print(
+                    json.dumps({"error": "Tavily extract failed or returned empty content"}, ensure_ascii=False),
+                    file=sys.stderr,
+                )
                 sys.exit(1)
         else:
             provider = GrokSearchProvider(config.grok_api_url, config.grok_api_key, config.grok_model)
@@ -69,16 +79,57 @@ async def cmd_web_fetch(args):
         sys.exit(1)
 
 
+async def _print_or_fail(coro):
+    """Print a Tavily command result, or report a config error as JSON on stderr.
+
+    Tuning values are validated lazily on property access, so an invalid TAVILY_* env
+    surfaces as a ValueError from inside the call rather than at startup.
+    """
+    try:
+        print(await coro)
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
+        sys.exit(1)
+
+
 async def cmd_web_map(args):
-    result = await _call_tavily_map(
-        args.url,
-        args.instructions,
-        args.max_depth,
-        args.max_breadth,
-        args.limit,
-        args.timeout,
+    await _print_or_fail(
+        _call_tavily_map(
+            args.url,
+            args.instructions,
+            args.max_depth,
+            args.max_breadth,
+            args.limit,
+            args.timeout,
+        )
     )
-    print(result)
+
+
+async def cmd_web_crawl(args):
+    await _print_or_fail(
+        _call_tavily_crawl(
+            args.url,
+            args.instructions,
+            args.max_depth,
+            args.max_breadth,
+            args.limit,
+            args.timeout,
+            args.select_paths,
+            args.exclude_paths,
+        )
+    )
+
+
+async def cmd_web_research(args):
+    await _print_or_fail(
+        _call_tavily_research(
+            args.input,
+            args.model,
+            args.output_length,
+            args.citation_format,
+            getattr(args, "output_schema", None),
+        )
+    )
 
 
 async def cmd_get_config_info(args):
@@ -104,14 +155,17 @@ async def cmd_get_config_info(args):
                     test_result["response_time_ms"] = round(response_time, 2)
                     try:
                         models_data = response.json()
-                        if "data" in models_data:
-                            model_count = len(models_data["data"])
-                            test_result["message"] = f"Retrieved {model_count} models"
-                            test_result["available_models"] = [
-                                m.get("id") for m in models_data["data"] if isinstance(m, dict)
-                            ]
-                    except Exception:
-                        pass
+                    except ValueError as e:
+                        # A 200 with a non-JSON body still means the endpoint is reachable.
+                        if config.debug_enabled:
+                            print(f"[DEBUG] Could not parse models response: {e}", file=sys.stderr)
+                        models_data = {}
+                    if "data" in models_data:
+                        model_count = len(models_data["data"])
+                        test_result["message"] = f"Retrieved {model_count} models"
+                        test_result["available_models"] = [
+                            m.get("id") for m in models_data["data"] if isinstance(m, dict)
+                        ]
                 else:
                     test_result["status"] = "⚠️ Connection Issue"
                     test_result["message"] = f"HTTP {response.status_code}"
@@ -147,7 +201,10 @@ async def cmd_toggle_builtin_tools(args):
     if args.root:
         root = Path(args.root)
         if not root.exists():
-            print(json.dumps({"error": f"Specified root does not exist: {args.root}"}, ensure_ascii=False), file=sys.stderr)
+            print(
+                json.dumps({"error": f"Specified root does not exist: {args.root}"}, ensure_ascii=False),
+                file=sys.stderr,
+            )
             sys.exit(1)
     else:
         root = Path.cwd()
@@ -170,7 +227,7 @@ async def cmd_toggle_builtin_tools(args):
     tools = ["WebFetch", "WebSearch"]
 
     if settings_path.exists():
-        with open(settings_path, "r", encoding="utf-8") as f:
+        with open(settings_path, encoding="utf-8") as f:
             settings = json.load(f)
     else:
         settings = {"permissions": {"deny": []}}

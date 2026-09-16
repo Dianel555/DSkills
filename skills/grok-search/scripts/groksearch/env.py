@@ -1,9 +1,8 @@
 import os
 from pathlib import Path
-from typing import Optional
 
 
-def load_dotenv(env_path: Optional[Path] = None) -> bool:
+def load_dotenv(env_path: Path | None = None) -> bool:
     search_paths = []
     if env_path:
         search_paths.append(env_path)
@@ -16,7 +15,7 @@ def load_dotenv(env_path: Optional[Path] = None) -> bool:
     for path in search_paths:
         if path.exists():
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if not line or line.startswith("#"):
@@ -33,6 +32,6 @@ def load_dotenv(env_path: Optional[Path] = None) -> bool:
                         if key and key not in os.environ:
                             os.environ[key] = value
                 return True
-            except IOError:
+            except OSError:
                 continue
     return False

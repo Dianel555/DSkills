@@ -42,6 +42,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_map.add_argument("--limit", type=int, default=50, help="Total link limit")
     p_map.add_argument("--timeout", type=int, default=150, help="Operation timeout (seconds)")
 
+    p_crawl = subparsers.add_parser("web_crawl", help="Crawl a website's pages (Tavily)")
+    p_crawl.add_argument("--url", "-u", required=True, help="Root URL to crawl")
+    p_crawl.add_argument("--instructions", default="", help="Natural language filter for crawler")
+    p_crawl.add_argument(
+        "--max-depth", type=int, default=None, help="Max crawl depth (default: TAVILY_CRAWL_MAX_DEPTH)"
+    )
+    p_crawl.add_argument(
+        "--max-breadth", type=int, default=None, help="Max links per page (default: TAVILY_CRAWL_MAX_BREADTH)"
+    )
+    p_crawl.add_argument("--limit", type=int, default=None, help="Total page limit (default: TAVILY_CRAWL_LIMIT)")
+    p_crawl.add_argument("--timeout", type=int, default=None, help="Operation timeout (default: TAVILY_CRAWL_TIMEOUT)")
+    p_crawl.add_argument("--select-paths", default=None, help="Comma-separated path regexes to include")
+    p_crawl.add_argument("--exclude-paths", default=None, help="Comma-separated path regexes to exclude")
+
+    p_research = subparsers.add_parser("web_research", help="Run a cited research task (Tavily, async)")
+    p_research.add_argument("--input", "-i", required=True, help="Research question or task")
+    p_research.add_argument(
+        "--model", default=None, help="Research model: mini|pro|auto (default: TAVILY_RESEARCH_MODEL)"
+    )
+    p_research.add_argument(
+        "--output-length", default=None, help="short|standard|long (default: TAVILY_RESEARCH_OUTPUT_LENGTH)"
+    )
+    p_research.add_argument("--citation-format", default=None, help="numbered|mla|apa|chicago")
+    p_research.add_argument(
+        "--output-schema",
+        default=None,
+        help="Path to a JSON Schema file for structured output (default: TAVILY_RESEARCH_OUTPUT_SCHEMA)",
+    )
+
     p_config = subparsers.add_parser("get_config_info", help="Show configuration and test connection")
     p_config.add_argument("--no-test", action="store_true", help="Skip connection test")
 

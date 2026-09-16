@@ -36,6 +36,12 @@ python scripts/groksearch_cli.py web_fetch --url "https://..." --via tavily
 # Map a website's structure (Tavily)
 python scripts/groksearch_cli.py web_map --url "https://docs.example.com" [--instructions "API only"] [--max-depth 2] [--max-breadth 20] [--limit 50] [--timeout 150]
 
+# Crawl a website's pages with extraction (Tavily; own 100 RPM limit)
+python scripts/groksearch_cli.py web_crawl --url "https://docs.example.com" [--instructions "API only"] [--max-depth 2] [--limit 50] [--select-paths "/docs/.*"] [--exclude-paths "/blog/.*"] [--timeout 150]
+
+# Run a cited research task (Tavily; async submit + poll; own 20 RPM limit)
+python scripts/groksearch_cli.py web_research --input "question to investigate" [--model mini|pro|auto] [--output-length short|standard|long] [--citation-format numbered|mla|apa|chicago] [--output-schema schema.json]
+
 # Check config
 python scripts/groksearch_cli.py get_config_info [--no-test]
 
@@ -62,6 +68,8 @@ python scripts/groksearch_cli.py toggle_builtin_tools --action on|off|status [--
 | `web_search` | `query`(required), `platform`/`min_results`/`max_results`(optional), `extra_sources`(int, 0=disabled) | `[{title,url,description,provider?}]` |
 | `web_fetch` | `url`(required), `out`(optional), `via`(grok\|tavily, default grok) | Structured Markdown |
 | `web_map` | `url`(required), `instructions`/`max_depth`/`max_breadth`/`limit`/`timeout`(optional) | `{base_url,results,response_time}` JSON |
+| `web_crawl` | `url`(required), `instructions`/`max_depth`/`max_breadth`/`limit`/`select_paths`/`exclude_paths`/`timeout`(optional; unset falls back to `TAVILY_CRAWL_*`) | `{base_url,results,response_time,usage?}` JSON |
+| `web_research` | `input`(required), `model`/`output_length`/`citation_format`(optional; unset falls back to `TAVILY_RESEARCH_*`) | `{request_id,status,content,sources,usage?}` JSON |
 | `get_config_info` | `no_test`(optional) | `{api_url,status,connection_test,tavily_*}` |
 | `switch_model` | `model`(required) | `{previous_model,current_model}` |
 | `toggle_builtin_tools` | `action`(on/off/status), `root`(optional) | `{blocked,deny_list}` |

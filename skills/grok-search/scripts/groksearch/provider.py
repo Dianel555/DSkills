@@ -1,8 +1,6 @@
 import json
 import sys
-from datetime import datetime, timezone
-
-import httpx
+from datetime import UTC, datetime
 
 from .config import config
 from .http import get_http_client, retry_attempts
@@ -14,7 +12,7 @@ def _get_local_time_info() -> str:
         local_tz = datetime.now().astimezone().tzinfo
         local_now = datetime.now(local_tz)
     except Exception:
-        local_now = datetime.now(timezone.utc)
+        local_now = datetime.now(UTC)
 
     weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     return (
@@ -26,10 +24,23 @@ def _get_local_time_info() -> str:
 
 def _needs_time_context(query: str) -> bool:
     keywords = [
-        "current", "now", "today", "tomorrow", "yesterday",
-        "this week", "last week", "next week",
-        "latest", "recent", "recently", "up-to-date",
-        "当前", "现在", "今天", "最新", "最近",
+        "current",
+        "now",
+        "today",
+        "tomorrow",
+        "yesterday",
+        "this week",
+        "last week",
+        "next week",
+        "latest",
+        "recent",
+        "recently",
+        "up-to-date",
+        "当前",
+        "现在",
+        "今天",
+        "最新",
+        "最近",
     ]
     query_lower = query.lower()
     return any(kw in query_lower or kw in query for kw in keywords)

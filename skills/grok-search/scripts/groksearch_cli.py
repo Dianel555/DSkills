@@ -4,13 +4,37 @@
 import asyncio
 
 from groksearch.cli import build_parser
+from groksearch.commands import (
+    cmd_get_config_info as _cmd_get_config_info_impl,
+)
+from groksearch.commands import (
+    cmd_switch_model as _cmd_switch_model_impl,
+)
+from groksearch.commands import (
+    cmd_toggle_builtin_tools as _cmd_toggle_builtin_tools_impl,
+)
+from groksearch.commands import (
+    cmd_web_crawl as _cmd_web_crawl_impl,
+)
+from groksearch.commands import (
+    cmd_web_fetch as _cmd_web_fetch_impl,
+)
+from groksearch.commands import (
+    cmd_web_map as _cmd_web_map_impl,
+)
+from groksearch.commands import (
+    cmd_web_research as _cmd_web_research_impl,
+)
+from groksearch.commands import (
+    cmd_web_search as _cmd_web_search_impl,
+)
 from groksearch.config import Config, config
 from groksearch.env import load_dotenv
 from groksearch.formatting import extract_json, merge_search_results
 from groksearch.http import (
     RETRYABLE_STATUS_CODES,
-    _WaitWithRetryAfter,
     _is_retryable_exception,
+    _WaitWithRetryAfter,
     close_http_client,
     get_http_client,
     retry_attempts,
@@ -18,20 +42,26 @@ from groksearch.http import (
 from groksearch.prompts import FETCH_PROMPT, SEARCH_PROMPT
 from groksearch.provider import GrokSearchProvider
 from groksearch.tavily import (
+    _call_tavily_crawl as _call_tavily_crawl_impl,
+)
+from groksearch.tavily import (
     _call_tavily_extract as _call_tavily_extract_impl,
+)
+from groksearch.tavily import (
     _call_tavily_map as _call_tavily_map_impl,
+)
+from groksearch.tavily import (
+    _call_tavily_research as _call_tavily_research_impl,
+)
+from groksearch.tavily import (
     _call_tavily_search as _call_tavily_search_impl,
+)
+from groksearch.tavily import (
     _tavily_unavailable_reason as _tavily_unavailable_reason_impl,
 )
-from groksearch.commands import (
-    cmd_get_config_info as _cmd_get_config_info_impl,
-    cmd_switch_model as _cmd_switch_model_impl,
-    cmd_toggle_builtin_tools as _cmd_toggle_builtin_tools_impl,
-    cmd_web_fetch as _cmd_web_fetch_impl,
-    cmd_web_map as _cmd_web_map_impl,
-    cmd_web_search as _cmd_web_search_impl,
+from groksearch.tavily import (
+    _validate_output_schema as _validate_output_schema_impl,
 )
-
 
 load_dotenv()
 
@@ -61,6 +91,8 @@ def _sync_internal_modules() -> None:
     commands_module._call_tavily_search = _call_tavily_search
     commands_module._call_tavily_extract = _call_tavily_extract
     commands_module._call_tavily_map = _call_tavily_map
+    commands_module._call_tavily_crawl = _call_tavily_crawl
+    commands_module._call_tavily_research = _call_tavily_research
     commands_module._tavily_unavailable_reason = _tavily_unavailable_reason
 
 
@@ -74,13 +106,47 @@ async def _call_tavily_extract(url: str):
     return await _call_tavily_extract_impl(url)
 
 
-async def _call_tavily_map(url: str, instructions: str = "", max_depth: int = 1,
-                           max_breadth: int = 20, limit: int = 50, timeout: int = 150):
+async def _call_tavily_map(
+    url: str, instructions: str = "", max_depth: int = 1, max_breadth: int = 20, limit: int = 50, timeout: int = 150
+):
     _sync_internal_modules()
     return await _call_tavily_map_impl(url, instructions, max_depth, max_breadth, limit, timeout)
 
 
+async def _call_tavily_crawl(
+    url: str,
+    instructions: str = "",
+    max_depth=None,
+    max_breadth=None,
+    limit=None,
+    timeout=None,
+    select_paths=None,
+    exclude_paths=None,
+):
+    _sync_internal_modules()
+    return await _call_tavily_crawl_impl(
+        url, instructions, max_depth, max_breadth, limit, timeout, select_paths, exclude_paths
+    )
+
+
+async def _call_tavily_research(
+    input_text: str,
+    model=None,
+    output_length=None,
+    citation_format=None,
+    output_schema=None,
+    include_domains=None,
+    exclude_domains=None,
+):
+    _sync_internal_modules()
+    return await _call_tavily_research_impl(
+        input_text, model, output_length, citation_format, output_schema, include_domains, exclude_domains
+    )
+
+
 _tavily_unavailable_reason = _tavily_unavailable_reason_impl
+
+_validate_output_schema = _validate_output_schema_impl
 
 
 async def cmd_web_search(args):
@@ -96,6 +162,16 @@ async def cmd_web_fetch(args):
 async def cmd_web_map(args):
     _sync_internal_modules()
     return await _cmd_web_map_impl(args)
+
+
+async def cmd_web_crawl(args):
+    _sync_internal_modules()
+    return await _cmd_web_crawl_impl(args)
+
+
+async def cmd_web_research(args):
+    _sync_internal_modules()
+    return await _cmd_web_research_impl(args)
 
 
 async def cmd_get_config_info(args):
@@ -118,6 +194,8 @@ async def _run_command(args):
         "web_search": cmd_web_search,
         "web_fetch": cmd_web_fetch,
         "web_map": cmd_web_map,
+        "web_crawl": cmd_web_crawl,
+        "web_research": cmd_web_research,
         "get_config_info": cmd_get_config_info,
         "switch_model": cmd_switch_model,
         "toggle_builtin_tools": cmd_toggle_builtin_tools,
@@ -145,8 +223,10 @@ __all__ = [
     "RETRYABLE_STATUS_CODES",
     "SEARCH_PROMPT",
     "_WaitWithRetryAfter",
+    "_call_tavily_crawl",
     "_call_tavily_extract",
     "_call_tavily_map",
+    "_call_tavily_research",
     "_call_tavily_search",
     "_is_retryable_exception",
     "_tavily_unavailable_reason",
@@ -154,8 +234,10 @@ __all__ = [
     "cmd_get_config_info",
     "cmd_switch_model",
     "cmd_toggle_builtin_tools",
+    "cmd_web_crawl",
     "cmd_web_fetch",
     "cmd_web_map",
+    "cmd_web_research",
     "cmd_web_search",
     "close_http_client",
     "config",

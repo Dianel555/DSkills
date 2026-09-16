@@ -1,16 +1,14 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Optional
 
 import httpx
-from tenacity.wait import wait_base
-from tenacity import retry_if_exception, stop_after_attempt, wait_random_exponential
 from tenacity import AsyncRetrying as _AsyncRetrying
-
+from tenacity import retry_if_exception, stop_after_attempt, wait_random_exponential
+from tenacity.wait import wait_base
 
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 _DEFAULT_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=15.0, pool=None)
-_http_client: Optional[httpx.AsyncClient] = None
+_http_client: httpx.AsyncClient | None = None
 
 
 def _is_retryable_exception(exc) -> bool:
@@ -34,7 +32,7 @@ class _WaitWithRetryAfter(wait_base):
                     return retry_after
         return self._base_wait(retry_state)
 
-    def _parse_retry_after(self, response: httpx.Response) -> Optional[float]:
+    def _parse_retry_after(self, response: httpx.Response) -> float | None:
         header = response.headers.get("Retry-After")
         if not header:
             return None
@@ -44,8 +42,8 @@ class _WaitWithRetryAfter(wait_base):
         try:
             retry_dt = parsedate_to_datetime(header)
             if retry_dt.tzinfo is None:
-                retry_dt = retry_dt.replace(tzinfo=timezone.utc)
-            delay = (retry_dt - datetime.now(timezone.utc)).total_seconds()
+                retry_dt = retry_dt.replace(tzinfo=UTC)
+            delay = (retry_dt - datetime.now(UTC)).total_seconds()
             return max(0.0, delay)
         except (TypeError, ValueError):
             return None
@@ -69,10 +67,11 @@ async def close_http_client():
         _http_client = None
 
 
-def retry_attempts(config):
+def retry_attempts(config, before_sleep=None):
     return _AsyncRetrying(
         stop=stop_after_attempt(config.retry_max_attempts),
         wait=_WaitWithRetryAfter(config.retry_multiplier, config.retry_max_wait),
         retry=retry_if_exception(_is_retryable_exception),
+        before_sleep=before_sleep,
         reraise=True,
     )
