@@ -1,4 +1,5 @@
 """Indexer ignore patterns: .gitignore + .aceignore merge behavior."""
+
 from indexer import Indexer
 
 

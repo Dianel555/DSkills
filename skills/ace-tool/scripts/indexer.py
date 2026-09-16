@@ -8,28 +8,41 @@ import logging
 import os
 import shutil
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
 try:
     from .templates import (
-        TEXT_EXTENSIONS, EXCLUDE_PATTERNS, BINARY_EXTENSIONS,
-        MAX_BLOB_SIZE, MAX_LINES_PER_BLOB, UPLOAD_BATCH_COUNT,
-        MAX_BATCH_SIZE, INDEX_DIR, INDEX_FILE, ENCODING_CHAIN,
+        BINARY_EXTENSIONS,
+        ENCODING_CHAIN,
+        EXCLUDE_PATTERNS,
+        INDEX_DIR,
+        INDEX_FILE,
+        MAX_BATCH_SIZE,
+        MAX_BLOB_SIZE,
+        MAX_LINES_PER_BLOB,
+        TEXT_EXTENSIONS,
+        UPLOAD_BATCH_COUNT,
         USER_AGENT,
     )
-    from .utils import build_api_url, get_session_id, detect_and_read, sanitize_content
+    from .utils import build_api_url, detect_and_read, get_session_id, sanitize_content
 except ImportError:
     from templates import (
-        TEXT_EXTENSIONS, EXCLUDE_PATTERNS, BINARY_EXTENSIONS,
-        MAX_BLOB_SIZE, MAX_LINES_PER_BLOB, UPLOAD_BATCH_COUNT,
-        MAX_BATCH_SIZE, INDEX_DIR, INDEX_FILE, ENCODING_CHAIN,
+        BINARY_EXTENSIONS,
+        ENCODING_CHAIN,
+        EXCLUDE_PATTERNS,
+        INDEX_DIR,
+        INDEX_FILE,
+        MAX_BATCH_SIZE,
+        MAX_BLOB_SIZE,
+        MAX_LINES_PER_BLOB,
+        TEXT_EXTENSIONS,
+        UPLOAD_BATCH_COUNT,
         USER_AGENT,
     )
-    from utils import build_api_url, get_session_id, detect_and_read, sanitize_content
+    from utils import build_api_url, detect_and_read, get_session_id, sanitize_content
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +71,7 @@ class Indexer:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.index_path = self.root / INDEX_DIR / INDEX_FILE
-        self._index: Optional[ProjectIndex] = None
+        self._index: ProjectIndex | None = None
         self._gitignore_patterns: list[str] = []
         self._child_cache_dirs: set[Path] = set()
         self._load_ignore_patterns()
@@ -168,7 +181,7 @@ class Indexer:
                     # briefly holds open; genuine ACL errors still propagate.
                     if attempt == 2:
                         raise
-                    time.sleep(0.05 * (2 ** attempt))
+                    time.sleep(0.05 * (2**attempt))
         except FileNotFoundError as e:
             # A concurrent ancestor index absorbed this cache dir mid-write.
             # Abandon persistence; the next run here inherits the ancestor root.
@@ -341,7 +354,9 @@ class Indexer:
         current_size = 0
         for b in blobs:
             item_size = len(b["content"].encode("utf-8"))
-            if current_batch and (len(current_batch) >= UPLOAD_BATCH_COUNT or current_size + item_size > MAX_BATCH_SIZE):
+            if current_batch and (
+                len(current_batch) >= UPLOAD_BATCH_COUNT or current_size + item_size > MAX_BATCH_SIZE
+            ):
                 batches.append(current_batch)
                 current_batch = []
                 current_size = 0
@@ -366,7 +381,7 @@ class Indexer:
                         time.sleep(retry_after)
                         continue
                     if resp.status_code >= 500:
-                        wait = 2 ** attempt
+                        wait = 2**attempt
                         log.warning("Server error %d, retrying in %ds", resp.status_code, wait)
                         time.sleep(wait)
                         continue
@@ -374,7 +389,7 @@ class Indexer:
                     return True
             except httpx.TransportError as e:
                 if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                     log.warning("Transport error, retrying: %s", e)
                 else:
                     log.error("Upload failed after retries: %s", e)

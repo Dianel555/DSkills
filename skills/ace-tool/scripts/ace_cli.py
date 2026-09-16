@@ -9,14 +9,14 @@ from pathlib import Path
 import httpx
 
 try:
-    from .utils import load_env
     from .client import AceToolClient
     from .indexer import Indexer
+    from .utils import load_env
     from .web_ui import run_interactive_enhance
 except ImportError:
-    from utils import load_env
     from client import AceToolClient
     from indexer import Indexer
+    from utils import load_env
     from web_ui import run_interactive_enhance
 
 load_env()
@@ -39,7 +39,10 @@ def cmd_enhance_prompt(args):
 
     if not args.no_interactive:
         result = run_interactive_enhance(
-            client, args.prompt, history, args.port,
+            client,
+            args.prompt,
+            history,
+            args.port,
             auto_open_browser=not args.no_browser,
             project_root=args.project_root,
         )
@@ -67,7 +70,14 @@ def cmd_index(args):
     """Handle index command."""
     client = AceToolClient(args.api_url, args.token, args.endpoint)
     if not client.base_url or not client.token:
-        print(json.dumps({"error": "No authentication configured for indexing. Set up session.json, AUGMENT_SESSION_AUTH, or ACE_API_URL/ACE_API_TOKEN"}), file=sys.stderr)
+        print(
+            json.dumps(
+                {
+                    "error": "No authentication configured for indexing. Set up session.json, AUGMENT_SESSION_AUTH, or ACE_API_URL/ACE_API_TOKEN"
+                }
+            ),
+            file=sys.stderr,
+        )
         sys.exit(1)
     indexer = Indexer(args.project_root, client.base_url, client.token)
     blob_names = indexer.get_blob_names()
@@ -81,9 +91,7 @@ def cmd_index(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="ACE-Tool CLI - Semantic code search and prompt enhancement"
-    )
+    parser = argparse.ArgumentParser(description="ACE-Tool CLI - Semantic code search and prompt enhancement")
     parser.add_argument("--api-url", help="API base URL")
     parser.add_argument("--token", help="API authentication token")
     parser.add_argument(
@@ -104,8 +112,12 @@ def main():
     p_enhance.add_argument("-H", "--history", default="", help="Conversation history")
     p_enhance.add_argument("--history-file", help="File containing conversation history")
     p_enhance.add_argument("--project-root", help="Project root path (optional)")
-    p_enhance.add_argument("--reasoning-effort", default=None, metavar="LEVEL",
-                           help="Reasoning effort: none/minimal/low/medium/high/xhigh/max (default: none, or PROMPT_ENHANCER_REASONING_EFFORT; empty string omits the parameter)")
+    p_enhance.add_argument(
+        "--reasoning-effort",
+        default=None,
+        metavar="LEVEL",
+        help="Reasoning effort: none/minimal/low/medium/high/xhigh/max (default: none, or PROMPT_ENHANCER_REASONING_EFFORT; empty string omits the parameter)",
+    )
     p_enhance.add_argument("--no-interactive", action="store_true", help="Disable web UI, output JSON directly")
     p_enhance.add_argument("--no-browser", action="store_true", help="Don't auto-open browser, just print URL")
     p_enhance.add_argument("--port", type=int, default=8765, help="Port for interactive web server (default: 8765)")

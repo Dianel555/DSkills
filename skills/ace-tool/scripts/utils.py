@@ -4,9 +4,8 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import Optional
 
-_SESSION_ID: Optional[str] = None
+_SESSION_ID: str | None = None
 
 _VERSION_SUFFIX_RE = re.compile(r"/v\d[A-Za-z0-9_-]*$")
 _VERSION_PREFIX_RE = re.compile(r"^/v\d[A-Za-z0-9_-]*(?=/|$)")
@@ -44,9 +43,9 @@ def load_env():
                     value = value.strip()
                     # Strip inline comments (unquoted # preceded by whitespace)
                     if value and value[0] not in ('"', "'"):
-                        value = re.split(r'\s+#', value, maxsplit=1)[0].strip()
+                        value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
                     else:
-                        value = value.strip('"\'')
+                        value = value.strip("\"'")
                     os.environ.setdefault(key.strip(), value)
 
 
@@ -90,13 +89,13 @@ def parse_chat_history(conversation_history: str) -> list[dict]:
         for prefix in user_prefixes:
             if trimmed.startswith(prefix):
                 role_found = "user"
-                content = trimmed[len(prefix):].strip()
+                content = trimmed[len(prefix) :].strip()
                 break
         if not role_found:
             for prefix in assistant_prefixes:
                 if trimmed.startswith(prefix):
                     role_found = "assistant"
-                    content = trimmed[len(prefix):].strip()
+                    content = trimmed[len(prefix) :].strip()
                     break
 
         if role_found:
@@ -113,7 +112,7 @@ def parse_chat_history(conversation_history: str) -> list[dict]:
     return messages
 
 
-def detect_and_read(file_path: Path, encoding_chain: list[str]) -> Optional[str]:
+def detect_and_read(file_path: Path, encoding_chain: list[str]) -> str | None:
     """Try multiple encodings to read a file. Returns None for binary/unreadable."""
     try:
         raw = file_path.read_bytes()
@@ -134,7 +133,7 @@ def sanitize_content(content: str) -> str:
     return content.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
 
 
-def _validate_session_data(data: dict) -> tuple[Optional[str], Optional[str]]:
+def _validate_session_data(data: dict) -> tuple[str | None, str | None]:
     """Validate and extract session data fields.
 
     Returns (tenant_url, access_token) or (None, None) if invalid.
@@ -143,13 +142,12 @@ def _validate_session_data(data: dict) -> tuple[Optional[str], Optional[str]]:
         return None, None
     access_token = data.get("accessToken", "")
     tenant_url = data.get("tenantURL", "")
-    if (isinstance(access_token, str) and access_token.strip() and
-        isinstance(tenant_url, str) and tenant_url.strip()):
+    if isinstance(access_token, str) and access_token.strip() and isinstance(tenant_url, str) and tenant_url.strip():
         return tenant_url.rstrip("/"), access_token
     return None, None
 
 
-def load_session_auth() -> tuple[Optional[str], Optional[str], str]:
+def load_session_auth() -> tuple[str | None, str | None, str]:
     """Load authentication from session.json, AUGMENT_SESSION_AUTH, or legacy env vars.
 
     Returns:
