@@ -276,6 +276,7 @@ def _stream_claude_output(
         env=env,
     )
     if stdin_prompt is not None and process.stdin is not None:
+
         def write_prompt() -> None:
             try:
                 process.stdin.write(stdin_prompt)
@@ -286,6 +287,7 @@ def _stream_claude_output(
                     process.stdin.close()
                 except (BrokenPipeError, OSError, ValueError):
                     pass
+
         threading.Thread(target=write_prompt, daemon=True).start()
 
     stdout_queue: queue.Queue[str | None] = queue.Queue()

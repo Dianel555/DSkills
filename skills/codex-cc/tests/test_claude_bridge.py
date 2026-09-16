@@ -556,7 +556,9 @@ def test_cmd_quote_rust_bat_encoding(monkeypatch):
     """Embedded quotes must survive the npm .cmd shim re-parse: a prompt holding
     "Out of scope" arrives as ONE argv entry, not three (the `of` argv leak)."""
     monkeypatch.setattr(cb, "_is_windows", lambda: True)
-    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd")
+    monkeypatch.setattr(
+        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
+    )
     command = cb._prepare_popen_cmd(
         ["claude", "-p", 'A "Out of scope" B 100% done'], {"COMSPEC": "cmd.exe"}
     )
@@ -569,7 +571,9 @@ def test_cmd_quote_rust_bat_encoding(monkeypatch):
 
 def test_cmd_quote_trailing_backslash(monkeypatch):
     monkeypatch.setattr(cb, "_is_windows", lambda: True)
-    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd")
+    monkeypatch.setattr(
+        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
+    )
     command = cb._prepare_popen_cmd(["claude", "-p", "\\"], {})
     assert command.endswith('"-p" "\\\\""')
 
@@ -583,19 +587,32 @@ def test_shim_run_moves_prompt_to_stdin(monkeypatch, capsys, tmp_path):
     def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
         captured["cmd"] = popen_cmd
         captured["stdin_prompt"] = stdin_prompt
-        yield _stream_event({
-            "type": "result", "subtype": "success", "is_error": False,
-            "session_id": "77777777-7777-7777-7777-777777777777", "result": "ok",
-        })
+        yield _stream_event(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": "77777777-7777-7777-7777-777777777777",
+                "result": "ok",
+            }
+        )
 
     monkeypatch.setattr(cb, "_is_windows", lambda: True)
-    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd")
+    monkeypatch.setattr(
+        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
+    )
     monkeypatch.setattr(cb, "_prepare_popen_cmd", lambda cmd, env: cmd)
     monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
     args = SimpleNamespace(
-        PROMPT='A "Out of scope" B', cd=tmp_path, SESSION_ID="", model="",
-        permission_mode="", dangerously_skip_permissions=False, timeout=600.0,
-        stream_file="", return_all_messages=False,
+        PROMPT='A "Out of scope" B',
+        cd=tmp_path,
+        SESSION_ID="",
+        model="",
+        permission_mode="",
+        dangerously_skip_permissions=False,
+        timeout=600.0,
+        stream_file="",
+        return_all_messages=False,
     )
 
     cb.cmd_run(args)
@@ -633,18 +650,29 @@ def test_posix_run_keeps_prompt_positional(monkeypatch, capsys, tmp_path):
     def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
         captured["cmd"] = popen_cmd
         captured["stdin_prompt"] = stdin_prompt
-        yield _stream_event({
-            "type": "result", "subtype": "success", "is_error": False,
-            "session_id": "88888888-8888-8888-8888-888888888888", "result": "ok",
-        })
+        yield _stream_event(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": "88888888-8888-8888-8888-888888888888",
+                "result": "ok",
+            }
+        )
 
     monkeypatch.setattr(cb, "_is_windows", lambda: False)
     monkeypatch.setattr(cb, "_prepare_popen_cmd", lambda cmd, env: cmd)
     monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
     args = SimpleNamespace(
-        PROMPT="Analyze auth", cd=tmp_path, SESSION_ID="", model="",
-        permission_mode="", dangerously_skip_permissions=False, timeout=600.0,
-        stream_file="", return_all_messages=False,
+        PROMPT="Analyze auth",
+        cd=tmp_path,
+        SESSION_ID="",
+        model="",
+        permission_mode="",
+        dangerously_skip_permissions=False,
+        timeout=600.0,
+        stream_file="",
+        return_all_messages=False,
     )
 
     cb.cmd_run(args)
@@ -718,7 +746,9 @@ def test_passthrough_keeps_stdin_detached_on_windows(monkeypatch, capsys):
         return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
 
     monkeypatch.setattr(cb, "_is_windows", lambda: True)
-    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd")
+    monkeypatch.setattr(
+        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
+    )
     monkeypatch.setattr(cb.subprocess, "run", fake_run)
 
     out = _run_main(monkeypatch, capsys, ["mcp", "list"])
@@ -777,8 +807,9 @@ def test_normal_completion_wait_timeout_triggers_tree_kill(monkeypatch):
 
     proc = _Proc()
     monkeypatch.setattr(cb.subprocess, "Popen", lambda command, **kwargs: proc)
-    monkeypatch.setattr(cb.subprocess, "run",
-                        lambda command, **kwargs: killed.append(command))
+    monkeypatch.setattr(
+        cb.subprocess, "run", lambda command, **kwargs: killed.append(command)
+    )
 
     list(cb._stream_claude_output("cmdline", ".", {}, None, []))
 
