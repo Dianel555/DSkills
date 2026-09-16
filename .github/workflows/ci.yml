@@ -65,6 +65,27 @@ jobs:
       - name: Pytest
         run: python -m pytest skills/codex-cc/tests/ -q
 
+  cc-codex:
+    name: cc-codex (ruff + pytest)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest ruff
+      - name: Ruff
+        run: python -m ruff check skills/cc-codex/ && python -m ruff format --check skills/cc-codex/
+      - name: Pytest
+        run: python -m pytest skills/cc-codex/tests/ -q
+
   grok-search:
     name: grok-search (ruff + pytest)
     runs-on: ubuntu-latest

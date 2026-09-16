@@ -2,28 +2,30 @@
 Codex Bridge Script for Claude Agent Skills.
 Wraps the Codex CLI to provide a JSON-based interface for Claude.
 """
+
 from __future__ import annotations
 
+import argparse
+import contextlib
 import json
-import re
 import os
-import sys
 import queue
+import re
+import shutil
 import subprocess
+import sys
+import tempfile
 import threading
 import time
-import shutil
-import argparse
-import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator, List, Optional
 
 
-def _get_windows_npm_paths() -> List[Path]:
+def _get_windows_npm_paths() -> list[Path]:
     """Return candidate directories for npm global installs on Windows."""
     if os.name != "nt":
         return []
-    paths: List[Path] = []
+    paths: list[Path] = []
     env = os.environ
     if prefix := env.get("NPM_CONFIG_PREFIX") or env.get("npm_config_prefix"):
         paths.append(Path(prefix))
@@ -78,7 +80,7 @@ def _resolve_executable(name: str, env: dict) -> str:
     return name
 
 
-def _prepare_popen_cmd(cmd: List[str], env: dict):
+def _prepare_popen_cmd(cmd: list[str], env: dict):
     """Resolve executable and wrap Windows .cmd/.bat via cmd.exe."""
     popen_cmd = cmd.copy()
     exe_path = _resolve_executable(cmd[0], env)
@@ -98,22 +100,22 @@ def _prepare_popen_cmd(cmd: List[str], env: dict):
             out = ['"']
             backslashes = 0
             for ch in arg:
-                if ch == '\\':
+                if ch == "\\":
                     backslashes += 1
                     continue
                 if ch == '"':
-                    out.append('\\' * (backslashes * 2))
+                    out.append("\\" * (backslashes * 2))
                     out.append('""')
-                elif ch == '%':
-                    out.append('\\' * backslashes)
-                    out.append('%%cd:~,%')
+                elif ch == "%":
+                    out.append("\\" * backslashes)
+                    out.append("%%cd:~,%")
                 else:
-                    out.append('\\' * backslashes)
+                    out.append("\\" * backslashes)
                     out.append(ch)
                 backslashes = 0
-            out.append('\\' * (backslashes * 2))
+            out.append("\\" * (backslashes * 2))
             out.append('"')
-            return ''.join(out)
+            return "".join(out)
 
         cmdline = " ".join(_cmd_quote(a) for a in popen_cmd)
         comspec = env.get("COMSPEC", "cmd.exe")
@@ -121,8 +123,9 @@ def _prepare_popen_cmd(cmd: List[str], env: dict):
     return popen_cmd
 
 
-def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
-                      stderr_sink: Optional[List[str]] = None) -> Generator[str, None, None]:
+def run_shell_command(
+    cmd: list[str], idle_timeout: float = 600.0, stderr_sink: list[str] | None = None
+) -> Generator[str, None, None]:
     """Execute a command and stream its output line-by-line.
 
     idle_timeout: terminate the process if no line is produced for this many
@@ -139,8 +142,7 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
     # read the prompt from stdin, sidestepping both. Only the exec form ends
     # with `-- PROMPT`; passthrough (mcp/plugin) must keep stdin detached.
     stdin_prompt = None
-    if (os.name == "nt" and len(cmd) > 2 and cmd[0] == "codex" and cmd[1] == "exec"
-            and cmd[-2] == "--"):
+    if os.name == "nt" and len(cmd) > 2 and cmd[0] == "codex" and cmd[1] == "exec" and cmd[-2] == "--":
         resolved = _resolve_executable(cmd[0], env)
         if Path(resolved).suffix.lower() in {".cmd", ".bat"}:
             stdin_prompt = cmd[-1]
@@ -154,22 +156,19 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True,
-        encoding='utf-8',
-        errors='replace',
+        encoding="utf-8",
+        errors="replace",
         env=env,
     )
 
     if stdin_prompt is not None and process.stdin is not None:
+
         def write_prompt() -> None:
-            try:
+            with contextlib.suppress(BrokenPipeError, OSError, ValueError):
                 process.stdin.write(stdin_prompt)
-            except (BrokenPipeError, OSError, ValueError):
-                pass
-            finally:
-                try:
-                    process.stdin.close()
-                except (BrokenPipeError, OSError, ValueError):
-                    pass
+            with contextlib.suppress(BrokenPipeError, OSError, ValueError):
+                process.stdin.close()
+
         threading.Thread(target=write_prompt, daemon=True).start()
 
     def terminate_process_tree() -> None:
@@ -181,14 +180,16 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
         if os.name == "nt":
             subprocess.run(
                 ["taskkill", "/T", "/F", "/PID", str(process.pid)],
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, check=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
             )
         else:
             process.terminate()
 
-    output_queue: queue.Queue[Optional[str]] = queue.Queue()
-    GRACEFUL_SHUTDOWN_DELAY = 0.3
+    output_queue: queue.Queue[str | None] = queue.Queue()
+    graceful_shutdown_delay = 0.3
 
     def is_turn_completed(line: str) -> bool:
         try:
@@ -203,7 +204,7 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
                 stripped = line.strip()
                 output_queue.put(stripped)
                 if is_turn_completed(stripped):
-                    time.sleep(GRACEFUL_SHUTDOWN_DELAY)
+                    time.sleep(graceful_shutdown_delay)
                     terminate_process_tree()
                     break
             process.stdout.close()
@@ -236,11 +237,13 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
                 break
             if idle_timeout and (time.monotonic() - last_activity) > idle_timeout:
                 terminate_process_tree()
-                yield json.dumps({
-                    "type": "error",
-                    "message": f"[bridge] idle timeout after {idle_timeout:.0f}s with no output",
-                    "_bridge_fatal": True,
-                })
+                yield json.dumps(
+                    {
+                        "type": "error",
+                        "message": f"[bridge] idle timeout after {idle_timeout:.0f}s with no output",
+                        "_bridge_fatal": True,
+                    }
+                )
                 break
 
     try:
@@ -262,9 +265,9 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
 
 def windows_escape(prompt):
     """Windows style string escaping for newlines and special chars in prompt text."""
-    result = prompt.replace('\n', '\\n')
-    result = result.replace('\r', '\\r')
-    result = result.replace('\t', '\\t')
+    result = prompt.replace("\n", "\\n")
+    result = result.replace("\r", "\\r")
+    result = result.replace("\t", "\\t")
     return result
 
 
@@ -275,17 +278,15 @@ def configure_windows_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            try:
+            with contextlib.suppress(ValueError, OSError):
                 reconfigure(encoding="utf-8")
-            except (ValueError, OSError):
-                pass
 
 
 def emit(result: dict) -> None:
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
-def run_passthrough(subcommand: str, extra: List[str], timeout: float = 120.0) -> None:
+def run_passthrough(subcommand: str, extra: list[str], timeout: float = 120.0) -> None:
     """Thin passthrough to `codex <subcommand> ...` (mcp / plugin management)."""
     env = os.environ.copy()
     _augment_path_env(env)
@@ -295,34 +296,45 @@ def run_passthrough(subcommand: str, extra: List[str], timeout: float = 120.0) -
         cp = subprocess.run(
             popen_cmd,
             shell=False,
+            check=False,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             timeout=timeout,
             text=True,
             encoding="utf-8",
             errors="replace",
             env=env,
         )
-        emit({
-            "success": cp.returncode == 0,
-            "output": cp.stdout or "",
-            "error": cp.stderr or "",
-            "returncode": cp.returncode,
-        })
+        emit(
+            {
+                "success": cp.returncode == 0,
+                "output": cp.stdout or "",
+                "error": cp.stderr or "",
+                "returncode": cp.returncode,
+            }
+        )
     except subprocess.TimeoutExpired:
         emit({"success": False, "output": "", "error": f"codex {subcommand} timed out", "returncode": -1})
     except FileNotFoundError:
         emit({"success": False, "output": "", "error": "codex binary not found in PATH", "returncode": 127})
 
 
-def build_exec_cmd(args) -> List[str]:
+def build_exec_cmd(args) -> list[str]:
     """Build `codex exec ...` argv from parsed run args."""
     last_fd, last_msg_path = tempfile.mkstemp(prefix="codex_last_", suffix=".txt")
     os.close(last_fd)
 
-    cmd = ["codex", "exec", "--sandbox", args.sandbox, "--cd", args.cd, "--json",
-           "--output-last-message", last_msg_path]
+    cmd = [
+        "codex",
+        "exec",
+        "--sandbox",
+        args.sandbox,
+        "--cd",
+        args.cd,
+        "--json",
+        "--output-last-message",
+        last_msg_path,
+    ]
 
     if args.image:
         cmd.extend(["--image", ",".join(args.image)])
@@ -348,7 +360,7 @@ def build_exec_cmd(args) -> List[str]:
     if args.SESSION_ID:
         cmd.extend(["resume", args.SESSION_ID])
 
-    cmd += ['--', args.PROMPT]
+    cmd += ["--", args.PROMPT]
     return cmd, last_msg_path
 
 
@@ -362,13 +374,13 @@ def cmd_run(args) -> None:
     thread_id = None
     turn_completed = False
     timed_out = False
-    stderr_sink: List[str] = []
+    stderr_sink: list[str] = []
 
     # Persist the raw JSONL stream incrementally so partial output survives a
     # crash/kill/timeout (the in-memory result is only printed once at the end).
     if args.stream_file:
         stream_path = args.stream_file
-        stream_fp = open(stream_path, "w", encoding="utf-8")
+        stream_fp = open(stream_path, "w", encoding="utf-8")  # noqa: SIM115 (closed below)
     else:
         sfd, stream_path = tempfile.mkstemp(prefix="codex_stream_", suffix=".jsonl")
         stream_fp = os.fdopen(sfd, "w", encoding="utf-8")
@@ -405,7 +417,7 @@ def cmd_run(args) -> None:
             elif item_type == "error":
                 err_text = item.get("message", "")
             if err_text:
-                is_reconnecting = bool(re.match(r'^Reconnecting\.\.\.\s+\d+/\d+(\s|$)', err_text))
+                is_reconnecting = bool(re.match(r"^Reconnecting\.\.\.\s+\d+/\d+(\s|$)", err_text))
                 if not is_reconnecting:
                     # Unconditional: the final reconciliation restores success
                     # only for turns that actually completed.
@@ -439,7 +451,10 @@ def cmd_run(args) -> None:
 
     if len(agent_messages) == 0:
         success = False
-        err_message = "Failed to get `agent_messages` from the codex session. \n\n You can try to set `return_all_messages` to `True` to get the full reasoning information. " + err_message
+        err_message = (
+            "Failed to get `agent_messages` from the codex session. \n\n You can try to set `return_all_messages` to `True` to get the full reasoning information. "
+            + err_message
+        )
 
     if not turn_completed:
         # turn.failed / stream cut short: codex only emits the final answer
@@ -450,8 +465,7 @@ def cmd_run(args) -> None:
         err_message = (
             "Codex turn did not complete: no `turn.completed` event was observed; "
             "any captured agent_message is intermediate narration, not the final answer. "
-            "Inspect `stream_file` for details."
-            + ("\n\n" + err_message.lstrip() if err_message else "")
+            "Inspect `stream_file` for details." + ("\n\n" + err_message.lstrip() if err_message else "")
         )
     elif len(agent_messages) > 0 and thread_id is not None and not timed_out:
         # Turn completed with both thread_id and agent_messages → transient errors
@@ -476,10 +490,8 @@ def cmd_run(args) -> None:
     if args.return_all_messages:
         result["all_messages"] = all_messages
 
-    try:
+    with contextlib.suppress(OSError):
         os.unlink(last_msg_path)
-    except OSError:
-        pass
 
     emit(result)
 
@@ -496,18 +508,70 @@ def main():
     parser = argparse.ArgumentParser(description="Codex Bridge")
     parser.add_argument("--PROMPT", required=True, help="Instruction for the task to send to codex.")
     parser.add_argument("--cd", required=True, help="Set the workspace root for codex before executing the task.")
-    parser.add_argument("--sandbox", default="read-only", choices=["read-only", "workspace-write", "danger-full-access"], help="Sandbox policy for model-generated commands. Defaults to `read-only`.")
-    parser.add_argument("--SESSION_ID", default="", help="Resume the specified session of the codex. Defaults to `None`, start a new session.")
-    parser.add_argument("--skip-git-repo-check", action="store_true", default=True, help="Allow codex running outside a Git repository (useful for one-off directories).")
-    parser.add_argument("--return-all-messages", action="store_true", help="Return all messages (e.g. reasoning, tool calls, etc.) from the codex session. Set to `False` by default, only the agent's final reply message is returned.")
-    parser.add_argument("--image", action="append", default=[], help="Attach one or more image files to the initial prompt. Separate multiple paths with commas or repeat the flag.")
-    parser.add_argument("--model", default="", help="The model to use for the codex session. This parameter is strictly prohibited unless explicitly specified by the user.")
-    parser.add_argument("--yolo", action="store_true", help="Run every command without approvals or sandboxing. Only use when `sandbox` couldn't be applied.")
-    parser.add_argument("--profile", default="", help="Configuration profile name to load from `~/.codex/config.toml`. This parameter is strictly prohibited unless explicitly specified by the user.")
-    parser.add_argument("--stream-file", default="", help="Append each raw JSONL line here as it arrives so partial output survives a crash/kill/timeout. Empty -> auto temp file; the path is reported in the result.")
-    parser.add_argument("--idle-timeout", type=float, default=600.0, help="Terminate codex if no output is received for this many seconds (0 disables).")
-    parser.add_argument("--ignore-user-config", action="store_true", help="Do not load `$CODEX_HOME/config.toml` (auth still uses CODEX_HOME). Isolates the session from user global config.")
-    parser.add_argument("--dangerously-bypass-hook-trust", action="store_true", help="Run enabled Codex hooks without requiring persisted hook trust. DANGEROUS; only for vetted automation.")
+    parser.add_argument(
+        "--sandbox",
+        default="read-only",
+        choices=["read-only", "workspace-write", "danger-full-access"],
+        help="Sandbox policy for model-generated commands. Defaults to `read-only`.",
+    )
+    parser.add_argument(
+        "--SESSION_ID",
+        default="",
+        help="Resume the specified session of the codex. Defaults to `None`, start a new session.",
+    )
+    parser.add_argument(
+        "--skip-git-repo-check",
+        action="store_true",
+        default=True,
+        help="Allow codex running outside a Git repository (useful for one-off directories).",
+    )
+    parser.add_argument(
+        "--return-all-messages",
+        action="store_true",
+        help="Return all messages (e.g. reasoning, tool calls, etc.) from the codex session. Set to `False` by default, only the agent's final reply message is returned.",
+    )
+    parser.add_argument(
+        "--image",
+        action="append",
+        default=[],
+        help="Attach one or more image files to the initial prompt. Separate multiple paths with commas or repeat the flag.",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="The model to use for the codex session. This parameter is strictly prohibited unless explicitly specified by the user.",
+    )
+    parser.add_argument(
+        "--yolo",
+        action="store_true",
+        help="Run every command without approvals or sandboxing. Only use when `sandbox` couldn't be applied.",
+    )
+    parser.add_argument(
+        "--profile",
+        default="",
+        help="Configuration profile name to load from `~/.codex/config.toml`. This parameter is strictly prohibited unless explicitly specified by the user.",
+    )
+    parser.add_argument(
+        "--stream-file",
+        default="",
+        help="Append each raw JSONL line here as it arrives so partial output survives a crash/kill/timeout. Empty -> auto temp file; the path is reported in the result.",
+    )
+    parser.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=600.0,
+        help="Terminate codex if no output is received for this many seconds (0 disables).",
+    )
+    parser.add_argument(
+        "--ignore-user-config",
+        action="store_true",
+        help="Do not load `$CODEX_HOME/config.toml` (auth still uses CODEX_HOME). Isolates the session from user global config.",
+    )
+    parser.add_argument(
+        "--dangerously-bypass-hook-trust",
+        action="store_true",
+        help="Run enabled Codex hooks without requiring persisted hook trust. DANGEROUS; only for vetted automation.",
+    )
 
     # Document subcommands in --help without going through argparse positional parse.
     sub = parser.add_subparsers(dest="subcommand")
