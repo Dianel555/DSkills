@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -49,15 +49,17 @@ class _WaitWithRetryAfter(wait_base):
                     wait_seconds = min(parsed, float(self._max_wait))
         wait_seconds = min(float(wait_seconds), float(self._max_wait))
         if self._debug:
-            _debug_log({
-                "event": "retry_wait",
-                "attempt": retry_state.attempt_number,
-                "wait_seconds": wait_seconds,
-                "max_wait": self._max_wait,
-            })
+            _debug_log(
+                {
+                    "event": "retry_wait",
+                    "attempt": retry_state.attempt_number,
+                    "wait_seconds": wait_seconds,
+                    "max_wait": self._max_wait,
+                }
+            )
         return wait_seconds
 
-    def _parse_retry_after(self, response: httpx.Response) -> Optional[float]:
+    def _parse_retry_after(self, response: httpx.Response) -> float | None:
         header = response.headers.get("Retry-After")
         if not header:
             return None
@@ -67,8 +69,8 @@ class _WaitWithRetryAfter(wait_base):
         try:
             retry_dt = parsedate_to_datetime(header)
             if retry_dt.tzinfo is None:
-                retry_dt = retry_dt.replace(tzinfo=timezone.utc)
-            delay = (retry_dt - datetime.now(timezone.utc)).total_seconds()
+                retry_dt = retry_dt.replace(tzinfo=UTC)
+            delay = (retry_dt - datetime.now(UTC)).total_seconds()
             return max(0.0, delay)
         except (TypeError, ValueError):
             return None
@@ -84,7 +86,7 @@ class ExaClient:
         max_retry_wait: int = 60,
         debug: bool = False,
         auth_scheme: str = "x-api-key",
-        transport: Optional[httpx.AsyncBaseTransport] = None,
+        transport: httpx.AsyncBaseTransport | None = None,
         retry_sleep=None,
     ):
         self.api_url = api_url.rstrip("/")
@@ -102,7 +104,7 @@ class ExaClient:
         self._client = httpx.AsyncClient(**client_args)
         self._retry_sleep = retry_sleep
 
-    async def __aenter__(self) -> "ExaClient":
+    async def __aenter__(self) -> ExaClient:
         await self._client.__aenter__()
         return self
 
@@ -113,7 +115,7 @@ class ExaClient:
     def is_closed(self) -> bool:
         return bool(getattr(self._client, "is_closed", False))
 
-    def _headers(self, *, agent: bool = False) -> Dict[str, str]:
+    def _headers(self, *, agent: bool = False) -> dict[str, str]:
         if self.auth_scheme == "bearer":
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -129,9 +131,13 @@ class ExaClient:
         return headers
 
     async def _send_json(
-        self, method: str, path: str, json_body: Optional[Dict] = None,
-        *, agent: bool = False,
-    ) -> Dict[str, Any]:
+        self,
+        method: str,
+        path: str,
+        json_body: dict | None = None,
+        *,
+        agent: bool = False,
+    ) -> dict[str, Any]:
         url = f"{self.api_url}{path}"
         upper_method = method.upper()
         if self.debug:
@@ -139,16 +145,18 @@ class ExaClient:
         if upper_method == "GET":
             response = await self._client.get(url, headers=self._headers(agent=agent))
         else:
-            response = await self._client.post(
-                url, headers=self._headers(agent=agent), json=json_body or {}
-            )
+            response = await self._client.post(url, headers=self._headers(agent=agent), json=json_body or {})
         response.raise_for_status()
         return response.json()
 
     async def _request_json(
-        self, method: str, path: str, json_body: Optional[Dict] = None,
-        *, agent: bool = False,
-    ) -> Dict[str, Any]:
+        self,
+        method: str,
+        path: str,
+        json_body: dict | None = None,
+        *,
+        agent: bool = False,
+    ) -> dict[str, Any]:
         retry_args = {
             "stop": stop_after_attempt(4),
             "wait": _WaitWithRetryAfter(self.max_retry_wait, debug=self.debug),
@@ -159,27 +167,23 @@ class ExaClient:
             retry_args["sleep"] = self._retry_sleep
         async for attempt in AsyncRetrying(**retry_args):
             with attempt:
-                return await self._send_json(
-                    method, path, json_body, agent=agent
-                )
+                return await self._send_json(method, path, json_body, agent=agent)
 
-    async def search(self, body: Dict[str, Any]) -> Dict[str, Any]:
+    async def search(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self._request_json("POST", "/search", body)
 
-    async def get_contents(self, ids: List[str], extras: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def get_contents(self, ids: list[str], extras: dict[str, Any] | None = None) -> dict[str, Any]:
         # Upstream payload field is `ids`, not `urls` (see webFetch.ts:64).
-        body: Dict[str, Any] = {"ids": ids}
+        body: dict[str, Any] = {"ids": ids}
         if extras:
             body.update(extras)
         return await self._request_json("POST", "/contents", body)
 
-    async def agent_create(self, body: Dict[str, Any]) -> Dict[str, Any]:
+    async def agent_create(self, body: dict[str, Any]) -> dict[str, Any]:
         return await self._send_json("POST", "/agent/runs", body, agent=True)
 
-    async def agent_get(self, run_id: str) -> Dict[str, Any]:
+    async def agent_get(self, run_id: str) -> dict[str, Any]:
         if not RUN_ID_RE.fullmatch(run_id):
             raise ValueError("run ID must match ^agent_run_[A-Za-z0-9_-]+$")
         encoded_id = quote(run_id, safe="")
-        return await self._request_json(
-            "GET", f"/agent/runs/{encoded_id}", agent=True
-        )
+        return await self._request_json("GET", f"/agent/runs/{encoded_id}", agent=True)

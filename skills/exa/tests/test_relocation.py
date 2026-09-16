@@ -12,8 +12,14 @@ class RelocationContractTests(unittest.TestCase):
         self.assertFalse((SKILL_ROOT / "exa_cli").exists())
         self.assertFalse((package / "commands").exists())
         for name in (
-            "__init__.py", "__main__.py", "config.py", "client.py",
-            "output.py", "search.py", "fetch.py", "advanced.py",
+            "__init__.py",
+            "__main__.py",
+            "config.py",
+            "client.py",
+            "output.py",
+            "search.py",
+            "fetch.py",
+            "advanced.py",
             "config_info.py",
         ):
             self.assertTrue((package / name).is_file(), name)
@@ -23,8 +29,7 @@ class RelocationContractTests(unittest.TestCase):
         self.assertLessEqual(len(launcher.read_text(encoding="utf-8").splitlines()), 20)
         package = SKILL_ROOT / "scripts" / "exa_cli"
         for path in package.glob("*.py"):
-            self.assertLessEqual(len(path.read_text(encoding="utf-8").splitlines()),
-                                 250, path.name)
+            self.assertLessEqual(len(path.read_text(encoding="utf-8").splitlines()), 250, path.name)
 
 
 if __name__ == "__main__":

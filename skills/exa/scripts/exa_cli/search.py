@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Optional, Tuple
 
 import httpx
 
@@ -18,7 +17,7 @@ _CATEGORY_RE = re.compile(
 )
 
 
-def extract_category(query: str) -> Tuple[str, Optional[str]]:
+def extract_category(query: str) -> tuple[str, str | None]:
     """Return (cleaned_query, category_or_None) per upstream semantics."""
     match = _CATEGORY_RE.search(query)
     if not match:
@@ -53,6 +52,4 @@ async def cmd_web_search_exa(args) -> None:
     except ValueError as exc:
         output_error(str(exc))
     except httpx.HTTPStatusError as exc:
-        output_error(
-            f"API error: {exc.response.status_code} - {exc.response.text[:200]}"
-        )
+        output_error(f"API error: {exc.response.status_code} - {exc.response.text[:200]}")

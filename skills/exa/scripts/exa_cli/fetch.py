@@ -26,6 +26,4 @@ async def cmd_web_fetch_exa(args) -> None:
     except ValueError as exc:
         output_error(str(exc))
     except httpx.HTTPStatusError as exc:
-        output_error(
-            f"API error: {exc.response.status_code} - {exc.response.text[:200]}"
-        )
+        output_error(f"API error: {exc.response.status_code} - {exc.response.text[:200]}")

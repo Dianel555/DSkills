@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import httpx
 
@@ -11,8 +11,8 @@ from .config import Config
 from .output import output_error, output_json, output_warning
 
 
-def _build_payload(args) -> Dict[str, Any]:
-    body: Dict[str, Any] = {
+def _build_payload(args) -> dict[str, Any]:
+    body: dict[str, Any] = {
         "query": args.query,
         "type": args.type,
         "numResults": args.num_results,
@@ -34,7 +34,7 @@ def _build_payload(args) -> Dict[str, Any]:
     if args.max_age_hours is not None:
         body["maxAgeHours"] = args.max_age_hours
 
-    contents: Dict[str, Any] = {}
+    contents: dict[str, Any] = {}
     if args.text:
         if args.max_chars is not None:
             contents["text"] = {"maxCharacters": args.max_chars}
@@ -67,6 +67,4 @@ async def cmd_web_search_advanced_exa(args) -> None:
     except ValueError as exc:
         output_error(str(exc))
     except httpx.HTTPStatusError as exc:
-        output_error(
-            f"API error: {exc.response.status_code} - {exc.response.text[:200]}"
-        )
+        output_error(f"API error: {exc.response.status_code} - {exc.response.text[:200]}")

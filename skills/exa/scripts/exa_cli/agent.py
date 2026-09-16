@@ -7,22 +7,24 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import httpx
 
-from .client import ExaClient, RETRYABLE_STATUS_CODES, RUN_ID_RE
+from .client import RETRYABLE_STATUS_CODES, RUN_ID_RE, ExaClient
 from .config import Config
 from .output import output_error, output_json, redact_secret
 
-AGENT_PROVIDERS = (
-    "fiber", "financial_datasets", "similarweb", "baselayer",
-    "affiliate", "particle", "jinko",
-)
+AGENT_PROVIDERS = ("fiber", "financial_datasets", "similarweb", "baselayer", "affiliate", "particle", "jinko")
 AGENT_EFFORTS = ("minimal", "low", "medium", "high", "xhigh", "auto")
 CREATE_ONLY_FIELDS = (
-    "system_prompt", "output_schema", "input_data", "input_exclusion",
-    "data_source", "previous_run_id", "effort",
+    "system_prompt",
+    "output_schema",
+    "input_data",
+    "input_exclusion",
+    "data_source",
+    "previous_run_id",
+    "effort",
 )
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 ZDR_LIMITATION = "Standalone agent_run does not support Zero Data Retention streaming."
@@ -77,11 +79,11 @@ def _object_array(path: str, label: str) -> list:
     return value
 
 
-def build_agent_body(args) -> Dict[str, Any]:
+def build_agent_body(args) -> dict[str, Any]:
     validate_agent_args(args)
     if not args.query:
         raise ValueError("create body requires --query")
-    body: Dict[str, Any] = {"query": args.query}
+    body: dict[str, Any] = {"query": args.query}
     if args.system_prompt:
         body["systemPrompt"] = args.system_prompt
     if args.output_schema:
@@ -89,19 +91,15 @@ def build_agent_body(args) -> Dict[str, Any]:
         if not isinstance(schema, dict):
             raise ValueError("output schema must be a top-level JSON object")
         body["outputSchema"] = schema
-    input_value: Dict[str, Any] = {}
+    input_value: dict[str, Any] = {}
     if args.input_data:
         input_value["data"] = _object_array(args.input_data, "input data")
     if args.input_exclusion:
-        input_value["exclusion"] = _object_array(
-            args.input_exclusion, "input exclusion"
-        )
+        input_value["exclusion"] = _object_array(args.input_exclusion, "input exclusion")
     if input_value:
         body["input"] = input_value
     if args.data_source:
-        body["dataSources"] = [
-            {"provider": provider} for provider in args.data_source
-        ]
+        body["dataSources"] = [{"provider": provider} for provider in args.data_source]
     if args.previous_run_id:
         body["previousRunId"] = args.previous_run_id
     body["effort"] = args.effort or "low"
@@ -116,12 +114,15 @@ def _event(name: str, **fields) -> None:
     print(json.dumps({"event": name, **fields}, ensure_ascii=False), file=sys.stderr)
 
 
-def normalize_agent_result(run_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_agent_result(run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     status = str(payload.get("status", "unknown")).lower()
     if status == "completed":
         result = {
-            "success": True, "id": run_id, "status": status,
-            "outputReady": True, "output": payload.get("output"),
+            "success": True,
+            "id": run_id,
+            "status": status,
+            "outputReady": True,
+            "output": payload.get("output"),
         }
         for key in ("usage", "costDollars"):
             if key in payload:
@@ -129,7 +130,9 @@ def normalize_agent_result(run_id: str, payload: Dict[str, Any]) -> Dict[str, An
         return result
     if status in {"failed", "cancelled"}:
         result = {
-            "success": False, "id": run_id, "status": status,
+            "success": False,
+            "id": run_id,
+            "status": status,
             "outputReady": False,
         }
         if "error" in payload:
@@ -150,7 +153,7 @@ async def run_agent(
     *,
     monotonic=time.monotonic,
     sleep=asyncio.sleep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     validate_agent_args(args)
     run_id = args.run_id
     try:
@@ -175,7 +178,8 @@ async def run_agent(
             if args.previous_run_id and run_id == args.previous_run_id:
                 raise ValueError("Agent continuation returned the previous run ID")
             _event(
-                "agent_run_created", id=run_id,
+                "agent_run_created",
+                id=run_id,
                 resumeCommand=_resume_command(run_id),
             )
 
@@ -194,12 +198,14 @@ async def run_agent(
     except (asyncio.CancelledError, KeyboardInterrupt):
         if run_id:
             _event(
-                "agent_run_interrupted", id=run_id,
+                "agent_run_interrupted",
+                id=run_id,
                 resumeCommand=_resume_command(run_id),
             )
         else:
             _event(
-                "agent_run_interrupted", state="unknown",
+                "agent_run_interrupted",
+                state="unknown",
                 message="The run may exist upstream, but no run ID was received.",
             )
         raise

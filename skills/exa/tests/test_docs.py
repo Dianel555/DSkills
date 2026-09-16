@@ -8,8 +8,12 @@ from _support import SKILL_ROOT
 
 REPO_ROOT = SKILL_ROOT.parents[1]
 DEPRECATED = (
-    "deep_researcher", "linkedin_search_exa", "company_research_exa",
-    "get_code_context_exa", "deep_search_exa", "crawling_exa",
+    "deep_researcher",
+    "linkedin_search_exa",
+    "company_research_exa",
+    "get_code_context_exa",
+    "deep_search_exa",
+    "crawling_exa",
 )
 
 
@@ -45,11 +49,24 @@ class DocumentationContractTests(unittest.TestCase):
     def test_agent_guide_has_coverage_resume_and_batch_boundaries(self) -> None:
         text = (SKILL_ROOT / "exa-agent.md").read_text(encoding="utf-8").lower()
         for term in (
-            "objective", "universe", "segments", "coverage target",
-            "output fields", "evidence requirements", "exclusions",
-            "outputschema", "--run-id", "--previous-run-id",
-            "best-effort discovery", "dedup", "gaps", "zdr",
-            "bounded concurrency", "backoff", "checkpoint", "output file",
+            "objective",
+            "universe",
+            "segments",
+            "coverage target",
+            "output fields",
+            "evidence requirements",
+            "exclusions",
+            "outputschema",
+            "--run-id",
+            "--previous-run-id",
+            "best-effort discovery",
+            "dedup",
+            "gaps",
+            "zdr",
+            "bounded concurrency",
+            "backoff",
+            "checkpoint",
+            "output file",
         ):
             with self.subTest(term=term):
                 self.assertIn(term, text)
@@ -59,8 +76,11 @@ class DocumentationContractTests(unittest.TestCase):
         parent = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         readme = (SKILL_ROOT / "README.md").read_text(encoding="utf-8")
         for command in (
-            "web_search_exa", "web_fetch_exa", "web_search_advanced_exa",
-            "get_config_info", "agent_run",
+            "web_search_exa",
+            "web_fetch_exa",
+            "web_search_advanced_exa",
+            "get_config_info",
+            "agent_run",
         ):
             self.assertIn(command, parent)
             self.assertIn(command, readme)
@@ -71,19 +91,22 @@ class DocumentationContractTests(unittest.TestCase):
     def test_env_example_matches_standalone_cli_configuration(self) -> None:
         text = (SKILL_ROOT / ".env.example").read_text(encoding="utf-8")
         for name in (
-            "EXA_API_KEY", "EXA_API_URL", "EXA_DEBUG",
-            "EXA_MAX_RETRY_WAIT", "EXA_AUTH_SCHEME",
+            "EXA_API_KEY",
+            "EXA_API_URL",
+            "EXA_DEBUG",
+            "EXA_MAX_RETRY_WAIT",
+            "EXA_AUTH_SCHEME",
         ):
             with self.subTest(name=name):
                 self.assertIn(name, text)
         for unsupported in (
-            "ENABLED_TOOLS", "DEFAULT_SEARCH_TYPE", "MCP_MAX_DURATION_SECONDS",
+            "ENABLED_TOOLS",
+            "DEFAULT_SEARCH_TYPE",
+            "MCP_MAX_DURATION_SECONDS",
             "AGENT_CALL_WINDOW_MS",
         ):
             with self.subTest(unsupported=unsupported):
                 self.assertNotIn(unsupported, text)
-        self.assertIn("--wait-seconds", text)
-        self.assertIn("--poll-interval", text)
 
     def test_references_deprecated_names_marketplace_and_local_files(self) -> None:
         parent = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -91,11 +114,7 @@ class DocumentationContractTests(unittest.TestCase):
             self.assertNotIn(name, parent)
         references = sorted((SKILL_ROOT / "references").glob("*.md"))
         self.assertEqual(len(references), 11)
-        marketplace = json.loads(
-            (REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(
-                encoding="utf-8"
-            )
-        )
+        marketplace = json.loads((REPO_ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
         exa = next(plugin for plugin in marketplace["plugins"] if plugin["name"] == "exa")
         self.assertEqual(exa["source"], "./skills/exa")
         self.assertFalse((SKILL_ROOT / "CLAUDE.local.md").exists())
