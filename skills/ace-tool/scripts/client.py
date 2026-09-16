@@ -5,39 +5,70 @@ import os
 import re
 import uuid
 from pathlib import Path
-from typing import Optional
 
 import httpx
 from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 try:
-    from .templates import (
-        USER_AGENT, DEFAULT_MODEL,
-        DEFAULT_CLAUDE_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_GEMINI_MODEL,
-        DEFAULT_CODEX_MODEL,
-        ENV_ENHANCER_ENDPOINT, ENV_ENHANCER_ENDPOINT_LEGACY,
-        ENV_ENHANCER_INCLUDE_SEARCH_CONTEXT,
-        ENV_ENHANCER_REASONING_EFFORT,
-        SEARCH_CONTEXT_CHAR_LIMIT, NO_RELEVANT_CODE_CONTEXT,
-        ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
-        TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
-    )
-    from .utils import build_api_url, get_session_id, is_chinese_text, parse_chat_history, detect_and_read, load_session_auth
     from .indexer import Indexer
-except ImportError:
-    from templates import (
-        USER_AGENT, DEFAULT_MODEL,
-        DEFAULT_CLAUDE_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_GEMINI_MODEL,
+    from .templates import (
+        DEFAULT_CLAUDE_MODEL,
         DEFAULT_CODEX_MODEL,
-        ENV_ENHANCER_ENDPOINT, ENV_ENHANCER_ENDPOINT_LEGACY,
+        DEFAULT_GEMINI_MODEL,
+        DEFAULT_MODEL,
+        DEFAULT_OPENAI_MODEL,
+        ENCODING_CHAIN,
+        ENHANCE_PROMPT_TEMPLATE,
+        ENV_ENHANCER_ENDPOINT,
+        ENV_ENHANCER_ENDPOINT_LEGACY,
         ENV_ENHANCER_INCLUDE_SEARCH_CONTEXT,
         ENV_ENHANCER_REASONING_EFFORT,
-        SEARCH_CONTEXT_CHAR_LIMIT, NO_RELEVANT_CODE_CONTEXT,
-        ENHANCE_PROMPT_TEMPLATE, ITERATIVE_ENHANCE_TEMPLATE,
-        TEXT_EXTENSIONS, EXCLUDE_PATTERNS, RETRIEVAL_TIMEOUT, ENCODING_CHAIN,
+        EXCLUDE_PATTERNS,
+        ITERATIVE_ENHANCE_TEMPLATE,
+        NO_RELEVANT_CODE_CONTEXT,
+        RETRIEVAL_TIMEOUT,
+        SEARCH_CONTEXT_CHAR_LIMIT,
+        TEXT_EXTENSIONS,
+        USER_AGENT,
     )
-    from utils import build_api_url, get_session_id, is_chinese_text, parse_chat_history, detect_and_read, load_session_auth
+    from .utils import (
+        build_api_url,
+        detect_and_read,
+        get_session_id,
+        is_chinese_text,
+        load_session_auth,
+        parse_chat_history,
+    )
+except ImportError:
     from indexer import Indexer
+    from templates import (
+        DEFAULT_CLAUDE_MODEL,
+        DEFAULT_CODEX_MODEL,
+        DEFAULT_GEMINI_MODEL,
+        DEFAULT_MODEL,
+        DEFAULT_OPENAI_MODEL,
+        ENCODING_CHAIN,
+        ENHANCE_PROMPT_TEMPLATE,
+        ENV_ENHANCER_ENDPOINT,
+        ENV_ENHANCER_ENDPOINT_LEGACY,
+        ENV_ENHANCER_INCLUDE_SEARCH_CONTEXT,
+        ENV_ENHANCER_REASONING_EFFORT,
+        EXCLUDE_PATTERNS,
+        ITERATIVE_ENHANCE_TEMPLATE,
+        NO_RELEVANT_CODE_CONTEXT,
+        RETRIEVAL_TIMEOUT,
+        SEARCH_CONTEXT_CHAR_LIMIT,
+        TEXT_EXTENSIONS,
+        USER_AGENT,
+    )
+    from utils import (
+        build_api_url,
+        detect_and_read,
+        get_session_id,
+        is_chinese_text,
+        load_session_auth,
+        parse_chat_history,
+    )
 
 import logging
 
@@ -56,10 +87,10 @@ class AceToolClient:
 
     def __init__(
         self,
-        base_url: Optional[str] = None,
-        token: Optional[str] = None,
-        endpoint: Optional[str] = None,
-        reasoning_effort: Optional[str] = None,
+        base_url: str | None = None,
+        token: str | None = None,
+        endpoint: str | None = None,
+        reasoning_effort: str | None = None,
     ):
         # Determine auth source priority: constructor params > session auth
         if base_url is not None or token is not None:
@@ -76,10 +107,7 @@ class AceToolClient:
             self.auth_source = auth_source
 
         # Endpoint resolution: PROMPT_ENHANCER_ENDPOINT > ACE_ENHANCER_ENDPOINT > constructor arg > "new"
-        env_endpoint = (
-            os.getenv(ENV_ENHANCER_ENDPOINT, "")
-            or os.getenv(ENV_ENHANCER_ENDPOINT_LEGACY, "")
-        )
+        env_endpoint = os.getenv(ENV_ENHANCER_ENDPOINT, "") or os.getenv(ENV_ENHANCER_ENDPOINT_LEGACY, "")
         resolved = env_endpoint or endpoint or "new"
         self.endpoint = resolved.lower()
 
@@ -132,19 +160,18 @@ class AceToolClient:
     @staticmethod
     def _build_prompt_with_search_context(original: str, ctx: str) -> str:
         """Wrap original prompt with codebase context in XML tags."""
-        return (
-            f"<codebase_context>\n{ctx}\n</codebase_context>\n\n"
-            f"<original_request>\n{original}\n</original_request>"
-        )
+        return f"<codebase_context>\n{ctx}\n</codebase_context>\n\n<original_request>\n{original}\n</original_request>"
 
-    def _maybe_inject_search_context(self, endpoint: str, prompt: str, project_root: Optional[str]) -> str:
+    def _maybe_inject_search_context(self, endpoint: str, prompt: str, project_root: str | None) -> str:
         """Inject search context into prompt if enabled and applicable."""
         if not self._is_third_party() or not self._should_include_search_context():
             return prompt
         if not project_root:
             raise ValueError("project_root is required when search context injection is enabled")
         if not self.base_url or not self.token:
-            raise ValueError("No authentication configured for search context injection. Set up session.json, AUGMENT_SESSION_AUTH, or ACE_API_URL/ACE_API_TOKEN")
+            raise ValueError(
+                "No authentication configured for search context injection. Set up session.json, AUGMENT_SESSION_AUTH, or ACE_API_URL/ACE_API_TOKEN"
+            )
         result = self._remote_search(project_root, prompt)
         raw_ctx = result.get("results", "")
         ctx = self._normalize_search_context(raw_ctx)
@@ -175,12 +202,16 @@ class AceToolClient:
                 log.warning("Remote search failed, falling back to local: %s", e)
         return self._local_search(project_root, query)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_not_exception_type(ValueError))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_not_exception_type(ValueError),
+    )
     def enhance_prompt(
         self,
         prompt: str,
         conversation_history: str,
-        project_root: Optional[str] = None,
+        project_root: str | None = None,
     ) -> dict:
         """Enhance prompt with codebase context and conversation history."""
         if self._is_third_party():
@@ -195,14 +226,18 @@ class AceToolClient:
             return self._call_old_endpoint(prompt, chat_history, project_root)
         return self._call_new_endpoint(prompt, chat_history, project_root)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_not_exception_type(ValueError))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_not_exception_type(ValueError),
+    )
     def iterative_enhance(
         self,
         original_prompt: str,
         previous_enhanced: str,
         current_prompt: str,
         conversation_history: str,
-        project_root: Optional[str] = None,
+        project_root: str | None = None,
     ) -> dict:
         """Iteratively enhance an already-enhanced prompt, preserving user modifications."""
         iterative_prompt = ITERATIVE_ENHANCE_TEMPLATE.format(
@@ -223,7 +258,7 @@ class AceToolClient:
             return self._call_old_endpoint_raw(iterative_prompt, chat_history, project_root)
         return self._call_new_endpoint_raw(iterative_prompt, chat_history, project_root)
 
-    def _call_new_endpoint(self, prompt: str, chat_history: list[dict], project_root: Optional[str] = None) -> dict:
+    def _call_new_endpoint(self, prompt: str, chat_history: list[dict], project_root: str | None = None) -> dict:
         """Call /prompt-enhancer endpoint (new)."""
         context = self._get_retrieval_context(project_root, prompt)
         enriched_prompt = f"{context}{prompt}" if context else prompt
@@ -237,11 +272,14 @@ class AceToolClient:
 
         data = self._post_json(
             build_api_url(self.base_url, "/prompt-enhancer"),
-            payload, headers=self._get_headers(),
+            payload,
+            headers=self._get_headers(),
         )
         return {"enhanced_prompt": data.get("text", prompt)}
 
-    def _call_new_endpoint_raw(self, raw_prompt: str, chat_history: list[dict], project_root: Optional[str] = None) -> dict:
+    def _call_new_endpoint_raw(
+        self, raw_prompt: str, chat_history: list[dict], project_root: str | None = None
+    ) -> dict:
         """Call /prompt-enhancer with pre-built prompt."""
         context = self._get_retrieval_context(project_root, raw_prompt)
         enriched_prompt = f"{context}{raw_prompt}" if context else raw_prompt
@@ -255,12 +293,15 @@ class AceToolClient:
 
         data = self._post_json(
             build_api_url(self.base_url, "/prompt-enhancer"),
-            payload, headers=self._get_headers(),
+            payload,
+            headers=self._get_headers(),
         )
         text = data.get("text", raw_prompt)
         return {"enhanced_prompt": self._extract_enhanced_prompt(text)}
 
-    def _build_old_payload(self, message: str, chat_history: list[dict], language_guideline: str, blob_names: list[str] | None = None) -> dict:
+    def _build_old_payload(
+        self, message: str, chat_history: list[dict], language_guideline: str, blob_names: list[str] | None = None
+    ) -> dict:
         """Build payload for old endpoint."""
         return {
             "model": DEFAULT_MODEL,
@@ -292,7 +333,7 @@ class AceToolClient:
             "system_prompt": None,
         }
 
-    def _get_blob_names(self, project_root: Optional[str]) -> list[str] | None:
+    def _get_blob_names(self, project_root: str | None) -> list[str] | None:
         """Get blob_names from indexer if API and project_root are available."""
         if not project_root or not self.base_url or not self.token:
             return None
@@ -309,7 +350,7 @@ class AceToolClient:
             log.warning("Failed to get blob names: %s", e)
             return None
 
-    def _get_retrieval_context(self, project_root: Optional[str], query: str) -> str:
+    def _get_retrieval_context(self, project_root: str | None, query: str) -> str:
         """Get cloud retrieval context to inject into prompts for non-old endpoints."""
         if not project_root or not self.base_url or not self.token:
             return ""
@@ -327,10 +368,12 @@ class AceToolClient:
             log.warning("Cloud retrieval failed, proceeding without context: %s", e)
         return ""
 
-    def _call_old_endpoint(self, prompt: str, chat_history: list[dict], project_root: Optional[str] = None) -> dict:
+    def _call_old_endpoint(self, prompt: str, chat_history: list[dict], project_root: str | None = None) -> dict:
         """Call /chat-stream endpoint (old, streaming)."""
         final_prompt = ENHANCE_PROMPT_TEMPLATE.replace("{original_prompt}", prompt)
-        language_guideline = "Please respond in Chinese (Simplified Chinese). 请用中文回复。" if is_chinese_text(prompt) else ""
+        language_guideline = (
+            "Please respond in Chinese (Simplified Chinese). 请用中文回复。" if is_chinese_text(prompt) else ""
+        )
         blob_names = self._get_blob_names(project_root)
         payload = self._build_old_payload(final_prompt, chat_history, language_guideline, blob_names)
 
@@ -347,9 +390,13 @@ class AceToolClient:
             enhanced = self._replace_tool_names(enhanced)
             return {"enhanced_prompt": enhanced}
 
-    def _call_old_endpoint_raw(self, raw_prompt: str, chat_history: list[dict], project_root: Optional[str] = None) -> dict:
+    def _call_old_endpoint_raw(
+        self, raw_prompt: str, chat_history: list[dict], project_root: str | None = None
+    ) -> dict:
         """Call /chat-stream with pre-built prompt."""
-        language_guideline = "Please respond in Chinese (Simplified Chinese). 请用中文回复。" if is_chinese_text(raw_prompt) else ""
+        language_guideline = (
+            "Please respond in Chinese (Simplified Chinese). 请用中文回复。" if is_chinese_text(raw_prompt) else ""
+        )
         blob_names = self._get_blob_names(project_root)
         payload = self._build_old_payload(raw_prompt, chat_history, language_guideline, blob_names)
 
@@ -394,9 +441,7 @@ class AceToolClient:
 
     def _replace_tool_names(self, text: str) -> str:
         """Replace Augment-specific tool names with ace-tool names."""
-        return text.replace("codebase-retrieval", "search_context").replace(
-            "codebase_retrieval", "search_context"
-        )
+        return text.replace("codebase-retrieval", "search_context").replace("codebase_retrieval", "search_context")
 
     def _post_json(
         self,
@@ -417,7 +462,7 @@ class AceToolClient:
         enhanced = self._extract_enhanced_prompt(text) if text else fallback
         return {"enhanced_prompt": self._replace_tool_names(enhanced)}
 
-    def _call_third_party_api(self, prompt: str, conversation_history: str, project_root: Optional[str] = None) -> dict:
+    def _call_third_party_api(self, prompt: str, conversation_history: str, project_root: str | None = None) -> dict:
         """Call third-party API (Claude/OpenAI/Gemini/Codex)."""
         if not self.third_party_base_url or not self.third_party_token:
             raise ValueError(
@@ -433,7 +478,9 @@ class AceToolClient:
 
         return self._dispatch_third_party(full_prompt, chat_history, model)
 
-    def _call_third_party_api_raw(self, raw_prompt: str, conversation_history: str, project_root: Optional[str] = None) -> dict:
+    def _call_third_party_api_raw(
+        self, raw_prompt: str, conversation_history: str, project_root: str | None = None
+    ) -> dict:
         """Call third-party API with pre-built prompt."""
         if not self.third_party_base_url or not self.third_party_token:
             raise ValueError(
@@ -467,7 +514,7 @@ class AceToolClient:
         candidates = final or [o for o in outputs if o.get("type") == "message"]
         text_parts, refusal_parts = [], []
         for msg in candidates:
-            for part in (msg.get("content") or []):
+            for part in msg.get("content") or []:
                 t = part.get("type")
                 if t == "output_text":
                     txt = (part.get("text") or "").strip()
@@ -514,7 +561,8 @@ class AceToolClient:
         url = build_api_url(self.third_party_base_url, "/v1/messages")
 
         data = self._post_json(
-            url, payload,
+            url,
+            payload,
             headers={
                 "Content-Type": "application/json",
                 "x-api-key": self.third_party_token,
@@ -555,7 +603,8 @@ class AceToolClient:
         url = build_api_url(self.third_party_base_url, f"/v1beta/models/{model}:generateContent")
 
         data = self._post_json(
-            url, payload,
+            url,
+            payload,
             headers={"Content-Type": "application/json", "x-goog-api-key": self.third_party_token},
             provider="Gemini",
         )
@@ -623,7 +672,7 @@ class AceToolClient:
                 continue
             if any(p in EXCLUDE_PATTERNS for p in file_path.parts):
                 continue
-            if any(part.startswith(".") for part in file_path.parts[len(root.parts):]):
+            if any(part.startswith(".") for part in file_path.parts[len(root.parts) :]):
                 continue
 
             try:
@@ -646,7 +695,9 @@ class AceToolClient:
             "base_url": self.base_url or "(not configured)",
             "endpoint": self.endpoint,
             "endpoint_effective": self.endpoint,
-            "endpoint_env_ready": bool(self.third_party_base_url and self.third_party_token) if self._is_third_party() else bool(self.base_url and self.token),
+            "endpoint_env_ready": bool(self.third_party_base_url and self.third_party_token)
+            if self._is_third_party()
+            else bool(self.base_url and self.token),
             "token_configured": bool(self.token),
             "third_party_configured": bool(self.third_party_base_url and self.third_party_token),
             "auth_source": self.auth_source,

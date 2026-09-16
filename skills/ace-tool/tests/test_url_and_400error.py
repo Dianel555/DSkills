@@ -30,19 +30,23 @@ def _write_index(root: Path):
 
 # --- Problem 1: URL construction consistency ---
 
+
 def test_build_api_url_lives_in_utils_and_reexported():
     assert build_api_url is utils_build_api_url
 
 
-@pytest.mark.parametrize("base,path,expected", [
-    ("https://api.example.com", "/v1/messages", "https://api.example.com/v1/messages"),
-    ("https://api.example.com/v1", "/v1/messages", "https://api.example.com/v1/messages"),
-    ("https://proxy.com/v1beta", "/v1/messages", "https://proxy.com/v1beta/messages"),
-    ("https://api.example.com/vertex", "/v1/messages", "https://api.example.com/vertex/v1/messages"),
-    ("https://api.example.com", "v1/messages", "https://api.example.com/v1/messages"),
-    ("https://api.example.com/v1/", "/v1/messages", "https://api.example.com/v1/messages"),
-    ("https://h/v1", "/batch-upload", "https://h/v1/batch-upload"),
-])
+@pytest.mark.parametrize(
+    "base,path,expected",
+    [
+        ("https://api.example.com", "/v1/messages", "https://api.example.com/v1/messages"),
+        ("https://api.example.com/v1", "/v1/messages", "https://api.example.com/v1/messages"),
+        ("https://proxy.com/v1beta", "/v1/messages", "https://proxy.com/v1beta/messages"),
+        ("https://api.example.com/vertex", "/v1/messages", "https://api.example.com/vertex/v1/messages"),
+        ("https://api.example.com", "v1/messages", "https://api.example.com/v1/messages"),
+        ("https://api.example.com/v1/", "/v1/messages", "https://api.example.com/v1/messages"),
+        ("https://h/v1", "/batch-upload", "https://h/v1/batch-upload"),
+    ],
+)
 def test_build_api_url_version_handling(base, path, expected):
     assert build_api_url(base, path) == expected
 
@@ -77,6 +81,7 @@ def test_upload_url_uses_build_api_url(tmp_path, monkeypatch):
 
 
 # --- Problem 2: 400 unknown blobs self-heal ---
+
 
 def test_unknown_blobs_triggers_rebuild_and_single_retry(monkeypatch):
     c = AceToolClient(base_url="https://h", token="tok")
@@ -133,7 +138,11 @@ def test_other_400_errors_not_swallowed(monkeypatch):
 
     monkeypatch.setattr("client.Indexer.__init__", lambda self, *a, **k: None)
     monkeypatch.setattr("client.Indexer.get_blob_names", lambda self: ["a"])
-    monkeypatch.setattr("client.Indexer.force_rebuild", lambda self: calls.__setitem__("rebuild", calls["rebuild"] + 1) or [], raising=False)
+    monkeypatch.setattr(
+        "client.Indexer.force_rebuild",
+        lambda self: calls.__setitem__("rebuild", calls["rebuild"] + 1) or [],
+        raising=False,
+    )
 
     def fake_post(url, payload, *, headers, provider="API", timeout=None):
         calls["post"] += 1
@@ -149,6 +158,7 @@ def test_other_400_errors_not_swallowed(monkeypatch):
 
 
 # --- Problem 3: cache hierarchy ---
+
 
 def test_child_inherits_nearest_ancestor_cache(tmp_path):
     parent = tmp_path / "parent"
@@ -221,6 +231,7 @@ def test_parent_indexing_absorbs_child_cache(tmp_path):
 
 # --- Review fixes: absorb boundaries, retry amplification, CLI transparency ---
 
+
 def test_child_cache_kept_when_root_never_saves_index(tmp_path):
     root = tmp_path / "empty-root"
     sub = root / "pkg"
@@ -284,7 +295,8 @@ def test_cmd_index_reports_effective_root(tmp_path, monkeypatch, capsys):
     _write_index(parent)
 
     monkeypatch.setattr(
-        ace_cli, "AceToolClient",
+        ace_cli,
+        "AceToolClient",
         lambda *a: SimpleNamespace(base_url="https://h", token="tok"),
     )
 
@@ -301,6 +313,7 @@ def test_cmd_index_reports_effective_root(tmp_path, monkeypatch, capsys):
 
 
 # --- Concurrency race: tolerate-and-converge (absorb vs concurrent child save) ---
+
 
 def test_save_index_tolerates_dir_deleted_mid_write(tmp_path, monkeypatch):
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")

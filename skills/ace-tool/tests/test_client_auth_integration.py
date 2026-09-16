@@ -1,10 +1,8 @@
 """Tests for AceToolClient authentication integration."""
+
 import json
 import os
-from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 try:
     from scripts.client import AceToolClient
@@ -22,14 +20,10 @@ class TestClientAuthIntegration:
         session_data = {"accessToken": "file_token", "tenantURL": "https://file.example.com/"}
         session_file.write_text(json.dumps(session_data), encoding="utf-8")
 
-        env_vars = {
-            "ACE_API_URL": "https://env.example.com/",
-            "ACE_API_TOKEN": "env_token"
-        }
+        env_vars = {"ACE_API_URL": "https://env.example.com/", "ACE_API_TOKEN": "env_token"}
 
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            with patch.dict(os.environ, env_vars, clear=False):
-                client = AceToolClient(base_url="https://constructor.example.com", token="constructor_token")
+        with patch("pathlib.Path.home", return_value=tmp_path), patch.dict(os.environ, env_vars, clear=False):
+            client = AceToolClient(base_url="https://constructor.example.com", token="constructor_token")
 
         assert client.base_url == "https://constructor.example.com"
         assert client.token == "constructor_token"
@@ -54,9 +48,8 @@ class TestClientAuthIntegration:
         env_data = {"accessToken": "env_token", "tenantURL": "https://env.example.com/"}
         env_vars = {"AUGMENT_SESSION_AUTH": json.dumps(env_data)}
 
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            with patch.dict(os.environ, env_vars, clear=False):
-                client = AceToolClient()
+        with patch("pathlib.Path.home", return_value=tmp_path), patch.dict(os.environ, env_vars, clear=False):
+            client = AceToolClient()
 
         assert client.base_url == "https://env.example.com"
         assert client.token == "env_token"
@@ -67,12 +60,11 @@ class TestClientAuthIntegration:
         env_vars = {
             "ACE_API_URL": "https://legacy.example.com/",
             "ACE_API_TOKEN": "legacy_token",
-            "AUGMENT_SESSION_AUTH": ""
+            "AUGMENT_SESSION_AUTH": "",
         }
 
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            with patch.dict(os.environ, env_vars, clear=False):
-                client = AceToolClient()
+        with patch("pathlib.Path.home", return_value=tmp_path), patch.dict(os.environ, env_vars, clear=False):
+            client = AceToolClient()
 
         assert client.base_url == "https://legacy.example.com"
         assert client.token == "legacy_token"
@@ -95,15 +87,10 @@ class TestClientAuthIntegration:
 
     def test_no_auth_configured(self, tmp_path):
         """Test client handles missing authentication gracefully."""
-        env_vars = {
-            "ACE_API_URL": "",
-            "ACE_API_TOKEN": "",
-            "AUGMENT_SESSION_AUTH": ""
-        }
+        env_vars = {"ACE_API_URL": "", "ACE_API_TOKEN": "", "AUGMENT_SESSION_AUTH": ""}
 
-        with patch("pathlib.Path.home", return_value=tmp_path):
-            with patch.dict(os.environ, env_vars, clear=False):
-                client = AceToolClient()
+        with patch("pathlib.Path.home", return_value=tmp_path), patch.dict(os.environ, env_vars, clear=False):
+            client = AceToolClient()
 
         assert client.base_url == ""
         assert client.token == ""

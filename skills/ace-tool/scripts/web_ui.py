@@ -1,5 +1,6 @@
 """Web UI for interactive prompt enhancement."""
 
+import contextlib
 import json
 import os
 import queue
@@ -9,8 +10,8 @@ import threading
 import time
 import uuid
 import webbrowser
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Optional, TYPE_CHECKING
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 if TYPE_CHECKING:
@@ -20,7 +21,7 @@ if TYPE_CHECKING:
         from client import AceToolClient
 
 _SESSIONS: dict = {}
-_RESULT_QUEUE: Optional[queue.Queue] = None
+_RESULT_QUEUE: queue.Queue | None = None
 
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -179,14 +180,12 @@ class EnhanceRequestHandler(BaseHTTPRequestHandler):
     original_prompt: str = ""
     conversation_history: str = ""
 
-    def log_message(self, format, *args):
+    def log_message(self, fmt, *args):
         pass
 
     def handle(self):
-        try:
+        with contextlib.suppress(ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             super().handle()
-        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
-            pass
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -228,12 +227,14 @@ class EnhanceRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Session not found"}, 404)
             return
         session = _SESSIONS[session_id]
-        self._send_json({
-            "enhancedPrompt": session["enhanced"],
-            "status": session["status"],
-            "createdAt": session["created_at"],
-            "timeoutMs": session["timeout_ms"],
-        })
+        self._send_json(
+            {
+                "enhancedPrompt": session["enhanced"],
+                "status": session["status"],
+                "createdAt": session["created_at"],
+                "timeoutMs": session["timeout_ms"],
+            }
+        )
 
     def _handle_submit(self, body: str):
         try:
@@ -293,10 +294,12 @@ class EnhanceRequestHandler(BaseHTTPRequestHandler):
             session["previous_enhanced"] = session["enhanced"]
             session["enhanced"] = new_enhanced
             session["regenerate_count"] = session.get("regenerate_count", 0) + 1
-            self._send_json({
-                "enhancedPrompt": new_enhanced,
-                "regenerateCount": session["regenerate_count"],
-            })
+            self._send_json(
+                {
+                    "enhancedPrompt": new_enhanced,
+                    "regenerateCount": session["regenerate_count"],
+                }
+            )
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
@@ -329,18 +332,24 @@ class EnhanceRequestHandler(BaseHTTPRequestHandler):
             session["previous_enhanced"] = session["enhanced"]
             session["enhanced"] = new_enhanced
             session["refine_count"] = session.get("refine_count", 0) + 1
-            self._send_json({
-                "enhancedPrompt": new_enhanced,
-                "refineCount": session["refine_count"],
-            })
+            self._send_json(
+                {
+                    "enhancedPrompt": new_enhanced,
+                    "refineCount": session["refine_count"],
+                }
+            )
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
 
 def run_interactive_enhance(
-    client: "AceToolClient", prompt: str, history: str, port: int = 8765,
-    auto_open_browser: bool = True, project_root: Optional[str] = None,
-) -> Optional[str]:
+    client: "AceToolClient",
+    prompt: str,
+    history: str,
+    port: int = 8765,
+    auto_open_browser: bool = True,
+    project_root: str | None = None,
+) -> str | None:
     """Run interactive web-based prompt enhancement."""
     global _RESULT_QUEUE
 
@@ -404,6 +413,7 @@ def run_interactive_enhance(
 
     def open_browser():
         import subprocess
+
         if sys.platform == "win32":
             # Try multiple methods on Windows
             methods = [
