@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Working-directory-independent launcher for the sibling exa_cli package."""
+
 import os
 import sys
 from pathlib import Path

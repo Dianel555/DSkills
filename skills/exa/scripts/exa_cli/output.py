@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def redact_secret(data: Any, secret: str) -> Any:
@@ -20,7 +20,7 @@ def redact_secret(data: Any, secret: str) -> Any:
     return data
 
 
-def output_json(data: Any, out_file: Optional[str] = None) -> None:
+def output_json(data: Any, out_file: str | None = None) -> None:
     text = json.dumps(data, ensure_ascii=False, indent=2)
     if out_file:
         Path(out_file).write_text(text, encoding="utf-8")

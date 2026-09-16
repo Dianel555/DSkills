@@ -5,7 +5,6 @@ import unittest
 from unittest.mock import patch
 
 import httpx
-
 from _support import SKILL_ROOT  # noqa: F401
 from exa_cli import client as client_module
 from exa_cli.client import ExaClient
@@ -62,9 +61,7 @@ class ClientContractTests(unittest.TestCase):
 
     def test_bearer_auth_header_never_uses_x_api_key(self) -> None:
         with patch.object(client_module.httpx, "AsyncClient", _FakeAsyncClient):
-            result = asyncio.run(_run_search(ExaClient(
-                "https://example.test", "top-secret", auth_scheme="bearer"
-            )))
+            result = asyncio.run(_run_search(ExaClient("https://example.test", "top-secret", auth_scheme="bearer")))
         self.assertEqual(result, {"status": 200})
         headers = _FakeAsyncClient.requests[0][2]
         self.assertEqual(headers["Authorization"], "Bearer top-secret")
@@ -72,9 +69,7 @@ class ClientContractTests(unittest.TestCase):
 
     def test_beta_header_is_scoped_to_agent_requests(self) -> None:
         with patch.object(client_module.httpx, "AsyncClient", _FakeAsyncClient):
-            asyncio.run(_run_search_and_agent_requests(ExaClient(
-                "https://example.test", "top-secret"
-            )))
+            asyncio.run(_run_search_and_agent_requests(ExaClient("https://example.test", "top-secret")))
         search_headers = _FakeAsyncClient.requests[0][2]
         create_headers = _FakeAsyncClient.requests[1][2]
         get_headers = _FakeAsyncClient.requests[2][2]
@@ -84,12 +79,12 @@ class ClientContractTests(unittest.TestCase):
 
     def test_retryable_status_stops_after_four_attempts(self) -> None:
         _FakeAsyncClient.statuses = [503, 503, 503, 503, 200]
-        with patch.object(client_module.httpx, "AsyncClient", _FakeAsyncClient), \
-             patch.object(client_module._WaitWithRetryAfter, "__call__", return_value=0):
-            with self.assertRaises(httpx.HTTPStatusError):
-                asyncio.run(_run_search(ExaClient(
-                    "https://example.test", "top-secret", max_retry_wait=1
-                )))
+        with (
+            patch.object(client_module.httpx, "AsyncClient", _FakeAsyncClient),
+            patch.object(client_module._WaitWithRetryAfter, "__call__", return_value=0),
+            self.assertRaises(httpx.HTTPStatusError),
+        ):
+            asyncio.run(_run_search(ExaClient("https://example.test", "top-secret", max_retry_wait=1)))
         self.assertEqual(len(_FakeAsyncClient.requests), 4)
 
 

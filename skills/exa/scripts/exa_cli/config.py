@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 DEFAULT_API_URL = "https://api.exa.ai"
 
@@ -13,7 +12,7 @@ def skill_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def load_dotenv(env_path: Optional[Path] = None) -> bool:
+def load_dotenv(env_path: Path | None = None) -> bool:
     """Load .env using a documented subset:
 
     - KEY=VALUE on a single line.
@@ -24,15 +23,19 @@ def load_dotenv(env_path: Optional[Path] = None) -> bool:
     - Existing process env vars are NOT overwritten.
     """
     root = skill_root()
-    search_paths = [env_path] if env_path else [
-        root / ".env",              # canonical default (found from any cwd)
-        root / "scripts" / ".env",  # legacy pre-migration location
-    ]
+    search_paths = (
+        [env_path]
+        if env_path
+        else [
+            root / ".env",  # canonical default (found from any cwd)
+            root / "scripts" / ".env",  # legacy pre-migration location
+        ]
+    )
     for path in search_paths:
         if path is None or not path.exists():
             continue
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 for raw in f:
                     line = raw.strip()
                     if not line or line.startswith("#"):
@@ -55,9 +58,9 @@ def load_dotenv(env_path: Optional[Path] = None) -> bool:
 
 
 class Config:
-    _instance: Optional["Config"] = None
+    _instance: Config | None = None
 
-    def __new__(cls) -> "Config":
+    def __new__(cls) -> Config:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._override_url = None
@@ -74,10 +77,10 @@ class Config:
 
     def set_overrides(
         self,
-        api_url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        max_retry_wait: Optional[int] = None,
-        auth_scheme: Optional[str] = None,
+        api_url: str | None = None,
+        api_key: str | None = None,
+        max_retry_wait: int | None = None,
+        auth_scheme: str | None = None,
     ) -> None:
         if api_url is not None:
             self._override_url = api_url
@@ -104,9 +107,7 @@ class Config:
             return self._override_key
         key = os.getenv("EXA_API_KEY")
         if not key:
-            raise ValueError(
-                "EXA_API_KEY not configured. Set environment variable or use --api-key"
-            )
+            raise ValueError("EXA_API_KEY not configured. Set environment variable or use --api-key")
         return key
 
     @property
