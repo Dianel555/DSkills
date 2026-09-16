@@ -8,6 +8,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -120,7 +121,7 @@ def test_success_envelope_and_workspace_coherence(monkeypatch, capsys, tmp_path)
     captured = {}
     stream_file = tmp_path / "claude-stream.jsonl"
 
-    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
         captured["popen_cmd"] = popen_cmd
         captured["workspace"] = workspace
         captured["timeout"] = timeout
@@ -228,7 +229,7 @@ def test_result_error_is_not_masked_by_assistant_message(monkeypatch, capsys, tm
 def test_timeout_failure_is_not_reported_as_success(monkeypatch, capsys, tmp_path):
     fixed_uuid = uuid.UUID("44444444-4444-4444-4444-444444444444")
 
-    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
         yield _stream_event(
             {"type": "system", "subtype": "init", "session_id": str(fixed_uuid)}
         )
@@ -261,7 +262,7 @@ def test_timeout_failure_is_not_reported_as_success(monkeypatch, capsys, tmp_pat
 def test_timeout_reports_last_transport_error(monkeypatch, capsys, tmp_path):
     """A 502 during retry must be visible in the timeout envelope, not just the stream."""
 
-    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
         yield _stream_event(
             {
                 "type": "system",
@@ -299,7 +300,7 @@ def test_timeout_reports_last_transport_error(monkeypatch, capsys, tmp_path):
 def test_timeout_without_retry_events_keeps_plain_error(monkeypatch, capsys, tmp_path):
     """Absent transport failures the timeout message stays unembellished."""
 
-    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
         raise subprocess.TimeoutExpired(cmd=popen_cmd, timeout=5)
 
     monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
@@ -322,7 +323,7 @@ def test_timeout_without_retry_events_keeps_plain_error(monkeypatch, capsys, tmp
 def test_omitted_timeout_disables_bridge_deadline(monkeypatch, capsys, tmp_path):
     captured = {}
 
-    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink):
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
         captured["timeout"] = timeout
         session_id = popen_cmd[popen_cmd.index("--session-id") + 1]
         yield _stream_event(
@@ -392,7 +393,9 @@ def test_empty_stdout_is_a_failure(monkeypatch, capsys, tmp_path):
     cb.cmd_run(args)
     out = json.loads(capsys.readouterr().out)
     assert out["success"] is False
-    assert uuid.UUID(out["SESSION_ID"])
+    # D5: claude never started, so the pre-generated uuid is a phantom session
+    # and must not be advertised as resumable.
+    assert out["SESSION_ID"] == ""
     assert "without a result event" in out["error"].lower()
     assert "agent_messages" not in out
     assert Path(out["stream_file"]).is_file()
@@ -511,3 +514,303 @@ def test_repository_catalog_registers_codex_cc():
     assert entry is not None
     assert entry["source"] == "./skills/codex-cc"
     assert "Claude Code" in entry["description"]
+
+
+# --- Windows .cmd shim: BatBadBut quoting, stdin prompt delivery, tree-kill ---
+
+
+class _FakeStdin:
+    def __init__(self):
+        self.chunks = []
+        self.closed = False
+
+    def write(self, value):
+        self.chunks.append(value)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeProcess:
+    def __init__(self, pid=4242):
+        self.pid = pid
+        self.stdin = _FakeStdin()
+        self.stdout = iter([])
+        self.stderr = iter([])
+        self.kwargs = {}
+
+    def poll(self):
+        return 0
+
+    def wait(self, timeout=None):
+        return 0
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+def test_cmd_quote_rust_bat_encoding(monkeypatch):
+    """Embedded quotes must survive the npm .cmd shim re-parse: a prompt holding
+    "Out of scope" arrives as ONE argv entry, not three (the `of` argv leak)."""
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
+    )
+    command = cb._prepare_popen_cmd(
+        ["claude", "-p", 'A "Out of scope" B 100% done'], {"COMSPEC": "cmd.exe"}
+    )
+    assert command.startswith('"cmd.exe" /d /s /c "')
+    assert '"A ""Out of scope"" B 100' in command
+    assert '"^""' not in command
+    assert "100%%cd:~,% done" in command
+    assert "100%% done" not in command
+
+
+def test_cmd_quote_trailing_backslash(monkeypatch):
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
+    )
+    command = cb._prepare_popen_cmd(["claude", "-p", "\\"], {})
+    assert command.endswith('"-p" "\\\\""')
+
+
+def test_shim_run_moves_prompt_to_stdin(monkeypatch, capsys, tmp_path):
+    """On the Windows shim path the PROMPT positional is dropped and delivered
+    via stdin, so an 8k+ prompt cannot hit the cmd.exe limit and embedded quotes
+    never reach cmd.exe."""
+    captured = {}
+
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
+        captured["cmd"] = popen_cmd
+        captured["stdin_prompt"] = stdin_prompt
+        yield _stream_event(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": "77777777-7777-7777-7777-777777777777",
+                "result": "ok",
+            }
+        )
+
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
+    )
+    monkeypatch.setattr(cb, "_prepare_popen_cmd", lambda cmd, env: cmd)
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
+    args = SimpleNamespace(
+        PROMPT='A "Out of scope" B',
+        cd=tmp_path,
+        SESSION_ID="",
+        model="",
+        permission_mode="",
+        dangerously_skip_permissions=False,
+        timeout=600.0,
+        stream_file="",
+        return_all_messages=False,
+    )
+
+    cb.cmd_run(args)
+    out = json.loads(capsys.readouterr().out)
+
+    assert out["success"] is True
+    assert captured["stdin_prompt"] == 'A "Out of scope" B'
+    assert captured["cmd"][1] == "-p"
+    assert 'A "Out of scope" B' not in captured["cmd"]
+
+
+def test_shim_stdin_prompt_bytes_are_delivered(monkeypatch):
+    proc = _FakeProcess()
+
+    def fake_popen(command, **kwargs):
+        proc.kwargs = kwargs
+        return proc
+
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+
+    list(cb._stream_claude_output("cmdline", ".", {}, None, [], "x" * 9000))
+
+    for _ in range(100):
+        if proc.stdin.closed:
+            break
+        time.sleep(0.01)
+    assert "".join(proc.stdin.chunks) == "x" * 9000
+    assert proc.stdin.closed
+    assert proc.kwargs["stdin"] is subprocess.PIPE
+
+
+def test_posix_run_keeps_prompt_positional(monkeypatch, capsys, tmp_path):
+    captured = {}
+
+    def fake_stream(popen_cmd, workspace, env, timeout, stderr_sink, stdin_prompt=None):
+        captured["cmd"] = popen_cmd
+        captured["stdin_prompt"] = stdin_prompt
+        yield _stream_event(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "session_id": "88888888-8888-8888-8888-888888888888",
+                "result": "ok",
+            }
+        )
+
+    monkeypatch.setattr(cb, "_is_windows", lambda: False)
+    monkeypatch.setattr(cb, "_prepare_popen_cmd", lambda cmd, env: cmd)
+    monkeypatch.setattr(cb, "_stream_claude_output", fake_stream)
+    args = SimpleNamespace(
+        PROMPT="Analyze auth",
+        cd=tmp_path,
+        SESSION_ID="",
+        model="",
+        permission_mode="",
+        dangerously_skip_permissions=False,
+        timeout=600.0,
+        stream_file="",
+        return_all_messages=False,
+    )
+
+    cb.cmd_run(args)
+    out = json.loads(capsys.readouterr().out)
+
+    assert out["success"] is True
+    assert captured["stdin_prompt"] is None
+    assert captured["cmd"][-1] == "Analyze auth"
+
+
+def test_windows_termination_kills_process_tree(monkeypatch):
+    """terminate() on the cmd.exe wrapper orphans node/claude; taskkill /T /F is required."""
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
+    calls = []
+
+    class _Proc(_FakeProcess):
+        def __init__(self):
+            super().__init__(pid=4321)
+            self.exited = False
+
+        def poll(self):
+            return 0 if self.exited else None
+
+        def wait(self, timeout=None):
+            if timeout is not None and not self.exited:
+                raise subprocess.TimeoutExpired("cmd", timeout)
+            self.exited = True
+            return 0
+
+    proc = _Proc()
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        proc.exited = True
+
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    cb._stop_process(proc)
+
+    assert ["taskkill", "/T", "/F", "/PID", "4321"] in calls
+
+
+def test_posix_termination_uses_terminate(monkeypatch):
+    monkeypatch.setattr(cb, "_is_windows", lambda: False)
+    seen = {"terminate": False}
+
+    class _Proc(_FakeProcess):
+        def __init__(self):
+            super().__init__()
+            self.exited = False
+
+        def poll(self):
+            return 0 if self.exited else None
+
+        def terminate(self):
+            seen["terminate"] = True
+            self.exited = True
+
+    cb._stop_process(_Proc())
+
+    assert seen["terminate"] is True
+
+
+def test_passthrough_keeps_stdin_detached_on_windows(monkeypatch, capsys):
+    """mcp/plugin passthrough must never take the stdin-prompt path: its argv has
+    no PROMPT and cmd[1] is not -p, so stdin stays detached even on Windows."""
+    captured = {}
+
+    def fake_run(popen_cmd, **kwargs):
+        captured["cmd"] = popen_cmd
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
+
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
+    monkeypatch.setattr(
+        cb, "_resolve_executable", lambda name, env: r"C:\npm\claude.cmd"
+    )
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+
+    out = _run_main(monkeypatch, capsys, ["mcp", "list"])
+
+    assert out["success"] is True
+    assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
+
+
+def test_stop_process_falls_back_to_kill(monkeypatch):
+    """When tree termination does not finish the process, kill() is the fallback."""
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
+    seen = {"kill": False}
+
+    class _Proc(_FakeProcess):
+        def __init__(self):
+            super().__init__(pid=5555)
+            self.waits = 0
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            seen["kill"] = True
+
+        def wait(self, timeout=None):
+            self.waits += 1
+            if self.waits == 1:
+                raise subprocess.TimeoutExpired("cmd", timeout)
+            return 0
+
+    proc = _Proc()
+    monkeypatch.setattr(cb.subprocess, "run", lambda command, **kwargs: None)
+
+    cb._stop_process(proc)
+
+    assert seen["kill"] is True
+
+
+def test_normal_completion_wait_timeout_triggers_tree_kill(monkeypatch):
+    """A completion whose wrapper never exits must not hang the bridge: the wait
+    timeout falls back to the same tree-kill."""
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
+    killed = []
+
+    class _Proc(_FakeProcess):
+        def __init__(self):
+            super().__init__(pid=6666)
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired("cmd", timeout)
+            return 0
+
+    proc = _Proc()
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda command, **kwargs: proc)
+    monkeypatch.setattr(
+        cb.subprocess, "run", lambda command, **kwargs: killed.append(command)
+    )
+
+    list(cb._stream_claude_output("cmdline", ".", {}, None, []))
+
+    assert ["taskkill", "/T", "/F", "/PID", "6666"] in killed
