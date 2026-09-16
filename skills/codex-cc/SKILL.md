@@ -19,6 +19,7 @@ python scripts/claude_bridge.py --cd "/path/to/project" --PROMPT "Analyze auth f
 - Claude Code therefore keeps its normal loading path for trusted-workspace customizations such as `CLAUDE.md`, skills, plugins, MCP servers, custom commands, and rules.
 - `claude -p` skips the interactive trust dialog and silently ignores invalid settings files, so use this only in workspaces you already trust and whose `.claude` settings already validate.
 - The bridge requests `stream-json`, persists each record immediately, and only treats Claude's final `result` record as a completed answer. Intermediate `assistant` records never mask a failed or incomplete turn.
+- On Windows the PROMPT is delivered through stdin when `claude` resolves to a `.cmd`/`.bat` shim, so the prompt never passes through cmd.exe quoting and cannot hit the command-line length limit.
 
 ## Parameters
 
@@ -48,7 +49,9 @@ subcommands:
 
 ## Sessions
 
-Capture `SESSION_ID` from the first successful response and reuse it for follow-ups:
+Capture `SESSION_ID` from the first successful response and reuse it for follow-ups.
+`SESSION_ID` is empty when a run never established a session (claude produced no stream output):
+resume only with an id the bridge actually returned.
 
 ```bash
 # New Claude session

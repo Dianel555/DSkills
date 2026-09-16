@@ -122,14 +122,31 @@ def _prepare_popen_cmd(cmd: Sequence[str], env: dict):
         popen_cmd = [windows_escape(arg) for arg in popen_cmd]
 
         def _cmd_quote(arg: str) -> str:
+            # Port of Rust std append_bat_arg (CVE-2024-24576 fix), adapted to the
+            # npm .cmd shim re-parsing (%* then node/MSVC CRT rules). Always quote;
+            # "" for an embedded quote, double backslash runs around quotes, and
+            # %%cd:~,% for % so no %VAR% can form. ^ needs no escaping inside quotes.
             if not arg:
                 return '""'
-            arg = arg.replace("%", "%%")
-            arg = arg.replace("^", "^^")
-            if any(ch in arg for ch in '&|<>()^" \t'):
-                escaped = arg.replace('"', '"^""')
-                return f'"{escaped}"'
-            return arg
+            out = ['"']
+            backslashes = 0
+            for ch in arg:
+                if ch == "\\":
+                    backslashes += 1
+                    continue
+                if ch == '"':
+                    out.append("\\" * (backslashes * 2))
+                    out.append('""')
+                elif ch == "%":
+                    out.append("\\" * backslashes)
+                    out.append("%%cd:~,%")
+                else:
+                    out.append("\\" * backslashes)
+                    out.append(ch)
+                backslashes = 0
+            out.append("\\" * (backslashes * 2))
+            out.append('"')
+            return "".join(out)
 
         cmdline = " ".join(_cmd_quote(arg) for arg in popen_cmd)
         comspec = env.get("COMSPEC", "cmd.exe")
@@ -189,6 +206,17 @@ def build_claude_cmd(args) -> tuple[list[str], str]:
     return cmd, session_id
 
 
+def _resumable_session_id(args, session_id: str, events_seen: bool) -> str:
+    """Advertise SESSION_ID only when the conversation actually exists.
+
+    A caller-supplied --SESSION_ID always names a real conversation. A
+    pre-generated uuid (--session-id) names one only once claude has emitted at
+    least one stream record; with none, claude never started, so returning the
+    uuid would advertise a session that can never resume.
+    """
+    return session_id if (args.SESSION_ID or events_seen) else ""
+
+
 def _coerce_stream_text(value) -> str:
     if value is None:
         return ""
@@ -198,15 +226,32 @@ def _coerce_stream_text(value) -> str:
 
 
 def _stop_process(process: subprocess.Popen) -> None:
-    """Stop a bridge-owned process without waiting indefinitely."""
+    """Stop a bridge-owned process without waiting indefinitely.
+
+    On the Windows .cmd/.bat path the direct child is a cmd.exe wrapper;
+    terminate() would kill only the shell and orphan the node launcher and
+    claude.exe while they hold the stdout pipe open. Kill the whole tree.
+    """
     if process.poll() is not None:
         return
-    process.terminate()
+    if _is_windows():
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    else:
+        process.terminate()
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         process.kill()
-        process.wait(timeout=5)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 def _stream_claude_output(
@@ -215,13 +260,14 @@ def _stream_claude_output(
     env: dict,
     timeout: float | None,
     stderr_sink: list[str],
+    stdin_prompt: str | None = None,
 ) -> Iterator[str]:
     """Yield Claude JSONL records while draining stderr concurrently."""
     process = subprocess.Popen(
         popen_cmd,
         shell=False,
         cwd=workspace,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE if stdin_prompt is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -229,6 +275,19 @@ def _stream_claude_output(
         errors="replace",
         env=env,
     )
+    if stdin_prompt is not None and process.stdin is not None:
+        def write_prompt() -> None:
+            try:
+                process.stdin.write(stdin_prompt)
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+            finally:
+                try:
+                    process.stdin.close()
+                except (BrokenPipeError, OSError, ValueError):
+                    pass
+        threading.Thread(target=write_prompt, daemon=True).start()
+
     stdout_queue: queue.Queue[str | None] = queue.Queue()
 
     def read_stdout() -> None:
@@ -267,7 +326,10 @@ def _stream_claude_output(
                 break
             yield line
 
-        process.wait()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            _stop_process(process)
         stderr_thread.join(timeout=1)
     except (KeyboardInterrupt, subprocess.TimeoutExpired):
         _stop_process(process)
@@ -383,6 +445,16 @@ def cmd_run(args) -> None:
     cmd, session_id = build_claude_cmd(args)
     env = os.environ.copy()
     _augment_path_env(env)
+    # On the Windows .cmd/.bat shim path the whole prompt would ride inside the
+    # cmd.exe command line, which breaks at ~8k chars and re-parses quoting.
+    # claude -p has no `-` positional convention: piping text with no positional
+    # prompt argument makes stdin the prompt. Deliver it there instead, which
+    # also preserves real newlines. Passthrough (mcp/plugin) is never `-p`.
+    stdin_prompt = None
+    if _is_windows() and len(cmd) > 2 and cmd[0] == "claude" and cmd[1] == "-p":
+        resolved = _resolve_executable(cmd[0], env)
+        if Path(resolved).suffix.lower() in {".cmd", ".bat"}:
+            stdin_prompt = cmd.pop()
     popen_cmd = _prepare_popen_cmd(cmd, env)
     try:
         stream_file = _create_stream_file(getattr(args, "stream_file", ""))
@@ -406,6 +478,7 @@ def cmd_run(args) -> None:
                 env,
                 args.timeout,
                 stderr_lines,
+                stdin_prompt,
             ):
                 stream.write(f"{line}\n")
                 stream.flush()
@@ -437,7 +510,7 @@ def cmd_run(args) -> None:
             error += f" ({retry_detail})"
         result = {
             "success": False,
-            "SESSION_ID": session_id,
+            "SESSION_ID": _resumable_session_id(args, session_id, bool(all_messages)),
             "error": error,
             "stream_file": str(stream_file),
         }
@@ -453,7 +526,7 @@ def cmd_run(args) -> None:
     except KeyboardInterrupt:
         result = {
             "success": False,
-            "SESSION_ID": session_id,
+            "SESSION_ID": _resumable_session_id(args, session_id, bool(all_messages)),
             "error": "claude interrupted",
             "stream_file": str(stream_file),
         }
@@ -475,7 +548,7 @@ def cmd_run(args) -> None:
     if result_seen and result_success and result_text:
         result = {
             "success": True,
-            "SESSION_ID": session_id,
+            "SESSION_ID": _resumable_session_id(args, session_id, bool(all_messages)),
             "agent_messages": result_text,
             "stream_file": str(stream_file),
         }
@@ -494,7 +567,7 @@ def cmd_run(args) -> None:
             error += f" Parse errors: {'; '.join(parse_errors)}"
     result = {
         "success": False,
-        "SESSION_ID": session_id,
+        "SESSION_ID": _resumable_session_id(args, session_id, bool(all_messages)),
         "error": error,
         "stream_file": str(stream_file),
     }
