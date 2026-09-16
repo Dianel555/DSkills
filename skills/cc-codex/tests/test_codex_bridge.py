@@ -19,6 +19,24 @@ cb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cb)
 
 
+def test_no_test_mutates_the_shared_os_name():
+    """Tests must patch codex_bridge._is_windows, never the shared os.<name>.
+
+    On Linux + py3.11 pathlib.Path.__new__ picks its flavour from that value and
+    pytest builds Paths mid-run, so leaking it surfaces as INTERNALERROR: cannot
+    instantiate 'WindowsPath' on your system. It cannot reproduce on Windows,
+    where the value is already "nt" -- hence a source check rather than a value
+    comparison, which cannot see a no-op patch.
+    """
+    # split so this file does not match its own scan: the attribute spelling,
+    # and the setattr form, which names the module and attribute as arguments
+    needles = ("os." + "name", "os, " + '"name"')
+    for path in sorted(Path(__file__).parent.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for needle in needles:
+            assert needle not in text, f"{path.name}: patch codex_bridge._is_windows, not the shared {needle}"
+
+
 def _run_main(monkeypatch, capsys, fake_run, argv_extra):
     monkeypatch.setattr(cb, "run_shell_command", fake_run)
     monkeypatch.setattr(sys, "argv", ["codex_bridge.py", "--PROMPT", "x", "--cd", "."] + argv_extra)
@@ -349,7 +367,7 @@ class _FakeProcess:
 def test_cmd_quote_rust_bat_encoding(monkeypatch):
     """Embedded quotes must survive the npm .cmd shim's double re-parse:
     "A \"Out of scope\" B" arrives as ONE argv entry, not three."""
-    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
     monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
     command = cb._prepare_popen_cmd(
         ["codex.cmd", "exec", "--", 'A "Out of scope" B 100% done'],
@@ -365,7 +383,7 @@ def test_cmd_quote_rust_bat_encoding(monkeypatch):
 
 
 def test_cmd_quote_empty_and_trailing_backslashes(monkeypatch):
-    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
     monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
     command = cb._prepare_popen_cmd(["codex.cmd", "exec", "--", "\\"], {})
     # trailing backslash run is doubled so the closing quote is not escaped
@@ -375,7 +393,7 @@ def test_cmd_quote_empty_and_trailing_backslashes(monkeypatch):
 def test_passthrough_keeps_new_quoting_and_devnull_stdin(monkeypatch):
     """mcp/plugin passthrough must use the new quoting but never take the
     stdin-prompt path (its last arg is not a PROMPT)."""
-    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
     monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
     captured = {}
 
@@ -393,7 +411,7 @@ def test_passthrough_keeps_new_quoting_and_devnull_stdin(monkeypatch):
 def test_shim_exec_prompt_goes_through_stdin(monkeypatch):
     """On the Windows shim path the PROMPT positional is rewritten to `-` and
     delivered via stdin, so an 8k+ prompt can't hit "command line too long"."""
-    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
     monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
     captured = {}
 
@@ -410,7 +428,7 @@ def test_shim_exec_prompt_goes_through_stdin(monkeypatch):
 
 def test_shim_exec_prompt_stdin_delivered(monkeypatch):
     """Same as above but asserts the prompt bytes actually reach stdin."""
-    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
     monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
     proc = _FakeProcess()
 
@@ -425,7 +443,7 @@ def test_shim_exec_prompt_stdin_delivered(monkeypatch):
 
 
 def test_posix_exec_keeps_devnull_stdin(monkeypatch):
-    monkeypatch.setattr(cb.os, "name", "posix")
+    monkeypatch.setattr(cb, "_is_windows", lambda: False)
     captured = {}
 
     def fake_popen(command, **kwargs):
@@ -439,7 +457,7 @@ def test_posix_exec_keeps_devnull_stdin(monkeypatch):
 
 def test_windows_termination_kills_process_tree(monkeypatch):
     """terminate() on the cmd.exe wrapper orphans node; taskkill /T /F is required."""
-    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_is_windows", lambda: True)
     monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
     calls = []
 
@@ -472,7 +490,7 @@ def test_windows_termination_kills_process_tree(monkeypatch):
 def test_output_reader_is_daemon_thread(monkeypatch):
     """A blocked readline after a tree-kill that misses a grandchild must not
     keep the interpreter alive once the caller stops consuming."""
-    monkeypatch.setattr(cb.os, "name", "posix")
+    monkeypatch.setattr(cb, "_is_windows", lambda: False)
     created = []
     real_thread = threading.Thread
 

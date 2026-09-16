@@ -21,9 +21,14 @@ from collections.abc import Generator
 from pathlib import Path
 
 
+def _is_windows() -> bool:
+    """Platform seam: patched in tests so no test mutates the shared os.name."""
+    return os.name == "nt"
+
+
 def _get_windows_npm_paths() -> list[Path]:
     """Return candidate directories for npm global installs on Windows."""
-    if os.name != "nt":
+    if not _is_windows():
         return []
     paths: list[Path] = []
     env = os.environ
@@ -40,7 +45,7 @@ def _get_windows_npm_paths() -> list[Path]:
 
 def _augment_path_env(env: dict) -> None:
     """Prepend npm global directories to PATH if missing."""
-    if os.name != "nt":
+    if not _is_windows():
         return
     path_key = next((k for k in env if k.upper() == "PATH"), "PATH")
     path_entries = [p for p in env.get(path_key, "").split(os.pathsep) if p]
@@ -60,7 +65,7 @@ def _resolve_executable(name: str, env: dict) -> str:
     path_val = env.get(path_key)
     win_exts = {".exe", ".cmd", ".bat", ".com"}
     if resolved := shutil.which(name, path=path_val):
-        if os.name == "nt":
+        if _is_windows():
             suffix = Path(resolved).suffix.lower()
             if not suffix:
                 resolved_dir = str(Path(resolved).parent)
@@ -71,7 +76,7 @@ def _resolve_executable(name: str, env: dict) -> str:
             elif suffix not in win_exts:
                 return resolved
         return resolved
-    if os.name == "nt":
+    if _is_windows():
         for base in _get_windows_npm_paths():
             for ext in (".cmd", ".bat", ".exe", ".com"):
                 candidate = base / f"{name}{ext}"
@@ -86,7 +91,7 @@ def _prepare_popen_cmd(cmd: list[str], env: dict):
     exe_path = _resolve_executable(cmd[0], env)
     popen_cmd[0] = exe_path
 
-    if os.name == "nt" and Path(exe_path).suffix.lower() in {".cmd", ".bat"}:
+    if _is_windows() and Path(exe_path).suffix.lower() in {".cmd", ".bat"}:
         # cmd.exe truncates argv at embedded \n/\r/\t; escape as literals here only.
         popen_cmd = [windows_escape(a) for a in popen_cmd]
 
@@ -142,7 +147,7 @@ def run_shell_command(
     # read the prompt from stdin, sidestepping both. Only the exec form ends
     # with `-- PROMPT`; passthrough (mcp/plugin) must keep stdin detached.
     stdin_prompt = None
-    if os.name == "nt" and len(cmd) > 2 and cmd[0] == "codex" and cmd[1] == "exec" and cmd[-2] == "--":
+    if _is_windows() and len(cmd) > 2 and cmd[0] == "codex" and cmd[1] == "exec" and cmd[-2] == "--":
         resolved = _resolve_executable(cmd[0], env)
         if Path(resolved).suffix.lower() in {".cmd", ".bat"}:
             stdin_prompt = cmd[-1]
@@ -177,7 +182,7 @@ def run_shell_command(
         # reader thread then hangs). Kill the whole tree.
         if process.poll() is not None:
             return
-        if os.name == "nt":
+        if _is_windows():
             subprocess.run(
                 ["taskkill", "/T", "/F", "/PID", str(process.pid)],
                 stdin=subprocess.DEVNULL,
@@ -273,7 +278,7 @@ def windows_escape(prompt):
 
 def configure_windows_stdio() -> None:
     """Configure stdout/stderr to use UTF-8 encoding on Windows."""
-    if os.name != "nt":
+    if not _is_windows():
         return
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
