@@ -7,6 +7,8 @@ import importlib.util
 import json
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -262,3 +264,176 @@ def test_plugin_passthrough_timeout(monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["success"] is False
     assert "timed out" in out["error"]
+
+
+class _FakeStdin:
+    def __init__(self):
+        self.chunks = []
+        self.closed = False
+
+    def write(self, value):
+        self.chunks.append(value)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeProcess:
+    def __init__(self, pid=4242):
+        self.pid = pid
+        self.stdin = _FakeStdin()
+        self.stdout = None
+        self.stderr = None
+
+    def poll(self):
+        return 0
+
+    def wait(self, timeout=None):
+        return 0
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+def test_cmd_quote_rust_bat_encoding(monkeypatch):
+    """Embedded quotes must survive the npm .cmd shim's double re-parse:
+    "A \"Out of scope\" B" arrives as ONE argv entry, not three."""
+    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
+    command = cb._prepare_popen_cmd(
+        ["codex.cmd", "exec", "--", 'A "Out of scope" B 100% done'],
+        {"COMSPEC": "cmd.exe"},
+    )
+    assert command.startswith('"cmd.exe" /d /s /c "')
+    # quotes: doubled, never the broken quote-caret-quote-quote escape
+    assert '"A ""Out of scope"" B 100' in command
+    assert '"^""' not in command
+    # percent: yt-dlp form, never a bare doubled % that survives to the child
+    assert '100%%cd:~,% done' in command
+    assert "100%% done" not in command
+
+
+def test_cmd_quote_empty_and_trailing_backslashes(monkeypatch):
+    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
+    command = cb._prepare_popen_cmd(["codex.cmd", "exec", "--", "\\"], {})
+    # trailing backslash run is doubled so the closing quote is not escaped
+    assert command.endswith('"exec" "--" "\\\\""')
+
+
+def test_passthrough_keeps_new_quoting_and_devnull_stdin(monkeypatch):
+    """mcp/plugin passthrough must use the new quoting but never take the
+    stdin-prompt path (its last arg is not a PROMPT)."""
+    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return _FakeProcess()
+
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+    list(cb.run_shell_command(["codex.cmd", "mcp", "list"], idle_timeout=0))
+    assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
+    assert '/d /s /c ""C:\\npm\\codex.cmd" "mcp" "list""' in captured["command"]
+
+
+def test_shim_exec_prompt_goes_through_stdin(monkeypatch):
+    """On the Windows shim path the PROMPT positional is rewritten to `-` and
+    delivered via stdin, so an 8k+ prompt can't hit "command line too long"."""
+    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return _FakeProcess()
+
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+    list(cb.run_shell_command(["codex", "exec", "--", "x" * 9000], idle_timeout=0))
+    assert captured["kwargs"]["stdin"] is subprocess.PIPE
+    assert captured["command"].endswith('"exec" "--" "-""')
+
+
+def test_shim_exec_prompt_stdin_delivered(monkeypatch):
+    """Same as above but asserts the prompt bytes actually reach stdin."""
+    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
+    proc = _FakeProcess()
+
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda command, **kwargs: proc)
+    list(cb.run_shell_command(["codex", "exec", "--", "x" * 9000], idle_timeout=0))
+    for _ in range(100):
+        if proc.stdin.closed:
+            break
+        time.sleep(0.01)
+    assert "".join(proc.stdin.chunks) == "x" * 9000
+    assert proc.stdin.closed
+
+
+def test_posix_exec_keeps_devnull_stdin(monkeypatch):
+    monkeypatch.setattr(cb.os, "name", "posix")
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured["kwargs"] = kwargs
+        return _FakeProcess()
+
+    monkeypatch.setattr(cb.subprocess, "Popen", fake_popen)
+    list(cb.run_shell_command(["codex", "exec", "--", "prompt"], idle_timeout=0))
+    assert captured["kwargs"]["stdin"] is subprocess.DEVNULL
+
+
+def test_windows_termination_kills_process_tree(monkeypatch):
+    """terminate() on the cmd.exe wrapper orphans node; taskkill /T /F is required."""
+    monkeypatch.setattr(cb.os, "name", "nt")
+    monkeypatch.setattr(cb, "_resolve_executable", lambda name, env: r"C:\npm\codex.cmd")
+    calls = []
+
+    class _Proc(_FakeProcess):
+        def __init__(self):
+            super().__init__(pid=4321)
+            self.exited = False
+
+        def poll(self):
+            return 0 if self.exited else None
+
+        def wait(self, timeout=None):
+            if timeout is not None and not self.exited:
+                raise subprocess.TimeoutExpired("cmd", timeout)
+            self.exited = True
+            return 0
+
+    proc = _Proc()
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        proc.exited = True
+
+    monkeypatch.setattr(cb.subprocess, "run", fake_run)
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda command, **kwargs: proc)
+    list(cb.run_shell_command(["codex.cmd", "mcp", "list"], idle_timeout=0))
+    assert ["taskkill", "/T", "/F", "/PID", "4321"] in [c[0] for c in calls]
+
+
+def test_output_reader_is_daemon_thread(monkeypatch):
+    """A blocked readline after a tree-kill that misses a grandchild must not
+    keep the interpreter alive once the caller stops consuming."""
+    monkeypatch.setattr(cb.os, "name", "posix")
+    created = []
+    real_thread = threading.Thread
+
+    def factory(*args, **kwargs):
+        t = real_thread(*args, **kwargs)
+        created.append(t)
+        return t
+
+    monkeypatch.setattr(cb.threading, "Thread", factory)
+    monkeypatch.setattr(cb.subprocess, "Popen", lambda command, **kwargs: _FakeProcess())
+    list(cb.run_shell_command(["codex", "exec", "--", "x"], idle_timeout=0))
+    assert created and all(t.daemon for t in created)

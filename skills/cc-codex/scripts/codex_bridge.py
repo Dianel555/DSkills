@@ -89,14 +89,31 @@ def _prepare_popen_cmd(cmd: List[str], env: dict):
         popen_cmd = [windows_escape(a) for a in popen_cmd]
 
         def _cmd_quote(arg: str) -> str:
+            # Port of Rust std append_bat_arg (CVE-2024-24576 fix), adapted to the
+            # npm .cmd shim re-parsing (%* then node/MSVC CRT rules). Always quote;
+            # "" for an embedded quote, double backslash runs around quotes, and
+            # %%cd:~,% for % so no %VAR% can form. ^ needs no escaping inside quotes.
             if not arg:
                 return '""'
-            arg = arg.replace('%', '%%')
-            arg = arg.replace('^', '^^')
-            if any(c in arg for c in '&|<>()^" \t'):
-                escaped = arg.replace('"', '"^""')
-                return f'"{escaped}"'
-            return arg
+            out = ['"']
+            backslashes = 0
+            for ch in arg:
+                if ch == '\\':
+                    backslashes += 1
+                    continue
+                if ch == '"':
+                    out.append('\\' * (backslashes * 2))
+                    out.append('""')
+                elif ch == '%':
+                    out.append('\\' * backslashes)
+                    out.append('%%cd:~,%')
+                else:
+                    out.append('\\' * backslashes)
+                    out.append(ch)
+                backslashes = 0
+            out.append('\\' * (backslashes * 2))
+            out.append('"')
+            return ''.join(out)
 
         cmdline = " ".join(_cmd_quote(a) for a in popen_cmd)
         comspec = env.get("COMSPEC", "cmd.exe")
@@ -116,12 +133,24 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
     """
     env = os.environ.copy()
     _augment_path_env(env)
+    # On the Windows .cmd/.bat path the whole prompt travels inside the cmd.exe
+    # command line, which breaks at ~8k chars ("The command line is too long")
+    # and re-parses quoting. codex exec accepts `-` as the PROMPT positional to
+    # read the prompt from stdin, sidestepping both. Only the exec form ends
+    # with `-- PROMPT`; passthrough (mcp/plugin) must keep stdin detached.
+    stdin_prompt = None
+    if (os.name == "nt" and len(cmd) > 2 and cmd[0] == "codex" and cmd[1] == "exec"
+            and cmd[-2] == "--"):
+        resolved = _resolve_executable(cmd[0], env)
+        if Path(resolved).suffix.lower() in {".cmd", ".bat"}:
+            stdin_prompt = cmd[-1]
+            cmd = cmd[:-1] + ["-"]
     popen_cmd = _prepare_popen_cmd(cmd, env)
 
     process = subprocess.Popen(
         popen_cmd,
         shell=False,
-        stdin=subprocess.DEVNULL,
+        stdin=subprocess.PIPE if stdin_prompt is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True,
@@ -129,6 +158,34 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
         errors='replace',
         env=env,
     )
+
+    if stdin_prompt is not None and process.stdin is not None:
+        def write_prompt() -> None:
+            try:
+                process.stdin.write(stdin_prompt)
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+            finally:
+                try:
+                    process.stdin.close()
+                except (BrokenPipeError, OSError, ValueError):
+                    pass
+        threading.Thread(target=write_prompt, daemon=True).start()
+
+    def terminate_process_tree() -> None:
+        # On the cmd.exe wrapper path, terminate() only kills the shell; the node
+        # launcher and codex.exe survive as orphans and keep stdout open (the
+        # reader thread then hangs). Kill the whole tree.
+        if process.poll() is not None:
+            return
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, check=False,
+            )
+        else:
+            process.terminate()
 
     output_queue: queue.Queue[Optional[str]] = queue.Queue()
     GRACEFUL_SHUTDOWN_DELAY = 0.3
@@ -147,7 +204,7 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
                 output_queue.put(stripped)
                 if is_turn_completed(stripped):
                     time.sleep(GRACEFUL_SHUTDOWN_DELAY)
-                    process.terminate()
+                    terminate_process_tree()
                     break
             process.stdout.close()
         output_queue.put(None)
@@ -159,7 +216,9 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
                     stderr_sink.append(line.rstrip("\n"))
             process.stderr.close()
 
-    thread = threading.Thread(target=read_output)
+    # daemon: after a tree-kill that misses a grandchild, a blocked readline must
+    # not keep the interpreter alive once the caller stops consuming the queue.
+    thread = threading.Thread(target=read_output, daemon=True)
     thread.start()
     err_thread = threading.Thread(target=read_stderr, daemon=True)
     err_thread.start()
@@ -176,7 +235,7 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
             if process.poll() is not None and not thread.is_alive():
                 break
             if idle_timeout and (time.monotonic() - last_activity) > idle_timeout:
-                process.terminate()
+                terminate_process_tree()
                 yield json.dumps({
                     "type": "error",
                     "message": f"[bridge] idle timeout after {idle_timeout:.0f}s with no output",
@@ -187,7 +246,7 @@ def run_shell_command(cmd: List[str], idle_timeout: float = 600.0,
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        process.kill()
+        terminate_process_tree()
         process.wait()
     thread.join(timeout=5)
     err_thread.join(timeout=5)
