@@ -241,6 +241,40 @@ def test_truncated_stream_without_turn_event_reports_failure(monkeypatch, capsys
     assert "agent_messages" not in out
 
 
+def test_stderr_repeated_delta_noise_is_collapsed(monkeypatch, capsys):
+    """Regression: codex logs one `... without active item` ERROR per streamed
+    delta (openai/codex#16801); a 40-minute run left 2,822 stderr lines / 261 KB
+    holding 7 distinct messages, burying the real errors. Repeats collapse to
+    one line with a count in first-seen order; a unique line survives."""
+    delta = "ERROR codex_core::util: OutputTextDelta without active item"
+    summary = "ERROR codex_core::util: ReasoningSummaryDelta without active item"
+    unique = "ERROR codex_core::tools::router: error=failed to parse function arguments: missing field `target`"
+
+    def fake_run(cmd, idle_timeout=300.0, stderr_sink=None):
+        stderr_sink.append(f"2026-09-20T09:13:27.998619Z {delta}")
+        stderr_sink.append(f"2026-09-20T09:13:28.000001Z {summary}")
+        stderr_sink.append(f"2026-09-20T09:20:00.000001Z {unique}")
+        stderr_sink.extend(f"2026-09-20T09:30:00.{i:06d}Z {delta}" for i in range(1225))
+        stderr_sink.append(f"2026-09-20T09:53:10.103397Z {summary}")
+        yield json.dumps({"type": "thread.started", "thread_id": "sess-noise"})
+        yield json.dumps({"item": {"type": "agent_message", "text": "answer"}})
+        yield json.dumps({"type": "turn.completed"})
+
+    out = _run_main(monkeypatch, capsys, fake_run, [])
+    assert out["success"] is True
+    assert out["stderr"].splitlines() == [f"{delta}  [x1226]", f"{summary}  [x2]", unique]
+
+
+def test_stderr_omitted_when_child_wrote_nothing(monkeypatch, capsys):
+    def fake_run(cmd, idle_timeout=300.0, stderr_sink=None):
+        yield json.dumps({"type": "thread.started", "thread_id": "sess-quiet"})
+        yield json.dumps({"item": {"type": "agent_message", "text": "answer"}})
+        yield json.dumps({"type": "turn.completed"})
+
+    out = _run_main(monkeypatch, capsys, fake_run, [])
+    assert "stderr" not in out
+
+
 def test_ignore_user_config_and_hook_trust_flags_in_cmd(monkeypatch, capsys):
     captured = {}
 

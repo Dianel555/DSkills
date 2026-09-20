@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import Counter
 from collections.abc import Generator
 from pathlib import Path
 
@@ -291,6 +292,19 @@ def emit(result: dict) -> None:
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
+_LOG_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\s+")
+
+
+def collapse_stderr(lines: list[str]) -> str:
+    """Each distinct stderr line once, first-seen order, with a repeat count.
+
+    codex logs one `... without active item` ERROR per streamed delta
+    (openai/codex#16801); the lines differ only in their tracing timestamp.
+    """
+    counts = Counter(_LOG_TIMESTAMP.sub("", line) for line in lines if line.strip())
+    return "\n".join(f"{line}  [x{n}]" if n > 1 else line for line, n in counts.items())
+
+
 def run_passthrough(subcommand: str, extra: list[str], timeout: float = 120.0) -> None:
     """Thin passthrough to `codex <subcommand> ...` (mcp / plugin management)."""
     env = os.environ.copy()
@@ -490,7 +504,7 @@ def cmd_run(args) -> None:
 
     result["stream_file"] = stream_path
     if stderr_sink:
-        result["stderr"] = "\n".join(stderr_sink)
+        result["stderr"] = collapse_stderr(stderr_sink)
 
     if args.return_all_messages:
         result["all_messages"] = all_messages
