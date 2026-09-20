@@ -10,7 +10,7 @@ description: |
 python scripts/codex_bridge.py --cd "/path/to/project" --PROMPT "Your task"
 ```
 
-**Output:** JSON with `success`, `SESSION_ID`, `agent_messages`, `stream_file` (path to the raw JSONL stream persisted line-by-line), optional `stderr`, and optional `error`.
+**Output:** JSON with `success`, `SESSION_ID`, `agent_messages`, `stream_file` (path to the raw JSONL stream persisted line-by-line), optional `stderr` (codex diagnostics; lines repeated verbatim except for their timestamp are collapsed to one line with an `[xN]` count), and optional `error`.
 
 Headless `exec` runs with approvals disabled by Codex itself; bridge `--yolo` maps to Codex's `--dangerously-bypass-approvals-and-sandbox`. Stdin is detached, so an approval prompt could never be answered. On Windows the PROMPT is delivered via stdin (`-` positional) to bypass cmd.exe quoting/length limits.
 
