@@ -3,71 +3,69 @@ const assert = require('node:assert/strict');
 
 const {
   fixMsysPath,
-  normalizeContextResponse,
-  normalizeSearchResponse,
-  runCli
+  normalizeDocumentationResponse,
+  runCli,
+  searchDocumentation
 } = require('../context7-api.cjs');
 
-test('normalizeSearchResponse adds libraries alias for current search payloads', () => {
-  const payload = {
-    results: [
-      {
-        id: '/react/react',
-        title: 'React',
-        description: 'A JavaScript library for building user interfaces.',
-        trustScore: 8.3,
-        versions: ['v19.2.7', 'v18.2.0']
-      }
-    ],
-    searchFilterApplied: false
-  };
-
-  const normalized = normalizeSearchResponse(payload);
-
-  assert.equal(normalized.results, payload.results);
-  assert.deepEqual(normalized.libraries, [
-    {
-      id: '/react/react',
-      name: 'React',
-      description: 'A JavaScript library for building user interfaces.',
-      trustScore: 8.3,
-      versions: ['v19.2.7', 'v18.2.0']
+test('v3 search sends one JSON request with repeated library hints', async () => {
+  const calls = [];
+  const result = await searchDocumentation(
+    'stream a response',
+    { libraries: ['Next.js', '/openai/openai-node'], version: '15.4.0', language: 'TypeScript' },
+    async (path, params) => {
+      calls.push({ path, params });
+      return { codeSnippets: [], infoSnippets: [] };
     }
+  );
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path, '/search');
+  assert.deepEqual([...calls[0].params.entries()], [
+    ['query', 'stream a response'],
+    ['type', 'json'],
+    ['library', 'Next.js'],
+    ['library', '/openai/openai-node'],
+    ['version', '15.4.0'],
+    ['language', 'TypeScript']
   ]);
+  assert.deepEqual(result.results, []);
 });
 
-test('normalizeContextResponse builds results from code and info snippets', () => {
+test('v3 snippets preserve library and source links in normalized results', () => {
   const payload = {
-    codeSnippets: [
-      {
-        codeTitle: 'Corrected Effect with Cleanup Function',
-        codeDescription: 'Adds cleanup to avoid leaked connections.',
-        codeId: 'https://github.com/reactjs/react.dev/blob/main/src/content/reference/react/StrictMode.md',
-        codeList: [
-          {
-            language: 'javascript',
-            code: 'useEffect(() => connection.disconnect(), []);'
-          }
-        ]
-      }
-    ],
-    infoSnippets: [
-      {
-        title: 'Cleanup overview',
-        content: 'Cleanup runs before the effect re-runs and on unmount.',
-        source: 'react.dev/useEffect'
-      }
-    ]
+    codeSnippets: [{
+      codeTitle: 'Cleanup',
+      codeDescription: 'Disconnect on unmount.',
+      codeId: 'https://example.com/code',
+      libraryId: '/reactjs/react.dev',
+      codeList: [{ language: 'javascript', code: 'return () => disconnect();' }]
+    }],
+    infoSnippets: [{
+      content: 'The cleanup runs on unmount.',
+      pageId: 'https://example.com/docs',
+      libraryId: '/reactjs/react.dev'
+    }]
   };
 
-  const normalized = normalizeContextResponse(payload);
+  const normalized = normalizeDocumentationResponse(payload);
+  assert.equal(normalized.codeSnippets, payload.codeSnippets);
+  assert.equal(normalized.infoSnippets, payload.infoSnippets);
+  assert.equal(normalized.results[0].libraryId, '/reactjs/react.dev');
+  assert.equal(normalized.results[0].source, 'https://example.com/code');
+  assert.match(normalized.results[0].content, /disconnect/);
+  assert.equal(normalized.results[1].libraryId, '/reactjs/react.dev');
+  assert.equal(normalized.results[1].source, 'https://example.com/docs');
+});
 
-  assert.equal(normalized.results.length, 2);
-  assert.equal(normalized.results[0].title, 'Corrected Effect with Cleanup Function');
-  assert.match(normalized.results[0].content, /Adds cleanup/);
-  assert.match(normalized.results[0].content, /useEffect/);
-  assert.equal(normalized.results[1].title, 'Cleanup overview');
-  assert.equal(normalized.results[1].content, 'Cleanup runs before the effect re-runs and on unmount.');
+test('no_documentation_found is an empty result', async () => {
+  const result = await searchDocumentation('unknown docs', {}, async () => {
+    const error = new Error('No documentation found');
+    error.statusCode = 404;
+    error.code = 'no_documentation_found';
+    throw error;
+  });
+  assert.deepEqual(result, { codeSnippets: [], infoSnippets: [], results: [] });
 });
 
 test('fixMsysPath rewrites Git Bash path-mangled library ids', () => {
@@ -75,26 +73,31 @@ test('fixMsysPath rewrites Git Bash path-mangled library ids', () => {
   assert.equal(fixMsysPath('/reactjs/react.dev'), '/reactjs/react.dev');
 });
 
-test('runCli returns non-zero on request failures', async () => {
-  const stdout = [];
-  const stderr = [];
-  const code = await runCli(
-    ['search', 'react', 'useEffect'],
-    {
-      stdout: (message) => stdout.push(message),
-      stderr: (message) => stderr.push(message)
-    },
-    {
-      search: async () => {
-        throw new Error('boom');
-      },
-      context: async () => {
-        throw new Error('unused');
-      }
-    }
-  );
+test('CLI accepts v3 search hints and preserves the context alias', async () => {
+  const calls = [];
+  const output = [];
+  const io = { stdout: (message) => output.push(message), stderr: () => {} };
+  const deps = { search: async (query, options) => {
+    calls.push({ query, options });
+    return { codeSnippets: [], infoSnippets: [], results: [] };
+  } };
 
-  assert.equal(code, 1);
-  assert.deepEqual(stdout, []);
-  assert.match(stderr.join('\n'), /Error searching library: boom/);
+  assert.equal(await runCli(['search', 'streaming', '--library', 'Next.js', '--library', 'OpenAI', '--version', '15.4.0', '--language', 'TypeScript'], io, deps), 0);
+  assert.equal(await runCli(['context', '/vercel/next.js', 'routing'], io, deps), 0);
+  assert.deepEqual(calls, [
+    { query: 'streaming', options: { libraries: ['Next.js', 'OpenAI'], version: '15.4.0', language: 'TypeScript' } },
+    { query: 'routing', options: { libraries: ['/vercel/next.js'] } }
+  ]);
+  assert.equal(output.length, 2);
+});
+
+test('CLI rejects a version without a library and reports request failures', async () => {
+  const errors = [];
+  const io = { stdout: () => {}, stderr: (message) => errors.push(message) };
+  const deps = { search: async () => { throw new Error('boom'); } };
+
+  assert.equal(await runCli(['search', 'routing', '--version', '15.4.0'], io, deps), 1);
+  assert.equal(await runCli(['search', 'routing'], io, deps), 1);
+  assert.match(errors.join('\n'), /requires --library/);
+  assert.match(errors.join('\n'), /Error searching documentation: boom/);
 });

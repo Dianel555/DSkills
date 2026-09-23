@@ -9,7 +9,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const API_BASE = 'https://context7.com/api/v2';
+const API_BASE = 'https://context7.com/api/v3';
 
 function loadApiKey() {
   if (process.env.CONTEXT7_API_KEY) {
@@ -19,7 +19,7 @@ function loadApiKey() {
   const envPath = path.join(__dirname, '.env');
   if (fs.existsSync(envPath)) {
     const envContent = fs.readFileSync(envPath, 'utf8');
-    const match = envContent.match(/CONTEXT7_API_KEY\s*=\s*(.+)/);
+    const match = envContent.match(/^CONTEXT7_API_KEY\s*=\s*(.+)$/m);
     if (match) {
       return match[1].trim().replace(/^["']|["']$/g, '');
     }
@@ -55,16 +55,25 @@ function makeRequest(requestPath, params = {}, apiKey = API_KEY) {
       });
 
       res.on('end', () => {
-        if (res.statusCode === 200) {
-          try {
-            resolve(JSON.parse(data));
-          } catch {
-            resolve(data);
+        let payload;
+        try {
+          payload = JSON.parse(data);
+        } catch {
+          if (res.statusCode === 200) {
+            reject(new Error('Context7 returned invalid JSON'));
+            return;
           }
+        }
+
+        if (res.statusCode === 200) {
+          resolve(payload);
           return;
         }
 
-        reject(new Error(`API Error ${res.statusCode}: ${data}`));
+        const error = new Error(`API Error ${res.statusCode}: ${payload?.message || payload?.error || res.statusMessage}`);
+        error.statusCode = res.statusCode;
+        error.code = payload?.error;
+        reject(error);
       });
     }).on('error', reject);
   });
@@ -82,16 +91,6 @@ function fixMsysPath(inputPath) {
   }
 
   return inputPath;
-}
-
-function normalizeSearchLibrary(item = {}) {
-  return {
-    id: item.id || item.libraryId || '',
-    name: item.name || item.title || item.libraryName || '',
-    description: item.description || '',
-    trustScore: item.trustScore ?? null,
-    versions: Array.isArray(item.versions) ? item.versions : []
-  };
 }
 
 function formatCodeList(codeList = []) {
@@ -121,6 +120,7 @@ function normalizeCodeSnippet(item = {}) {
     title: item.codeTitle || item.pageTitle || 'Code snippet',
     content,
     source: item.codeId || item.sourceFile || item.pageTitle || '',
+    libraryId: item.libraryId || '',
     relevance: item.relevance ?? null
   };
 }
@@ -129,37 +129,15 @@ function normalizeInfoSnippet(item = {}) {
   return {
     title: item.title || item.pageTitle || 'Documentation snippet',
     content: item.content || item.text || item.description || '',
-    source: item.source || item.url || item.pageTitle || '',
+    source: item.pageId || item.source || item.url || item.pageTitle || '',
+    libraryId: item.libraryId || '',
     relevance: item.relevance ?? null
   };
 }
 
-function normalizeSearchResponse(payload) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return payload;
-  }
-
-  if (Array.isArray(payload.libraries)) {
-    return payload;
-  }
-
-  if (Array.isArray(payload.results)) {
-    return {
-      ...payload,
-      libraries: payload.results.map(normalizeSearchLibrary)
-    };
-  }
-
-  return payload;
-}
-
-function normalizeContextResponse(payload) {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return payload;
-  }
-
-  if (Array.isArray(payload.results)) {
-    return payload;
+function normalizeDocumentationResponse(payload) {
+  if (!payload || !Array.isArray(payload.codeSnippets) || !Array.isArray(payload.infoSnippets)) {
+    throw new Error('Unexpected Context7 search response');
   }
 
   const results = [];
@@ -172,69 +150,94 @@ function normalizeContextResponse(payload) {
     results.push(...payload.infoSnippets.map(normalizeInfoSnippet));
   }
 
-  if (!results.length) {
-    return payload;
-  }
-
   return {
     ...payload,
     results
   };
 }
 
-async function searchLibrary(libraryName, query) {
-  const result = await makeRequest('/libs/search', { libraryName, query });
-  return normalizeSearchResponse(result);
+async function searchDocumentation(query, options = {}, request = makeRequest) {
+  const params = new URLSearchParams({ query, type: 'json' });
+  for (const library of options.libraries || []) {
+    params.append('library', fixMsysPath(library));
+  }
+  if (options.version) params.set('version', options.version);
+  if (options.language) params.set('language', options.language);
+
+  try {
+    return normalizeDocumentationResponse(await request('/search', params));
+  } catch (error) {
+    if (error.statusCode === 404 && error.code === 'no_documentation_found') {
+      return { codeSnippets: [], infoSnippets: [], results: [] };
+    }
+    throw error;
+  }
 }
 
-async function getContext(libraryId, query) {
-  const result = await makeRequest('/context', {
-    libraryId: fixMsysPath(libraryId),
-    query,
-    type: 'json'
-  });
-
-  return normalizeContextResponse(result);
+function parseSearchOptions(args) {
+  const options = { libraries: [] };
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (!value || value.startsWith('--')) {
+      throw new Error(`Missing value for ${flag}`);
+    }
+    if (flag === '--library') {
+      options.libraries.push(value);
+    } else if (flag === '--version') {
+      options.version = value;
+    } else if (flag === '--language') {
+      options.language = value;
+    } else {
+      throw new Error(`Unknown option: ${flag}`);
+    }
+  }
+  if (options.libraries.length > 4) {
+    throw new Error('At most four --library hints are allowed');
+  }
+  if (options.version && !options.libraries.length) {
+    throw new Error('--version requires --library');
+  }
+  return options;
 }
 
 async function runCli(argv, io = {}, deps = {}) {
   const stdout = io.stdout || console.log;
   const stderr = io.stderr || console.error;
-  const search = deps.search || searchLibrary;
-  const context = deps.context || getContext;
+  const search = deps.search || searchDocumentation;
 
   const [command, ...args] = argv;
 
   if (command === 'search') {
-    const [libraryName, query] = args;
-    if (!libraryName || !query) {
-      stderr('Usage: context7-api.cjs search <libraryName> <query>');
+    const [query, ...flags] = args;
+    if (!query || query.startsWith('--')) {
+      stderr('Usage: context7-api.cjs search <query> [--library <name-or-id>] [--version <version>] [--language <language>]');
       return 1;
     }
 
     try {
-      const result = await search(libraryName, query);
+      const result = await search(query, parseSearchOptions(flags));
       stdout(JSON.stringify(result, null, 2));
       return 0;
     } catch (error) {
-      stderr(`Error searching library: ${error.message}`);
+      stderr(`Error searching documentation: ${error.message}`);
       return 1;
     }
   }
 
   if (command === 'context') {
     const [libraryId, query] = args;
-    if (!libraryId || !query) {
+    if (!libraryId || !query || args.length !== 2) {
       stderr('Usage: context7-api.cjs context <libraryId> <query>');
       return 1;
     }
 
     try {
-      const result = await context(libraryId, query);
+      const result = await search(query, { libraries: [libraryId] });
       stdout(JSON.stringify(result, null, 2));
       return 0;
     } catch (error) {
-      stderr(`Error getting context: ${error.message}`);
+      stderr(`Error searching documentation: ${error.message}`);
       return 1;
     }
   }
@@ -259,14 +262,12 @@ module.exports = {
   buildHeaders,
   fixMsysPath,
   formatCodeList,
-  getContext,
   loadApiKey,
   makeRequest,
   normalizeCodeSnippet,
-  normalizeContextResponse,
+  normalizeDocumentationResponse,
   normalizeInfoSnippet,
-  normalizeSearchLibrary,
-  normalizeSearchResponse,
+  parseSearchOptions,
   runCli,
-  searchLibrary
+  searchDocumentation
 };
