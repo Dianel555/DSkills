@@ -120,6 +120,13 @@
       "source": "./skills/literature-searcher",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "ledger-tasks-yylo",
+      "description": "Retrieve YYLO Ledger records by ID, discover PDRs and artifacts, and manage tasks and dependencies",
+      "source": "./skills/ledger-tasks-yylo",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }
