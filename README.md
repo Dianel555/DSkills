@@ -23,6 +23,7 @@ CLI tools skills for AI coding assistants (Claude Code, Codex, Antigravity CLI).
 | [grill-me](skills/grill-me/) | Grill the user about a requirement, decision, or idea before implementation, then produce an actionable planning report without writing code |
 | [literature-searcher](skills/literature-searcher/) | Search CrossRef, OpenAlex, PubMed, Semantic Scholar, and optional Scopus; deduplicate results, download open-access PDFs by DOI, classify papers, monitor topics, and analyze coverage gaps |
 | [ledger-tasks-yylo](skills/ledger-tasks-yylo/) | Retrieve YYLO Ledger records by ID, discover PDRs and artifacts, and manage tasks and dependencies |
+| [plan-ledger-tasks-yylo](skills/plan-ledger-tasks-yylo/) | Create a PDR and implementation-sized Ledger tasks |
 
 ### Python Skill Dependencies
 

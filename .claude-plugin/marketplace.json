@@ -127,6 +127,13 @@
       "source": "./skills/ledger-tasks-yylo",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "plan-ledger-tasks-yylo",
+      "description": "Create a PDR and implementation-sized Ledger tasks",
+      "source": "./skills/plan-ledger-tasks-yylo",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }
