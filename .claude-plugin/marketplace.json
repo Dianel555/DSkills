@@ -134,6 +134,13 @@
       "source": "./skills/plan-ledger-tasks-yylo",
       "strict": false,
       "skills": ["./"]
+    },
+    {
+      "name": "wiki-yylo",
+      "description": "Find and maintain durable Markdown knowledge as revisioned Ledger Records",
+      "source": "./skills/wiki-yylo",
+      "strict": false,
+      "skills": ["./"]
     }
   ]
 }
