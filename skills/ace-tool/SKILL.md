@@ -11,7 +11,7 @@ High-performance semantic search, code indexing, and AI-powered prompt enhanceme
 ## Execution Methods
 
 ```bash
-# Prerequisites: pip install httpx tenacity
+# Prerequisites: pip install httpx tenacity "pathspec>=1.1.1,<2"
 # Environment: ACE_API_URL, ACE_API_TOKEN (optional for local fallback)
 
 # Index project for remote search (upload code blobs to ACE service)
@@ -59,7 +59,7 @@ python scripts/ace_cli.py get_config
 ## Command Reference
 
 ### index
-Index project files for remote codebase retrieval. Scans, hashes, chunks large files, and uploads to the ACE batch-upload API. Uses incremental indexing with gzip JSON cache at `.ace-tool/index.json.gz`. Respects both `.gitignore` and `.aceignore` patterns. The supplied project root is the index and upload boundary; each root keeps its own cache, and indexing a parent does not delete child caches. Symbolic links, junctions and other reparse points below the root are never followed, so only real files inside the root are read and uploaded; an unreadable or out-of-boundary path is skipped instead of falling back to a plain path read. A 400 `unknown blobs` response during remote search triggers an automatic index rebuild, re-upload, and a single retry.
+Index project files for remote codebase retrieval. Scans, hashes, and uploads whole files (up to 128 KiB) with their original paths to the ACE batch-upload API; chunking is left to the service. Uses incremental indexing with gzip JSON cache at `.ace-tool/index.json.gz`; legacy chunk-based caches are rebuilt once. Respects both `.gitignore` and `.aceignore` patterns. The supplied project root is the index and upload boundary; each root keeps its own cache, and indexing a parent does not delete child caches. Symbolic links, junctions and other reparse points below the root are never followed, so only real files inside the root are read and uploaded; an unreadable or out-of-boundary path is skipped instead of falling back to a plain path read. The backend must confirm upload hashes and support the OCE-compatible `/agents/blob-status` endpoint; indexing, search, and scoped enhancement wait for readiness and report a timeout or unsupported status explicitly. Unknown blobs trigger one rebuild and re-upload.
 
 ```bash
 python scripts/ace_cli.py index -p <project_root>
@@ -69,7 +69,7 @@ Options:
 ```
 
 ### search_context
-Search codebase using natural language descriptions. Routes to remote API (`POST /agents/codebase-retrieval`) when configured, with automatic local keyword fallback.
+Search codebase using natural language descriptions. Routes to remote API (`POST /agents/codebase-retrieval`) when configured, with local keyword fallback for remote errors or empty results. Upload and readiness failures remain explicit errors. Local fallback supplies matching file paths, not semantic code snippets.
 
 ```bash
 python scripts/ace_cli.py search_context -p <project_root> -q <query>
@@ -232,7 +232,7 @@ Requires `--project-root` and valid `ACE_API_URL`/`ACE_API_TOKEN`. Raises `Value
 
 ## .aceignore
 
-Place a `.aceignore` file in the project root to exclude additional patterns from code indexing (beyond `.gitignore`). Uses the same glob syntax as `.gitignore`. Patterns from both files are merged (union). Comments (`#`) and empty lines are skipped.
+Project-root and nested `.gitignore` files apply with Git's directory-relative pattern precedence. A project-root `.aceignore` uses the same glob syntax as an independent, additional exclusion filter: its negations can override earlier `.aceignore` rules but cannot re-include files excluded by `.gitignore`. Both filters also apply to local fallback; an ignored parent directory cannot be re-included by a child pattern.
 
 ```
 # .aceignore example
@@ -275,7 +275,7 @@ enhance_prompt -p "optimize query performance" --project-root .  # With cloud co
 | No API configured | Uses local fallback for search_context; returns original for enhance |
 | Token invalid (401) | Check API token (logged at ERROR level) |
 | Access denied (403) | Token may be disabled (logged at ERROR level) |
-| Upload failure | Index rollback to previous state; cached blobs still returned |
+| Upload failure | Report an error; keep the previous cache on disk without returning its stale blobs |
 | Connection timeout | Retries up to 3 times with exponential backoff |
 | No results | Broaden search query |
 | Third-party not configured | `ValueError` raised immediately (no silent fallback) |

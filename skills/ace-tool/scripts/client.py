@@ -3,15 +3,15 @@
 import json
 import os
 import re
+import time
 import uuid
-from pathlib import Path
 
 import httpx
 from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 try:
-    from .indexer import Indexer
-    from .secure_fs import AuthorizedRoot, FileTooLargeError, UnsafePathError
+    from .indexer import Indexer, IndexUploadError
+    from .secure_fs import FileTooLargeError, UnsafePathError
     from .templates import (
         DEFAULT_CLAUDE_MODEL,
         DEFAULT_CODEX_MODEL,
@@ -24,13 +24,11 @@ try:
         ENV_ENHANCER_ENDPOINT_LEGACY,
         ENV_ENHANCER_INCLUDE_SEARCH_CONTEXT,
         ENV_ENHANCER_REASONING_EFFORT,
-        EXCLUDE_PATTERNS,
         ITERATIVE_ENHANCE_TEMPLATE,
         MAX_BLOB_SIZE,
         NO_RELEVANT_CODE_CONTEXT,
         RETRIEVAL_TIMEOUT,
         SEARCH_CONTEXT_CHAR_LIMIT,
-        TEXT_EXTENSIONS,
         USER_AGENT,
     )
     from .utils import (
@@ -42,8 +40,8 @@ try:
         parse_chat_history,
     )
 except ImportError:
-    from indexer import Indexer
-    from secure_fs import AuthorizedRoot, FileTooLargeError, UnsafePathError
+    from indexer import Indexer, IndexUploadError
+    from secure_fs import FileTooLargeError, UnsafePathError
     from templates import (
         DEFAULT_CLAUDE_MODEL,
         DEFAULT_CODEX_MODEL,
@@ -56,13 +54,11 @@ except ImportError:
         ENV_ENHANCER_ENDPOINT_LEGACY,
         ENV_ENHANCER_INCLUDE_SEARCH_CONTEXT,
         ENV_ENHANCER_REASONING_EFFORT,
-        EXCLUDE_PATTERNS,
         ITERATIVE_ENHANCE_TEMPLATE,
         MAX_BLOB_SIZE,
         NO_RELEVANT_CODE_CONTEXT,
         RETRIEVAL_TIMEOUT,
         SEARCH_CONTEXT_CHAR_LIMIT,
-        TEXT_EXTENSIONS,
         USER_AGENT,
     )
     from utils import (
@@ -84,6 +80,13 @@ _ENHANCED_PROMPT_RE = re.compile(
 )
 _THIRD_PARTY_ENDPOINTS = frozenset({"claude", "openai", "gemini", "codex"})
 _TRUE_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+_EMPTY_OCE_RETRIEVAL = "The following code sections were retrieved:"
+READINESS_TIMEOUT = 180.0
+READINESS_POLL_INTERVAL = 1.0
+
+
+class IndexReadinessError(ValueError):
+    """The server cannot confirm that the requested index is ready."""
 
 
 class AceToolClient:
@@ -166,6 +169,26 @@ class AceToolClient:
         """Wrap original prompt with codebase context in XML tags."""
         return f"<codebase_context>\n{ctx}\n</codebase_context>\n\n<original_request>\n{original}\n</original_request>"
 
+    @staticmethod
+    def _search_result_text(result: dict) -> str:
+        """Render local file matches as text for prompt-context consumers."""
+        matches = result.get("results", "")
+        if isinstance(matches, str):
+            return matches
+        if result.get("mode") == "local_fallback" and isinstance(matches, list):
+            paths = [item["file"] for item in matches if isinstance(item, dict) and isinstance(item.get("file"), str)]
+            if paths:
+                return "Local keyword matches (file paths):\n" + "\n".join(f"- {path}" for path in paths)
+        return ""
+
+    def _remote_search_with_empty_fallback(self, project_root: str, query: str) -> dict:
+        result = self._remote_search(project_root, query)
+        text = result.get("results")
+        if text is None or (isinstance(text, str) and text.strip() in ("", _EMPTY_OCE_RETRIEVAL)):
+            log.info("Remote search returned no results; falling back to local keyword search")
+            return self._local_search(project_root, query)
+        return result
+
     def _maybe_inject_search_context(self, endpoint: str, prompt: str, project_root: str | None) -> str:
         """Inject search context into prompt if enabled and applicable."""
         if not self._is_third_party() or not self._should_include_search_context():
@@ -176,9 +199,8 @@ class AceToolClient:
             raise ValueError(
                 "No authentication configured for search context injection. Set up session.json, AUGMENT_SESSION_AUTH, or ACE_API_URL/ACE_API_TOKEN"
             )
-        result = self._remote_search(project_root, prompt)
-        raw_ctx = result.get("results", "")
-        ctx = self._normalize_search_context(raw_ctx)
+        result = self._remote_search_with_empty_fallback(project_root, prompt)
+        ctx = self._normalize_search_context(self._search_result_text(result))
         return self._build_prompt_with_search_context(prompt, ctx)
 
     def _get_third_party_model(self) -> str:
@@ -191,12 +213,18 @@ class AceToolClient:
             "codex": DEFAULT_CODEX_MODEL,
         }.get(self.endpoint, DEFAULT_MODEL)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_not_exception_type((IndexUploadError, IndexReadinessError)),
+    )
     def search_context(self, project_root: str, query: str) -> dict:
         """Search codebase: remote via ACE API if available, else local fallback."""
         if self.base_url and self.token:
             try:
-                return self._remote_search(project_root, query)
+                return self._remote_search_with_empty_fallback(project_root, query)
+            except (IndexUploadError, IndexReadinessError):
+                raise
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (401, 403):
                     log.error("Auth failed (%d) for remote search: %s", e.response.status_code, e)
@@ -341,28 +369,23 @@ class AceToolClient:
         """Get blob_names from indexer if API and project_root are available."""
         if not project_root or not self.base_url or not self.token:
             return None
-        try:
-            with Indexer(project_root, self.base_url, self.token) as indexer:
-                return indexer.get_blob_names()
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code in (401, 403):
-                log.error("Auth failed (%d) getting blob names: %s", e.response.status_code, e)
-            else:
-                log.warning("Failed to get blob names: %s", e)
-            return None
-        except Exception as e:
-            log.warning("Failed to get blob names: %s", e)
-            return None
+        with Indexer(project_root, self.base_url, self.token) as indexer:
+            names, _ = self._wait_for_index(indexer, indexer.get_blob_names())
+            if not names:
+                raise IndexReadinessError("Project has no indexable files; refusing an empty enhancement scope")
+            return names
 
     def _get_retrieval_context(self, project_root: str | None, query: str) -> str:
         """Get cloud retrieval context to inject into prompts for non-old endpoints."""
         if not project_root or not self.base_url or not self.token:
             return ""
         try:
-            result = self._remote_search(project_root, query)
-            context = result.get("results", "")
+            result = self._remote_search_with_empty_fallback(project_root, query)
+            context = self._search_result_text(result)
             if context:
                 return f"\n\n<codebase-context>\n{context}\n</codebase-context>\n\n"
+        except (IndexUploadError, IndexReadinessError):
+            raise
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403):
                 log.error("Auth failed (%d) for cloud retrieval: %s", e.response.status_code, e)
@@ -629,32 +652,96 @@ class AceToolClient:
                 response=httpx.Response(status),
             )
 
-    def _remote_search(self, project_root: str, query: str) -> dict:
-        """Search via ACE codebase-retrieval API."""
-        with Indexer(project_root, self.base_url, self.token) as indexer:
-            blob_names = indexer.get_blob_names()
-
-            url = build_api_url(self.base_url, "/agents/codebase-retrieval")
-            payload = {
-                "information_request": query,
-                "blobs": {"checkpoint_id": None, "added_blobs": blob_names, "deleted_blobs": []},
-                "dialog": [],
-                "max_output_length": 0,
-                "disable_codebase_retrieval": False,
-                "enable_commit_retrieval": False,
-            }
-            timeout = httpx.Timeout(RETRIEVAL_TIMEOUT, connect=15.0)
-
+    def _wait_for_index(
+        self, indexer: Indexer, blob_names: list[str], *, allow_rebuild: bool = True
+    ) -> tuple[list[str], bool]:
+        """Wait for all scoped blobs; recover missing blobs at most once."""
+        deadline = time.monotonic() + READINESS_TIMEOUT
+        rebuilt = False
+        while blob_names:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise IndexReadinessError("Index readiness timed out while blobs were still pending")
+            payload = {"blobs": {"checkpoint_id": None, "added_blobs": blob_names, "deleted_blobs": []}}
+            timeout = httpx.Timeout(min(remaining, RETRIEVAL_TIMEOUT), connect=min(remaining, 15.0))
             try:
-                data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
+                status = self._post_json(
+                    build_api_url(self.base_url, "/agents/blob-status"),
+                    payload,
+                    headers=self._get_headers(),
+                    timeout=timeout,
+                )
             except httpx.HTTPStatusError as e:
-                # Server lost blobs: rebuild and retry while the same guard is held.
-                if e.response.status_code != 400 or "unknown blob" not in e.response.text.lower():
-                    raise
-                log.warning("Server reports unknown blobs; rebuilding index and retrying once")
+                if e.response.status_code in (404, 405, 501):
+                    raise IndexReadinessError("Server does not support the blob readiness status endpoint") from e
+                raise IndexReadinessError(f"Blob readiness status request failed (HTTP {e.response.status_code})") from e
+            except (httpx.TransportError, ValueError) as e:
+                raise IndexReadinessError("Blob readiness status request failed or returned invalid JSON") from e
+            if time.monotonic() >= deadline:
+                raise IndexReadinessError("Index readiness timed out before the status response arrived")
+            if not isinstance(status, dict):
+                raise IndexReadinessError("Invalid blob readiness status response")
+            unknown = status.get("unknown_blob_names")
+            pending = status.get("nonindexed_blob_names")
+            checkpoint_not_found = status.get("checkpoint_not_found")
+            if (
+                not isinstance(unknown, list)
+                or not isinstance(pending, list)
+                or not all(isinstance(name, str) for name in unknown + pending)
+                or type(checkpoint_not_found) is not bool
+                or not set(unknown + pending).issubset(blob_names)
+                or set(unknown) & set(pending)
+            ):
+                raise IndexReadinessError("Invalid blob readiness status response")
+            if checkpoint_not_found:
+                raise IndexReadinessError("Blob readiness checkpoint was not found")
+            if unknown:
+                if rebuilt or not allow_rebuild:
+                    raise IndexReadinessError("Server still reports unknown blobs after index rebuild")
+                log.warning("Server reports unknown blobs; rebuilding index once")
                 blob_names = indexer.force_rebuild()
-                payload["blobs"]["added_blobs"] = blob_names
-                data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
+                rebuilt = True
+                continue
+            if not pending:
+                return blob_names, rebuilt
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(READINESS_POLL_INTERVAL, remaining))
+        return blob_names, rebuilt
+
+    def _remote_search(self, project_root: str, query: str) -> dict:
+        """Search only after the scoped blobs have been confirmed ready."""
+        with Indexer(project_root, self.base_url, self.token) as indexer:
+            blob_names, rebuilt = self._wait_for_index(indexer, indexer.get_blob_names())
+            data = {}
+            if blob_names:
+                url = build_api_url(self.base_url, "/agents/codebase-retrieval")
+                payload = {
+                    "information_request": query,
+                    "blobs": {"checkpoint_id": None, "added_blobs": blob_names, "deleted_blobs": []},
+                    "dialog": [],
+                    "max_output_length": 0,
+                    "disable_codebase_retrieval": False,
+                    "enable_commit_retrieval": False,
+                }
+                timeout = httpx.Timeout(RETRIEVAL_TIMEOUT, connect=15.0)
+                try:
+                    data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code != 400 or "unknown blob" not in e.response.text.lower():
+                        raise
+                    if rebuilt:
+                        raise IndexReadinessError("Server reports unknown blobs after index rebuild") from e
+                    log.warning("Server reports unknown blobs; rebuilding index and retrying once")
+                    blob_names, _ = self._wait_for_index(indexer, indexer.force_rebuild(), allow_rebuild=False)
+                    if blob_names:
+                        payload["blobs"]["added_blobs"] = blob_names
+                        try:
+                            data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
+                        except httpx.HTTPStatusError as retry_error:
+                            if retry_error.response.status_code == 400 and "unknown blob" in retry_error.response.text.lower():
+                                raise IndexReadinessError("Server reports unknown blobs after index rebuild") from retry_error
+                            raise
 
             return {
                 "results": data.get("formatted_retrieval", ""),
@@ -666,26 +753,15 @@ class AceToolClient:
     def _local_search(self, project_root: str, query: str) -> dict:
         """Fallback local search using keyword matching."""
         results = []
-        root = Path(project_root).resolve()
-        # Same boundary as the indexer: read only through verified handles, so a
-        # link inside the project cannot leak outside content into results.
-        guard = AuthorizedRoot(root)
         keywords = [w.lower() for w in re.findall(r"\w+", query.lower()) if len(w) > 2]
 
-        try:
-            for file_path in root.rglob("*"):
-                if not file_path.is_file():
-                    continue
-                if file_path.suffix.lower() not in TEXT_EXTENSIONS:
-                    continue
-                if any(p in EXCLUDE_PATTERNS for p in file_path.parts):
-                    continue
-                if any(part.startswith(".") for part in file_path.parts[len(root.parts) :]):
-                    continue
-
-                rel = file_path.relative_to(root).as_posix()
+        # Share the indexer's filters and verified root, so fallback cannot expose
+        # files that the user excluded from the remote index.
+        with Indexer(project_root, "", "") as indexer:
+            for file_path in indexer._walk_files():
+                rel = file_path.relative_to(indexer.root).as_posix()
                 try:
-                    with guard.open_verified(rel.split("/")) as safe:
+                    with indexer._guard.open_verified(rel.split("/")) as safe:
                         raw = safe.read_bytes(MAX_BLOB_SIZE)
                 except (UnsafePathError, FileTooLargeError, OSError):
                     continue
@@ -696,8 +772,6 @@ class AceToolClient:
                 score = sum(1 for kw in keywords if kw in content)
                 if score > 0:
                     results.append({"file": rel, "score": score})
-        finally:
-            guard.close()
 
         results.sort(key=lambda x: x["score"], reverse=True)
         return {"results": results[:10], "query": query, "mode": "local_fallback"}

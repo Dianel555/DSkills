@@ -1,6 +1,5 @@
-"""Code indexer: scan, hash, chunk, upload to ACE batch-upload API."""
+"""Code indexer: scan, hash, and upload whole files to ACE batch-upload API."""
 
-import fnmatch
 import gzip
 import hashlib
 import json
@@ -15,6 +14,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import httpx
+from pathspec import GitIgnoreSpec
 
 try:
     from .secure_fs import AuthorizedRoot, FileTooLargeError, SafeFile, UnsafePathError
@@ -26,7 +26,6 @@ try:
         INDEX_FILE,
         MAX_BATCH_SIZE,
         MAX_BLOB_SIZE,
-        MAX_LINES_PER_BLOB,
         TEXT_EXTENSIONS,
         UPLOAD_BATCH_COUNT,
         USER_AGENT,
@@ -42,7 +41,6 @@ except ImportError:
         INDEX_FILE,
         MAX_BATCH_SIZE,
         MAX_BLOB_SIZE,
-        MAX_LINES_PER_BLOB,
         TEXT_EXTENSIONS,
         UPLOAD_BATCH_COUNT,
         USER_AGENT,
@@ -54,6 +52,7 @@ MAX_RETRY_WAIT = 30.0
 # Hard cap on the decompressed cache file: a hostile .ace-tool/index.json.gz must
 # not be able to exhaust memory while we only wanted to read our own cache.
 MAX_INDEX_BYTES = 64 * 1024 * 1024
+INDEX_FORMAT_VERSION = 2  # Unversioned caches used client-generated chunk paths.
 
 
 def _bounded_decompress(raw: bytes, limit: int) -> bytes:
@@ -94,8 +93,12 @@ def _retry_after_seconds(value: str | None) -> float:
         return 5.0
 
 
-class IndexRebuildError(ValueError):
-    """Forced re-upload failed. Subclasses ValueError so tenacity-wrapped callers do not retry the full re-upload."""
+class IndexUploadError(ValueError):
+    """Upload failed; do not retry the entire indexing operation implicitly."""
+
+
+class IndexRebuildError(IndexUploadError):
+    """Forced re-upload failed."""
 
 
 @dataclass
@@ -124,6 +127,7 @@ class Indexer:
         self._guard = AuthorizedRoot(self.root)
         self._index: ProjectIndex | None = None
         self._gitignore_patterns: list[str] = []
+        self._gitignore_specs: dict[tuple[str, ...], GitIgnoreSpec] = {}
         try:
             self._load_ignore_patterns()
         except BaseException:
@@ -147,21 +151,33 @@ class Indexer:
     def get_blob_names(self) -> list[str]:
         """Main entry: load/build index, upload pending, return blob_names."""
         self._load_index()
-        old_entries = dict(self._index.entries)
         changed = self._scan_and_update()
         if changed:
-            if self._upload_pending():
-                self._save_index()
-            else:
-                self._index.entries = old_entries
+            try:
+                if not self._upload_pending():
+                    raise IndexUploadError("Blob upload failed or was not fully acknowledged")
+            except Exception as e:
+                # The candidate includes unconfirmed blobs; a later call must
+                # reload the last persisted index and rescan instead of using it.
+                self._index = None
+                if isinstance(e, IndexUploadError):
+                    raise
+                raise IndexUploadError("Blob upload request failed") from e
+            self._save_index()
         return list(self._index.entries.keys())
 
     def force_rebuild(self) -> list[str]:
         """Discard local index state, re-upload every blob (server lost our data)."""
         self._index = ProjectIndex()
         self._scan_and_update()
-        if not self._upload_pending():
-            raise IndexRebuildError("Failed to re-upload blobs after index rebuild")
+        try:
+            if not self._upload_pending():
+                raise IndexRebuildError("Failed to re-upload blobs after index rebuild")
+        except Exception as e:
+            self._index = None
+            if isinstance(e, IndexRebuildError):
+                raise
+            raise IndexRebuildError("Failed to re-upload blobs after index rebuild") from e
         self._save_index()
         return list(self._index.entries.keys())
 
@@ -173,6 +189,9 @@ class Indexer:
         try:
             raw = self._guard.read_verified((INDEX_DIR, INDEX_FILE))
             data = json.loads(_bounded_decompress(raw, MAX_INDEX_BYTES))
+            if data.get("format_version") != INDEX_FORMAT_VERSION:
+                self._index = ProjectIndex()
+                return
             entries = {k: BlobEntry(**v) for k, v in data.get("entries", {}).items()}
             self._index = ProjectIndex(entries=entries, last_indexed=data.get("last_indexed", 0.0))
             return
@@ -188,6 +207,7 @@ class Indexer:
         # Per-process tmp: concurrent same-root writers each publish a fully
         # written file, so a torn index can never be renamed into place.
         data = {
+            "format_version": INDEX_FORMAT_VERSION,
             "entries": {k: asdict(v) for k, v in self._index.entries.items()},
             "last_indexed": self._index.last_indexed,
         }
@@ -234,11 +254,7 @@ class Indexer:
         pending_blobs: list[dict] = []
         changed = False
 
-        # Group old entries by base path (strip chunk suffix) for cache hit
-        old_by_path: dict[str, list[BlobEntry]] = {}
-        for entry in old_entries.values():
-            base = entry.path.split("#chunk", 1)[0]
-            old_by_path.setdefault(base, []).append(entry)
+        old_by_path = {entry.path: entry for entry in old_entries.values()}
 
         for rel in current_files:
             try:
@@ -247,10 +263,9 @@ class Indexer:
                 with self._guard.open_verified(rel.split("/")) as safe:
                     mtime, size = safe.mtime, safe.size
 
-                    cached_list = old_by_path.get(rel)
-                    if cached_list and cached_list[0].mtime == mtime and cached_list[0].size == size:
-                        for cached in cached_list:
-                            new_entries[cached.blob_name] = cached
+                    cached = old_by_path.get(rel)
+                    if cached and cached.mtime == mtime and cached.size == size:
+                        new_entries[cached.blob_name] = cached
                         continue
 
                     blobs = self._process_file(safe, rel)
@@ -275,6 +290,9 @@ class Indexer:
         return changed
 
     def _walk_files(self):
+        # A reused indexer may scan again after either ignore file changes.
+        self._gitignore_specs.clear()
+        self._load_ignore_patterns()
         for fp in self.root.rglob("*"):
             try:
                 if not fp.is_file():
@@ -299,34 +317,47 @@ class Indexer:
                 continue
             yield fp
 
+    def _read_ignore_patterns(self, parts: tuple[str, ...]) -> list[str]:
+        try:
+            text = self._guard.read_verified(parts).decode("utf-8", errors="ignore")
+        except (UnsafePathError, OSError):
+            return []  # absent, or a link we refuse to follow
+        # Keep ordering, escapes, and trailing whitespace for GitIgnoreSpec.
+        return [line for line in text.splitlines() if line.strip() and not line.startswith("#")]
+
     def _load_ignore_patterns(self):
-        seen = set()
-        for filename in (".gitignore", ".aceignore"):
-            try:
-                text = self._guard.read_verified((filename,)).decode("utf-8", errors="ignore")
-            except (UnsafePathError, OSError):
-                continue  # absent, or a link we refuse to follow
-            for line in text.splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and line not in seen:
-                    seen.add(line)
-                    self._gitignore_patterns.append(line)
+        git_patterns = self._read_ignore_patterns((".gitignore",))
+        ace_patterns = self._read_ignore_patterns((".aceignore",))
+        self._gitignore_patterns = git_patterns + ace_patterns
+        self._gitignore_specs[()] = GitIgnoreSpec.from_lines(git_patterns)
+        self._aceignore_spec = GitIgnoreSpec.from_lines(ace_patterns)
+
+    def _gitignore_spec(self, directory: tuple[str, ...]) -> GitIgnoreSpec:
+        if directory not in self._gitignore_specs:
+            patterns = self._read_ignore_patterns((*directory, ".gitignore"))
+            self._gitignore_specs[directory] = GitIgnoreSpec.from_lines(patterns)
+        return self._gitignore_specs[directory]
 
     def _is_gitignored(self, fp: Path) -> bool:
-        rel = fp.relative_to(self.root).as_posix()
-        name = fp.name
-        for pat in self._gitignore_patterns:
-            if fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(rel, pat):
-                return True
-            clean = pat.rstrip("/")
-            if clean in rel.split("/") or rel.startswith(clean + "/"):
+        parts = fp.relative_to(self.root).parts
+        for end in range(1, len(parts) + 1):
+            suffix = "/" if end < len(parts) else ""
+            git_ignored = False
+            for depth in range(end):
+                spec = self._gitignore_spec(parts[:depth])
+                matched = spec.check_file("/".join(parts[depth:end]) + suffix).include
+                if matched is not None:
+                    git_ignored = matched
+            # Git cannot re-include a file beneath an ignored parent. Check each
+            # ancestor before loading rules from the next directory.
+            if git_ignored or self._aceignore_spec.match_file("/".join(parts[:end]) + suffix):
                 return True
         return False
 
     # --- File processing ---
 
     def _process_file(self, safe: SafeFile, rel: str) -> list[tuple[str, str, str]]:
-        """Read, sanitize, chunk, hash. Returns [(blob_name, path_label, content), ...]"""
+        """Read, sanitize, and hash one file with its original path."""
         try:
             raw = safe.read_bytes(MAX_BLOB_SIZE)
         except FileTooLargeError:
@@ -338,22 +369,8 @@ class Indexer:
         if not content.strip():
             return []
 
-        lines = content.split("\n")
-        if len(lines) <= MAX_LINES_PER_BLOB:
-            blob_name = self._hash_blob(rel, content)
-            return [(blob_name, rel, content)]
-
-        # Chunk large files
-        chunks = []
-        total_chunks = (len(lines) + MAX_LINES_PER_BLOB - 1) // MAX_LINES_PER_BLOB
-        for i in range(total_chunks):
-            start = i * MAX_LINES_PER_BLOB
-            end = min(start + MAX_LINES_PER_BLOB, len(lines))
-            chunk_content = "\n".join(lines[start:end])
-            chunk_label = f"{rel}#chunk{i + 1}of{total_chunks}"
-            blob_name = self._hash_blob(chunk_label, chunk_content)
-            chunks.append((blob_name, chunk_label, chunk_content))
-        return chunks
+        blob_name = self._hash_blob(rel, content)
+        return [(blob_name, rel, content)]
 
     @staticmethod
     def _hash_blob(path: str, content: str) -> str:
@@ -376,14 +393,13 @@ class Indexer:
             "x-request-session-id": get_session_id(),
         }
 
-        all_ok = True
         for batch in batches:
             payload = {"blobs": [{"path": b["path"], "content": b["content"]} for b in batch]}
             if not self._upload_batch_with_retry(headers, payload):
-                all_ok = False
+                return False
 
         self._pending = []
-        return all_ok
+        return True
 
     def _make_batches(self, blobs: list[dict]) -> list[list[dict]]:
         batches = []
@@ -427,6 +443,16 @@ class Indexer:
                         time.sleep(wait)
                         continue
                     resp.raise_for_status()
+                    try:
+                        data = resp.json()
+                    except ValueError:
+                        log.error("Upload response is not valid JSON")
+                        return False
+                    names = data.get("blob_names") if isinstance(data, dict) else None
+                    expected = [self._hash_blob(blob["path"], blob["content"]) for blob in payload["blobs"]]
+                    if not isinstance(names, list) or not all(isinstance(name, str) for name in names) or sorted(names) != sorted(expected):
+                        log.error("Upload response did not acknowledge all expected blob names")
+                        return False
                     return True
             except httpx.TransportError as e:
                 if attempt < max_retries - 1:

@@ -14,11 +14,15 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import ace_cli  # noqa: E402
-from client import AceToolClient, build_api_url  # noqa: E402
+from client import AceToolClient, IndexReadinessError, build_api_url  # noqa: E402
 from indexer import Indexer, IndexRebuildError, ProjectIndex  # noqa: E402
 from secure_fs import AuthorizedRoot as _AuthorizedRoot  # noqa: E402
 from templates import INDEX_DIR, INDEX_FILE  # noqa: E402
 from utils import build_api_url as utils_build_api_url  # noqa: E402
+
+
+def _ready_status():
+    return {"unknown_blob_names": [], "nonindexed_blob_names": [], "checkpoint_not_found": False}
 
 
 def _write_index(root: Path):
@@ -61,6 +65,9 @@ def test_upload_url_uses_build_api_url(tmp_path, monkeypatch):
         def raise_for_status(self):
             pass
 
+        def json(self):
+            return {"blob_names": []}
+
     class FakeClient:
         def __init__(self, *a, **k):
             pass
@@ -99,6 +106,8 @@ def test_unknown_blobs_triggers_rebuild_and_single_retry(monkeypatch):
     monkeypatch.setattr("client.Indexer.force_rebuild", fake_rebuild, raising=False)
 
     def fake_post(url, payload, *, headers, provider="API", timeout=None):
+        if url.endswith("/agents/blob-status"):
+            return _ready_status()
         calls["post"] += 1
         if calls["post"] == 1:
             resp = httpx.Response(400, text="unknown blobs: ['stale']")
@@ -124,13 +133,15 @@ def test_unknown_blobs_no_infinite_retry(monkeypatch):
     monkeypatch.setattr("client.Indexer.force_rebuild", lambda self: ["fresh"], raising=False)
 
     def fake_post(url, payload, *, headers, provider="API", timeout=None):
+        if url.endswith("/agents/blob-status"):
+            return _ready_status()
         calls["post"] += 1
         resp = httpx.Response(400, text="unknown blobs")
         raise httpx.HTTPStatusError("400 Bad Request", request=None, response=resp)
 
     monkeypatch.setattr(c, "_post_json", fake_post)
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(IndexReadinessError, match="unknown"):
         c._remote_search("/proj", "query")
     assert calls["post"] == 2
 
@@ -149,6 +160,8 @@ def test_other_400_errors_not_swallowed(monkeypatch):
     )
 
     def fake_post(url, payload, *, headers, provider="API", timeout=None):
+        if url.endswith("/agents/blob-status"):
+            return _ready_status()
         calls["post"] += 1
         resp = httpx.Response(400, text="malformed request")
         raise httpx.HTTPStatusError("400 Bad Request", request=None, response=resp)
@@ -301,7 +314,7 @@ def test_cmd_index_reports_effective_root(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         ace_cli,
         "AceToolClient",
-        lambda *a: SimpleNamespace(base_url="https://h", token="tok"),
+        lambda *a: SimpleNamespace(base_url="https://h", token="tok", _wait_for_index=lambda indexer, names: (names, False)),
     )
 
     def fake_names(self):

@@ -80,7 +80,7 @@ def cmd_index(args):
         )
         sys.exit(1)
     with Indexer(args.project_root, client.base_url, client.token) as indexer:
-        blob_names = indexer.get_blob_names()
+        blob_names, _ = client._wait_for_index(indexer, indexer.get_blob_names())
         result = {
             "total_blobs": len(blob_names),
             "last_indexed": indexer._index.last_indexed,

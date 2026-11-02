@@ -410,18 +410,23 @@ def test_indexer_constructor_failure_closes_guard(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX descriptor lifetime")
 def test_repeated_client_indexing_does_not_leak_root_descriptors(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-
-    from client import AceToolClient
+    from client import AceToolClient, IndexReadinessError
 
     descriptors = Path("/proc/self/fd")
     if not descriptors.is_dir():
         pytest.skip("requires procfs descriptor counts")
     monkeypatch.setattr(Indexer, "get_blob_names", lambda self: [])
-    client = SimpleNamespace(base_url="https://example.invalid", token="dummy")
+    client = AceToolClient(base_url="https://example.invalid", token="dummy")
     before = len(list(descriptors.iterdir()))
     for _ in range(50):
-        assert AceToolClient._get_blob_names(client, str(tmp_path)) == []
+        with pytest.raises(IndexReadinessError, match="no indexable"):
+            client._get_blob_names(str(tmp_path))
+    monkeypatch.setattr(Indexer, "get_blob_names", lambda self: ["known"])
+    monkeypatch.setattr(client, "_post_json", lambda *args, **kwargs: {
+        "unknown_blob_names": [], "nonindexed_blob_names": [], "checkpoint_not_found": False,
+    })
+    for _ in range(50):
+        assert client._get_blob_names(str(tmp_path)) == ["known"]
     assert len(list(descriptors.iterdir())) <= before
 
 

@@ -4,19 +4,19 @@ Semantic code search, incremental code indexing, and AI-powered prompt enhanceme
 
 ## Features
 
-- **Code Indexing**: Incremental scan, hash (SHA-256), chunk, and upload code blobs to ACE service
+- **Code Indexing**: Incremental scan, hash (SHA-256), and upload whole files to the ACE service
 - **Remote Search**: Semantic codebase retrieval via `POST /agents/codebase-retrieval` with local fallback
 - **Prompt Enhancement**: AI-powered prompt refinement with interactive web UI
 - **Cloud Context Injection**: All endpoints (old, new, third-party) inject retrieval context when `--project-root` is provided
 - **Multiple Backends**: Support for Augment (`new`/`old`), Claude, OpenAI, Gemini, and Codex APIs
 - **Search Context Injection**: Optional codebase context injection for third-party endpoints via XML tags
-- **`.aceignore` Support**: Project-level ignore patterns merged with `.gitignore` for indexing
-- **Local Fallback**: Works offline with keyword-based search
+- **`.aceignore` Support**: Project-level exclusions in addition to root and nested `.gitignore` rules
+- **Local Fallback**: Uses keyword-based search when remote retrieval is unavailable or returns no results
 
 ## Installation
 
 ```bash
-pip install httpx tenacity
+pip install httpx tenacity "pathspec>=1.1.1,<2"
 ```
 
 ## Quick Start
@@ -71,7 +71,7 @@ python scripts/ace_cli.py get_config
 ### Indexing
 | Command | Description |
 |---------|-------------|
-| `index -p <path>` | Index project: scan, hash, chunk, upload blobs |
+| `index -p <path>` | Index project: scan, hash, and upload whole files |
 
 ### Search Operations
 | Command | Description |
@@ -241,7 +241,7 @@ This is separate from the cloud retrieval context that Augment endpoints (`new`/
 
 ## .aceignore
 
-Place a `.aceignore` file in the project root to exclude additional patterns from code indexing. Uses the same glob syntax as `.gitignore`. Patterns from both `.gitignore` and `.aceignore` are merged (union). Comments (`#`) and empty lines are skipped.
+Project-root and nested `.gitignore` files apply with Git's directory-relative pattern precedence. A project-root `.aceignore` uses the same glob syntax as an independent, additional exclusion filter: its negations can override earlier `.aceignore` rules but cannot re-include files excluded by `.gitignore`. Both filters also apply to local fallback; an ignored parent directory cannot be re-included by a child pattern.
 
 ```
 # .aceignore example
@@ -259,14 +259,17 @@ The `index` command performs incremental indexing:
 
 - **Scan**: Walks project files filtered by extension whitelist, binary blacklist, `.gitignore` + `.aceignore` patterns (with glob support), and `EXCLUDE_PATTERNS`
 - **Hash**: `SHA-256(path_bytes + content_bytes)` per blob
-- **Chunk**: Files >800 lines split as `file.py#chunk1of3` format
-- **Cache**: Incremental via `mtime + size` check; stored as `.ace-tool/index.json.gz`
+- **Files**: Uploads each file up to 128 KiB with its original path; any chunking is performed by the service.
+- **Cache**: Incremental via `mtime + size` check; stored as `.ace-tool/index.json.gz`. Legacy chunk-based caches are rebuilt once.
 - **Hierarchy**: The supplied project root is the index and upload boundary. Each root keeps its own cache; indexing a parent does not delete child caches.
 - **Boundary**: Symbolic links, junctions and other reparse points below the root are never followed, and the index cache is read and written through a verified handle. Only real files inside the root are read and uploaded; a link, an out-of-boundary path or an oversized cache is skipped or rebuilt rather than followed.
 - **Concurrency**: A save interrupted by removal of its cache directory abandons persistence; a later run can rebuild that root's cache.
-- **Self-heal**: HTTP 400 `unknown blobs` on remote search triggers a full index rebuild + re-upload, then a single retry
-- **Upload**: Batch upload (≤30 blobs, ≤1MB per batch) to `POST /batch-upload` with retry (429 Retry-After, 5xx exponential backoff, 401/403 abort)
-- **Rollback**: Upload failure prevents index save, preserving previous valid state
+- **Readiness**: Indexing, search and project-scoped prompt enhancement poll `POST /agents/blob-status` before using blobs, with a 3-minute polling deadline and per-request network timeouts. Unsupported or invalid status responses are errors, not empty search results.
+- **Retrieval timeout**: Remote retrieval allows up to 2 minutes per network read, with a 15-second connection timeout; readiness has a separate 2-minute deadline.
+- **Empty results**: Empty remote retrieval (including OCE's header-only response) falls back to local keyword matching. Local prompt context contains matching file paths, not semantic code snippets.
+- **Self-heal**: Unknown blobs trigger one full rebuild and re-upload, followed by a readiness check; a subsequent unknown-blob error is reported.
+- **Upload**: Batch upload (≤30 blobs, ≤1MB per batch) to `POST /batch-upload` with retry (429 Retry-After, 5xx exponential backoff, 401/403 abort). The response must confirm every expected SHA-256 blob name.
+- **Failure**: An upload failure raises an error and leaves the previous cache on disk unchanged; stale entries are not returned as successful results.
 - **Encoding**: Multi-encoding detection chain (`utf-8 → gbk → gb18030 → cp1252`)
 
 ## Output Format
@@ -305,7 +308,7 @@ skills/ace-tool/
     ├── __main__.py       # Module entry point
     ├── ace_cli.py        # CLI entry point
     ├── client.py         # API client (search, enhance, retrieval, all endpoints)
-    ├── indexer.py         # Code indexer (scan, hash, chunk, upload, .aceignore)
+    ├── indexer.py         # Code indexer (scan, hash, upload, .aceignore)
     ├── templates.py      # Prompt templates and constants
     ├── utils.py          # Utilities (encoding detection, content sanitization)
     └── web_ui.py         # Interactive web UI
