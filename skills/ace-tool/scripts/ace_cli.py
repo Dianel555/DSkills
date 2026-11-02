@@ -79,14 +79,14 @@ def cmd_index(args):
             file=sys.stderr,
         )
         sys.exit(1)
-    indexer = Indexer(args.project_root, client.base_url, client.token)
-    blob_names = indexer.get_blob_names()
-    result = {
-        "total_blobs": len(blob_names),
-        "last_indexed": indexer._index.last_indexed,
-        "project_root": args.project_root,
-        "effective_root": str(indexer.root),
-    }
+    with Indexer(args.project_root, client.base_url, client.token) as indexer:
+        blob_names = indexer.get_blob_names()
+        result = {
+            "total_blobs": len(blob_names),
+            "last_indexed": indexer._index.last_indexed,
+            "project_root": args.project_root,
+            "effective_root": str(indexer.root),
+        }
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 

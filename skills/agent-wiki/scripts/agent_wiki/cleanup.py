@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import shutil
 from datetime import date
 from pathlib import Path
 from typing import Any
 
-from . import config, frontmatter
+from . import boundary, config, frontmatter
 
 
 class TopicError(ValueError):
@@ -18,7 +17,7 @@ class TopicError(ValueError):
 
 def _read_topic(topic_path: Path) -> tuple[dict[str, Any], str, bool]:
     try:
-        raw = topic_path.read_bytes()
+        raw = boundary.read_bytes(topic_path)
         has_bom = raw.startswith(b"\xef\xbb\xbf")
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -39,15 +38,28 @@ def remove_source_from_topic(topic_path: str | Path, deleted_rel: str) -> bool:
     text = frontmatter.dump(meta, body)
     if has_bom:
         text = "﻿" + text
-    config.atomic_write_text(path, text.encode("utf-8"))
+    boundary.write_text(path, text.encode("utf-8"))
     return bool(meta["sources"])
 
 
 def archive_topic(topic_path: str | Path, archive_dir: str | Path, today: date | str) -> Path:
+    """Move the source atomically through held directories without overwriting.
+
+    Even an identical existing target is a conflict: comparing captured bytes then
+    unlinking the source could delete a concurrent edit. Unsupported atomic moves
+    and cross-filesystem moves fail closed, preserving both paths for reconciliation.
+    """
     source = Path(topic_path)
     date_text = today.isoformat() if hasattr(today, "isoformat") else str(today)
     target_dir = Path(archive_dir) / date_text
-    target_dir.mkdir(parents=True, exist_ok=True)
+    boundary.ensure_directory(target_dir)
     target = target_dir / source.name
-    shutil.move(str(source), str(target))
+    fs = boundary.fs_for(source)
+    try:
+        with fs.open_directory(source.parent) as src, fs.open_directory(target_dir) as dst:
+            src.move_to(source.name, dst, target.name)
+    except FileExistsError:
+        raise TopicError("archive_target_conflict") from None
+    except FileNotFoundError:
+        raise TopicError("archive_source_missing") from None
     return target

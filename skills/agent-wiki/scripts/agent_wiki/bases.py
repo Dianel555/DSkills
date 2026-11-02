@@ -15,13 +15,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import config
+from . import boundary, config
 
 
 def obsidian_prefix(vault: str | Path) -> str:
     """Folder path from the Obsidian vault root (dir holding ``.obsidian``) down
     to ``vault``, POSIX-style. Empty when ``vault`` is itself the root or no
     vault is found above it."""
+    boundary.bind(vault)
     vault = Path(vault).expanduser().resolve()
     current = vault
     while True:

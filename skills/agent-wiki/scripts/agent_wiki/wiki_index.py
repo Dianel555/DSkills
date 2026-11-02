@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from . import config, frontmatter, links, quality, source_type
+from . import boundary, config, frontmatter, links, quality, source_type
 from .config import nfc as _nfc
 
 INDEX_VERSION = 2
@@ -228,9 +228,14 @@ def _parse_doc(job: tuple[str, Path, str]) -> tuple[str, int, dict[str, Any] | N
     """
     rel, path, kind = job
     try:
-        st = path.stat()
-        text = path.read_text(encoding="utf-8-sig")
+        st = boundary.stat(path)
+        text = boundary.read_text(path, encoding="utf-8-sig")
+    except boundary.BoundaryError:
+        # A link now sits on the path to this topic: its content is outside the vault.
+        return rel, 0, None, {"path": rel, "error": "outside_vault"}
     except (UnicodeDecodeError, OSError):
+        return rel, 0, None, {"path": rel, "error": "topic_decode_failed"}
+    if st is None:
         return rel, 0, None, {"path": rel, "error": "topic_decode_failed"}
     mtime_ns = st.st_mtime_ns
     try:
@@ -259,8 +264,16 @@ def _index_dir(
 
     When ``existing_index`` is provided, entries whose stored ``mtime_ns``
     matches the file's current mtime are reused without re-parsing. Changed and
-    new files are parsed in parallel with a bounded thread pool."""
-    files = list(directory.glob("*.md")) if directory.exists() else []
+    new files are parsed in parallel with a bounded thread pool.
+
+    Enumeration and every read go through :mod:`boundary`, so a link planted on the
+    directory (or on any of its ancestors) yields no entries instead of publishing
+    content from outside the vault."""
+    try:
+        files = [entry.path for entry in boundary.entries(directory, ".md")]
+    except boundary.BoundaryError:
+        errors.append({"path": directory.name, "error": "outside_vault"})
+        return
     files.sort(key=lambda p: config.normalize_relpath(p.relative_to(key_root).as_posix()))
     seen: set[str] = set()
     jobs: list[tuple[str, Path, str]] = []
@@ -270,8 +283,11 @@ def _index_dir(
             raise NormalizedPathCollisionError(rel)
         seen.add(rel)
         try:
-            mtime_ns = path.stat().st_mtime_ns
-        except OSError:
+            st = boundary.stat(path)
+            if st is None:
+                raise FileNotFoundError(2, "missing topic", str(path))
+            mtime_ns = st.st_mtime_ns
+        except (boundary.BoundaryError, OSError):
             # Same code the parse path would have reported
             errors.append({"path": rel, "error": "topic_decode_failed"})
             continue
@@ -310,6 +326,7 @@ def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict[str, 
     errors)``. Decode/parse failures are skipped and reported; a normalized-key
     collision within a directory is fatal and raises ``NormalizedPathCollisionError``.
     """
+    boundary.bind(vault)
     wiki = config.wiki_root(vault)
     topics_root = config.topics_dir(vault)
 
@@ -320,10 +337,10 @@ def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict[str, 
     existing_queries: dict[str, Any] | None = None
     if incremental:
         index_path = config.index_path(vault)
-        if index_path.exists():
+        if boundary.exists(index_path):
             try:
-                existing_data = json.loads(index_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+                existing_data = json.loads(boundary.read_text(index_path, encoding="utf-8"))
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError, boundary.BoundaryError):
                 existing_data = None
             if isinstance(existing_data, dict) and existing_data.get("version") == INDEX_VERSION:
                 topics_field = existing_data.get("topics", {})
@@ -355,10 +372,9 @@ def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict[str, 
 
     # Merge optional .wiki-aliases.json
     aliases_file = wiki / ".wiki-aliases.json"
-    if aliases_file.exists():
+    if boundary.exists(aliases_file):
         try:
-            aliases_text = aliases_file.read_text(encoding="utf-8")
-            aliases_map = json.loads(aliases_text)
+            aliases_map = json.loads(boundary.read_text(aliases_file, encoding="utf-8"))
             if not isinstance(aliases_map, dict):
                 errors.append({"error": "alias_map_invalid"})
             else:
@@ -371,7 +387,7 @@ def rebuild(vault: str | Path, *, incremental: bool = False) -> tuple[dict[str, 
                     if alias_nfc not in alias_sources:
                         alias_sources[alias_nfc] = []
                     alias_sources[alias_nfc].append(target_nfc)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (json.JSONDecodeError, UnicodeDecodeError, boundary.BoundaryError):
             errors.append({"error": "alias_map_invalid"})
 
     # Resolve aliases: check for conflicts and missing targets
@@ -431,9 +447,10 @@ def serialize(data: dict[str, Any]) -> str:
 
 
 def save_index(vault: str | Path, data: dict[str, Any]) -> None:
+    boundary.bind(vault)
     path = config.index_path(vault)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        boundary.ensure_directory(path.parent)
         config.atomic_write_text(path, serialize(data))
     except OSError as exc:
         raise IndexWriteError(str(exc)) from exc

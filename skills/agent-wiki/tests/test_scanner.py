@@ -1,4 +1,4 @@
-from agent_wiki import cache, scanner
+from agent_wiki import boundary, cache, scanner
 
 
 def write(path, text):
@@ -26,6 +26,7 @@ def test_walk_sources_honors_wikiignore(tmp_path):
 
 
 def test_classify_new_modified_unchanged_deleted_and_unicode_paths(tmp_path):
+    boundary.bind(tmp_path)
     write(tmp_path / "新笔记.md", "new")
     write(tmp_path / "same.md", "same")
     write(tmp_path / "changed.md", "changed-now")

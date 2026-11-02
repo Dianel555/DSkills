@@ -22,7 +22,7 @@ import math
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from . import config, links
+from . import boundary, config, links
 
 # Node box geometry (positive-int width/height, integer coords).
 CENTER_WIDTH = 480
@@ -197,7 +197,7 @@ def serialize(canvas: dict[str, Any]) -> str:
 
 def write_canvas(path: Path, canvas: dict[str, Any]) -> None:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        boundary.ensure_directory(path.parent)
         config.atomic_write_text(path, serialize(canvas))
     except OSError as exc:
         raise CanvasWriteError(str(exc)) from exc

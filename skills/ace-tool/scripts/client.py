@@ -11,6 +11,7 @@ from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wai
 
 try:
     from .indexer import Indexer
+    from .secure_fs import AuthorizedRoot, FileTooLargeError, UnsafePathError
     from .templates import (
         DEFAULT_CLAUDE_MODEL,
         DEFAULT_CODEX_MODEL,
@@ -25,6 +26,7 @@ try:
         ENV_ENHANCER_REASONING_EFFORT,
         EXCLUDE_PATTERNS,
         ITERATIVE_ENHANCE_TEMPLATE,
+        MAX_BLOB_SIZE,
         NO_RELEVANT_CODE_CONTEXT,
         RETRIEVAL_TIMEOUT,
         SEARCH_CONTEXT_CHAR_LIMIT,
@@ -33,7 +35,7 @@ try:
     )
     from .utils import (
         build_api_url,
-        detect_and_read,
+        decode_bytes,
         get_session_id,
         is_chinese_text,
         load_session_auth,
@@ -41,6 +43,7 @@ try:
     )
 except ImportError:
     from indexer import Indexer
+    from secure_fs import AuthorizedRoot, FileTooLargeError, UnsafePathError
     from templates import (
         DEFAULT_CLAUDE_MODEL,
         DEFAULT_CODEX_MODEL,
@@ -55,6 +58,7 @@ except ImportError:
         ENV_ENHANCER_REASONING_EFFORT,
         EXCLUDE_PATTERNS,
         ITERATIVE_ENHANCE_TEMPLATE,
+        MAX_BLOB_SIZE,
         NO_RELEVANT_CODE_CONTEXT,
         RETRIEVAL_TIMEOUT,
         SEARCH_CONTEXT_CHAR_LIMIT,
@@ -63,7 +67,7 @@ except ImportError:
     )
     from utils import (
         build_api_url,
-        detect_and_read,
+        decode_bytes,
         get_session_id,
         is_chinese_text,
         load_session_auth,
@@ -338,8 +342,8 @@ class AceToolClient:
         if not project_root or not self.base_url or not self.token:
             return None
         try:
-            indexer = Indexer(project_root, self.base_url, self.token)
-            return indexer.get_blob_names()
+            with Indexer(project_root, self.base_url, self.token) as indexer:
+                return indexer.get_blob_names()
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (401, 403):
                 log.error("Auth failed (%d) getting blob names: %s", e.response.status_code, e)
@@ -627,64 +631,73 @@ class AceToolClient:
 
     def _remote_search(self, project_root: str, query: str) -> dict:
         """Search via ACE codebase-retrieval API."""
-        indexer = Indexer(project_root, self.base_url, self.token)
-        blob_names = indexer.get_blob_names()
+        with Indexer(project_root, self.base_url, self.token) as indexer:
+            blob_names = indexer.get_blob_names()
 
-        url = build_api_url(self.base_url, "/agents/codebase-retrieval")
-        payload = {
-            "information_request": query,
-            "blobs": {"checkpoint_id": None, "added_blobs": blob_names, "deleted_blobs": []},
-            "dialog": [],
-            "max_output_length": 0,
-            "disable_codebase_retrieval": False,
-            "enable_commit_retrieval": False,
-        }
-        timeout = httpx.Timeout(RETRIEVAL_TIMEOUT, connect=15.0)
+            url = build_api_url(self.base_url, "/agents/codebase-retrieval")
+            payload = {
+                "information_request": query,
+                "blobs": {"checkpoint_id": None, "added_blobs": blob_names, "deleted_blobs": []},
+                "dialog": [],
+                "max_output_length": 0,
+                "disable_codebase_retrieval": False,
+                "enable_commit_retrieval": False,
+            }
+            timeout = httpx.Timeout(RETRIEVAL_TIMEOUT, connect=15.0)
 
-        try:
-            data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
-        except httpx.HTTPStatusError as e:
-            # Server lost blobs the local index marked as uploaded: rebuild, re-upload, retry once.
-            if e.response.status_code != 400 or "unknown blob" not in e.response.text.lower():
-                raise
-            log.warning("Server reports unknown blobs; rebuilding index and retrying once")
-            blob_names = indexer.force_rebuild()
-            payload["blobs"]["added_blobs"] = blob_names
-            data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
+            try:
+                data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
+            except httpx.HTTPStatusError as e:
+                # Server lost blobs: rebuild and retry while the same guard is held.
+                if e.response.status_code != 400 or "unknown blob" not in e.response.text.lower():
+                    raise
+                log.warning("Server reports unknown blobs; rebuilding index and retrying once")
+                blob_names = indexer.force_rebuild()
+                payload["blobs"]["added_blobs"] = blob_names
+                data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
 
-        return {
-            "results": data.get("formatted_retrieval", ""),
-            "query": query,
-            "mode": "remote",
-            "blob_count": len(blob_names),
-        }
+            return {
+                "results": data.get("formatted_retrieval", ""),
+                "query": query,
+                "mode": "remote",
+                "blob_count": len(blob_names),
+            }
 
     def _local_search(self, project_root: str, query: str) -> dict:
         """Fallback local search using keyword matching."""
         results = []
-        root = Path(project_root)
+        root = Path(project_root).resolve()
+        # Same boundary as the indexer: read only through verified handles, so a
+        # link inside the project cannot leak outside content into results.
+        guard = AuthorizedRoot(root)
         keywords = [w.lower() for w in re.findall(r"\w+", query.lower()) if len(w) > 2]
 
-        for file_path in root.rglob("*"):
-            if not file_path.is_file():
-                continue
-            if file_path.suffix.lower() not in TEXT_EXTENSIONS:
-                continue
-            if any(p in EXCLUDE_PATTERNS for p in file_path.parts):
-                continue
-            if any(part.startswith(".") for part in file_path.parts[len(root.parts) :]):
-                continue
+        try:
+            for file_path in root.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                if file_path.suffix.lower() not in TEXT_EXTENSIONS:
+                    continue
+                if any(p in EXCLUDE_PATTERNS for p in file_path.parts):
+                    continue
+                if any(part.startswith(".") for part in file_path.parts[len(root.parts) :]):
+                    continue
 
-            try:
-                content = detect_and_read(file_path, ENCODING_CHAIN)
+                rel = file_path.relative_to(root).as_posix()
+                try:
+                    with guard.open_verified(rel.split("/")) as safe:
+                        raw = safe.read_bytes(MAX_BLOB_SIZE)
+                except (UnsafePathError, FileTooLargeError, OSError):
+                    continue
+                content = decode_bytes(raw, ENCODING_CHAIN)
                 if content is None:
                     continue
                 content = content.lower()
                 score = sum(1 for kw in keywords if kw in content)
                 if score > 0:
-                    results.append({"file": str(file_path.relative_to(root)), "score": score})
-            except Exception:
-                continue
+                    results.append({"file": rel, "score": score})
+        finally:
+            guard.close()
 
         results.sort(key=lambda x: x["score"], reverse=True)
         return {"results": results[:10], "query": query, "mode": "local_fallback"}

@@ -5,15 +5,19 @@ import gzip
 import hashlib
 import json
 import logging
+import math
 import os
-import shutil
 import time
+import zlib
+from calendar import timegm
 from dataclasses import asdict, dataclass, field
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import httpx
 
 try:
+    from .secure_fs import AuthorizedRoot, FileTooLargeError, SafeFile, UnsafePathError
     from .templates import (
         BINARY_EXTENSIONS,
         ENCODING_CHAIN,
@@ -27,8 +31,9 @@ try:
         UPLOAD_BATCH_COUNT,
         USER_AGENT,
     )
-    from .utils import build_api_url, detect_and_read, get_session_id, sanitize_content
+    from .utils import build_api_url, decode_bytes, get_session_id, sanitize_content
 except ImportError:
+    from secure_fs import AuthorizedRoot, FileTooLargeError, SafeFile, UnsafePathError
     from templates import (
         BINARY_EXTENSIONS,
         ENCODING_CHAIN,
@@ -42,9 +47,51 @@ except ImportError:
         UPLOAD_BATCH_COUNT,
         USER_AGENT,
     )
-    from utils import build_api_url, detect_and_read, get_session_id, sanitize_content
+    from utils import build_api_url, decode_bytes, get_session_id, sanitize_content
 
 log = logging.getLogger(__name__)
+MAX_RETRY_WAIT = 30.0
+# Hard cap on the decompressed cache file: a hostile .ace-tool/index.json.gz must
+# not be able to exhaust memory while we only wanted to read our own cache.
+MAX_INDEX_BYTES = 64 * 1024 * 1024
+
+
+def _bounded_decompress(raw: bytes, limit: int) -> bytes:
+    """Gzip-decompress with a hard output cap; raises ValueError past the limit."""
+    decompressor = zlib.decompressobj(31)  # 31 = gzip container
+    chunks: list[bytes] = []
+    total = 0
+    remaining = raw
+    while True:
+        chunk = decompressor.decompress(remaining, 1 << 20)
+        remaining = decompressor.unconsumed_tail
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise ValueError(f"index cache exceeds {limit} decompressed bytes")
+        chunks.append(chunk)
+        if decompressor.eof and not remaining:
+            break
+    if not decompressor.eof:
+        raise ValueError("index cache is not a complete gzip stream")
+    return b"".join(chunks)
+
+
+def _retry_after_seconds(value: str | None) -> float:
+    try:
+        try:
+            delay = float(value or "5")
+        except ValueError:
+            date = parsedate_to_datetime(value)
+            # A missing zone means GMT, which is what HTTP dates always are.
+            delay = timegm(date.timetuple()) if date.tzinfo is None else date.timestamp()
+            delay -= time.time()
+        if not math.isfinite(delay):
+            return 5.0
+        return max(0.0, min(MAX_RETRY_WAIT, delay))
+    except (TypeError, ValueError, OverflowError):
+        return 5.0
 
 
 class IndexRebuildError(ValueError):
@@ -71,26 +118,31 @@ class Indexer:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.index_path = self.root / INDEX_DIR / INDEX_FILE
+        # Every read that feeds the index goes through this guard, so a link planted
+        # below the requested root is refused instead of followed and its content
+        # never reaches the upload payload.
+        self._guard = AuthorizedRoot(self.root)
         self._index: ProjectIndex | None = None
         self._gitignore_patterns: list[str] = []
-        self._child_cache_dirs: set[Path] = set()
-        self._load_ignore_patterns()
+        try:
+            self._load_ignore_patterns()
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        self._guard.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
 
     @staticmethod
     def _resolve_root(project_root: str) -> Path:
-        """Use the nearest ancestor with an existing index cache as the effective root."""
-        requested = Path(project_root).resolve()
-        if (requested / INDEX_DIR / INDEX_FILE).is_file():
-            return requested
-        home = Path.home().resolve()
-        for parent in requested.parents:
-            # Home and filesystem-root caches are too broad to inherit implicitly.
-            if parent == home or parent.parent == parent:
-                break
-            if (parent / INDEX_DIR / INDEX_FILE).is_file():
-                log.info("Inheriting index cache from ancestor: %s", parent)
-                return parent
-        return requested
+        """Keep indexing within the project root requested by the caller."""
+        return Path(project_root).resolve()
 
     def get_blob_names(self) -> list[str]:
         """Main entry: load/build index, upload pending, return blob_names."""
@@ -99,12 +151,9 @@ class Indexer:
         changed = self._scan_and_update()
         if changed:
             if self._upload_pending():
-                if self._save_index():
-                    self._absorb_child_caches()
+                self._save_index()
             else:
                 self._index.entries = old_entries
-        elif self.index_path.is_file():
-            self._absorb_child_caches()
         return list(self._index.entries.keys())
 
     def force_rebuild(self) -> list[str]:
@@ -113,68 +162,48 @@ class Indexer:
         self._scan_and_update()
         if not self._upload_pending():
             raise IndexRebuildError("Failed to re-upload blobs after index rebuild")
-        if self._save_index():
-            self._absorb_child_caches()
+        self._save_index()
         return list(self._index.entries.keys())
-
-    def _absorb_child_caches(self):
-        """Delete child .ace-tool caches superseded by this root's index."""
-        own = self.index_path.parent
-        for cache_dir in self._child_cache_dirs:
-            if cache_dir == own or cache_dir.is_symlink():
-                continue
-            if not self._covered_by_scan(cache_dir.parent):
-                continue
-            try:
-                cache_dir.resolve().relative_to(self.root)
-                if not (cache_dir / INDEX_FILE).is_file():
-                    continue
-                shutil.rmtree(cache_dir)
-                log.info("Absorbed child cache: %s", cache_dir)
-            except (OSError, ValueError) as e:
-                log.warning("Failed to remove child cache %s: %s", cache_dir, e)
-
-    def _covered_by_scan(self, owner: Path) -> bool:
-        """True if the cache owner's subtree is included in this root's scan."""
-        rel_parts = owner.relative_to(self.root).parts
-        if any(p in EXCLUDE_PATTERNS for p in rel_parts):
-            return False
-        if any(part.startswith(".") for part in rel_parts):
-            return False
-        return not self._is_gitignored(owner)
 
     # --- Index persistence ---
 
     def _load_index(self):
         if self._index is not None:
             return
-        if self.index_path.exists():
-            try:
-                with gzip.open(self.index_path, "rt", encoding="utf-8") as f:
-                    data = json.load(f)
-                entries = {k: BlobEntry(**v) for k, v in data.get("entries", {}).items()}
-                self._index = ProjectIndex(entries=entries, last_indexed=data.get("last_indexed", 0.0))
-                return
-            except Exception as e:
-                log.warning("Failed to load index, rebuilding: %s", e)
+        try:
+            raw = self._guard.read_verified((INDEX_DIR, INDEX_FILE))
+            data = json.loads(_bounded_decompress(raw, MAX_INDEX_BYTES))
+            entries = {k: BlobEntry(**v) for k, v in data.get("entries", {}).items()}
+            self._index = ProjectIndex(entries=entries, last_indexed=data.get("last_indexed", 0.0))
+            return
+        except FileNotFoundError:
+            pass  # no cache yet: normal
+        except Exception as e:
+            # Refused link, oversized/corrupt cache, or unreadable file: rebuild.
+            log.warning("Failed to load index, rebuilding: %s", e)
         self._index = ProjectIndex()
 
     def _save_index(self) -> bool:
         self._index.last_indexed = time.time()
         # Per-process tmp: concurrent same-root writers each publish a fully
         # written file, so a torn index can never be renamed into place.
-        tmp = self.index_path.parent / f"{INDEX_FILE}.{os.getpid()}.tmp"
         data = {
             "entries": {k: asdict(v) for k, v in self._index.entries.items()},
             "last_indexed": self._index.last_indexed,
         }
+        tmp_rel = (INDEX_DIR, f"{INDEX_FILE}.{os.getpid()}.tmp")
         try:
             self.index_path.parent.mkdir(parents=True, exist_ok=True)
-            with gzip.open(tmp, "wt", encoding="utf-8") as f:
-                json.dump(data, f)
+            # The cache directory must be a real directory below the root, checked
+            # before creating the temporary file and again before publishing it, so
+            # a link planted at that name cannot redirect the write.
+            self._guard.verify_directory((INDEX_DIR,))
+            with self._guard.open_for_write(tmp_rel) as tmp:
+                tmp.write_bytes(gzip.compress(json.dumps(data, ensure_ascii=False).encode("utf-8")))
+            self._guard.verify_directory((INDEX_DIR,))
             for attempt in range(3):
                 try:
-                    tmp.replace(self.index_path)
+                    self._guard.publish(tmp_rel, (INDEX_DIR, INDEX_FILE))
                     break
                 except PermissionError:
                     # Windows refuses to replace a target a concurrent reader
@@ -183,16 +212,18 @@ class Indexer:
                         raise
                     time.sleep(0.05 * (2**attempt))
         except FileNotFoundError as e:
-            # A concurrent ancestor index absorbed this cache dir mid-write.
-            # Abandon persistence; the next run here inherits the ancestor root.
-            log.warning("Index dir vanished during save (absorbed by ancestor?): %s", e)
+            # A concurrent operation removed the cache directory during save.
+            log.warning("Index dir vanished during save: %s", e)
+            return False
+        except UnsafePathError as e:
+            # The cache path is a link or otherwise outside the authorized root.
+            log.warning("Refusing to write index cache: %s", e)
             return False
         return True
 
     # --- Scanning ---
 
     def _scan_and_update(self) -> bool:
-        self._child_cache_dirs = set()
         current_files: dict[str, Path] = {}
         for fp in self._walk_files():
             rel = fp.relative_to(self.root).as_posix()
@@ -209,20 +240,25 @@ class Indexer:
             base = entry.path.split("#chunk", 1)[0]
             old_by_path.setdefault(base, []).append(entry)
 
-        for rel, fp in current_files.items():
+        for rel in current_files:
             try:
-                stat = fp.stat()
+                # Open through the guard: the metadata used for the cache decision and
+                # the bytes that get uploaded both come from this one verified object.
+                with self._guard.open_verified(rel.split("/")) as safe:
+                    mtime, size = safe.mtime, safe.size
+
+                    cached_list = old_by_path.get(rel)
+                    if cached_list and cached_list[0].mtime == mtime and cached_list[0].size == size:
+                        for cached in cached_list:
+                            new_entries[cached.blob_name] = cached
+                        continue
+
+                    blobs = self._process_file(safe, rel)
+            except (UnsafePathError, FileTooLargeError) as e:
+                log.debug("skipping %s: %s", rel, e)
+                continue
             except OSError:
                 continue
-            mtime, size = stat.st_mtime, stat.st_size
-
-            cached_list = old_by_path.get(rel)
-            if cached_list and cached_list[0].mtime == mtime and cached_list[0].size == size:
-                for cached in cached_list:
-                    new_entries[cached.blob_name] = cached
-                continue
-
-            blobs = self._process_file(fp, rel)
             if not blobs:
                 continue
             changed = True
@@ -246,8 +282,6 @@ class Indexer:
             except OSError:
                 continue
             rel_parts = fp.relative_to(self.root).parts
-            if fp.name == INDEX_FILE and fp.parent.name == INDEX_DIR:
-                self._child_cache_dirs.add(fp.parent)
             if any(p in EXCLUDE_PATTERNS for p in rel_parts):
                 continue
             if any(part.startswith(".") and part != "." for part in rel_parts):
@@ -268,16 +302,15 @@ class Indexer:
     def _load_ignore_patterns(self):
         seen = set()
         for filename in (".gitignore", ".aceignore"):
-            path = self.root / filename
-            if path.exists():
-                try:
-                    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-                        line = line.strip()
-                        if line and not line.startswith("#") and line not in seen:
-                            seen.add(line)
-                            self._gitignore_patterns.append(line)
-                except Exception:
-                    pass
+            try:
+                text = self._guard.read_verified((filename,)).decode("utf-8", errors="ignore")
+            except (UnsafePathError, OSError):
+                continue  # absent, or a link we refuse to follow
+            for line in text.splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and line not in seen:
+                    seen.add(line)
+                    self._gitignore_patterns.append(line)
 
     def _is_gitignored(self, fp: Path) -> bool:
         rel = fp.relative_to(self.root).as_posix()
@@ -292,9 +325,13 @@ class Indexer:
 
     # --- File processing ---
 
-    def _process_file(self, fp: Path, rel: str) -> list[tuple[str, str, str]]:
+    def _process_file(self, safe: SafeFile, rel: str) -> list[tuple[str, str, str]]:
         """Read, sanitize, chunk, hash. Returns [(blob_name, path_label, content), ...]"""
-        content = detect_and_read(fp, ENCODING_CHAIN)
+        try:
+            raw = safe.read_bytes(MAX_BLOB_SIZE)
+        except FileTooLargeError:
+            return []
+        content = decode_bytes(raw, ENCODING_CHAIN)
         if content is None:
             return []
         content = sanitize_content(content)
@@ -376,20 +413,24 @@ class Indexer:
                         log.error("Auth failed (%d) uploading blobs, aborting", resp.status_code)
                         return False
                     if resp.status_code == 429:
-                        retry_after = int(resp.headers.get("Retry-After", "5"))
-                        log.warning("Rate limited, waiting %ds", retry_after)
+                        if attempt == max_retries - 1:
+                            return False
+                        retry_after = _retry_after_seconds(resp.headers.get("Retry-After"))
+                        log.warning("Rate limited, waiting %gs", retry_after)
                         time.sleep(retry_after)
                         continue
                     if resp.status_code >= 500:
-                        wait = 2**attempt
-                        log.warning("Server error %d, retrying in %ds", resp.status_code, wait)
+                        if attempt == max_retries - 1:
+                            return False
+                        wait = min(MAX_RETRY_WAIT, 2 ** min(attempt, 5))
+                        log.warning("Server error %d, retrying in %gs", resp.status_code, wait)
                         time.sleep(wait)
                         continue
                     resp.raise_for_status()
                     return True
             except httpx.TransportError as e:
                 if attempt < max_retries - 1:
-                    time.sleep(2**attempt)
+                    time.sleep(min(MAX_RETRY_WAIT, 2 ** min(attempt, 5)))
                     log.warning("Transport error, retrying: %s", e)
                 else:
                     log.error("Upload failed after retries: %s", e)

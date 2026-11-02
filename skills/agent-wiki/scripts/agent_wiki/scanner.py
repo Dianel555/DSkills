@@ -7,17 +7,28 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+from . import boundary, config
 from . import cache as cache_mod
-from . import config
 
 EXCLUDED_DIRS = {"wiki", ".obsidian", "attachments", ".git", ".trash"}
 
 
-def _ignore_patterns(vault: Path) -> list[str]:
+def _ignore_patterns(vault: Path, warnings: list[dict[str, str]]) -> list[str]:
     ignore = vault / ".wikiignore"
-    if not ignore.exists():
+    try:
+        # The existence probe is inside the same protection as the read: an
+        # inspection failure (e.g. access denied) must degrade to "no ignore rules
+        # applied" plus a warning, not abort the whole classification.
+        if not boundary.exists(ignore):
+            return []
+        text = boundary.read_text(ignore, encoding="utf-8")
+    except (OSError, UnicodeDecodeError, boundary.BoundaryError):
+        # Unreadable ignore rules must not silently change what gets scanned: report
+        # the failure so the caller can decide, instead of scanning with default rules
+        # while the user believes their ignores applied.
+        warnings.append({"path": ".wikiignore", "error": "ignore_unreadable"})
         return []
-    return [line.strip() for line in ignore.read_text(encoding="utf-8").splitlines() if line.strip() and not line.strip().startswith("#")]
+    return [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
 
 
 def _ignored(rel: str, patterns: list[str]) -> bool:
@@ -31,29 +42,37 @@ def _excluded(rel: str, patterns: list[str]) -> bool:
 
 def _collect_sources(vault: str | Path) -> tuple[list[Path], list[dict[str, str]]]:
     root = Path(vault).resolve()
-    patterns = _ignore_patterns(root)
+    warnings: list[dict[str, str]] = []
+    patterns = _ignore_patterns(root, warnings)
     found: list[Path] = []
-    skipped: list[dict[str, str]] = []
-    for path in root.rglob("*.md"):
-        rel = config.to_rel_posix(path, root)
-        if _excluded(rel, patterns):
-            continue
-        if path.is_symlink():
-            rel = config.normalize_relpath(path.relative_to(root).as_posix())
+    skipped: list[dict[str, str]] = warnings
+    # Enumerate without entering links, and report the links that were skipped. Every
+    # later read of a collected path is verified again, so a directory swapped into a
+    # link after enumeration is caught when its content is read.
+    for entry in boundary.walk(root, include_links=True):
+        rel = config.normalize_relpath(entry.path.relative_to(root).as_posix())
+        if entry.is_link:
             skipped.append({"path": rel, "error": "skipped_symlink"})
             continue
-        found.append(path)
+        if not entry.name.endswith(".md"):
+            continue
+        if _excluded(rel, patterns):
+            continue
+        found.append(entry.path)
     found.sort(key=lambda p: config.to_rel_posix(p, root))
     skipped.sort(key=lambda item: item["path"])
     return found, skipped
 
 
 def walk_sources(vault: str | Path) -> Iterator[Path]:
+    boundary.bind(vault)
     yield from _collect_sources(vault)[0]
 
 
 def _item(path: Path, vault: Path, derived_topics: list[str] | None = None, *, cached_entry: dict[str, Any] | None = None) -> dict[str, Any]:
-    st = path.stat()
+    st = boundary.stat(path)
+    if st is None:
+        raise FileNotFoundError(2, "No such file or directory", str(path))
     mtime_ns, size = st.st_mtime_ns, st.st_size
 
     if cached_entry is not None:
@@ -79,6 +98,7 @@ def _item(path: Path, vault: Path, derived_topics: list[str] | None = None, *, c
 
 
 def classify(vault: str | Path, cache_data: dict[str, Any], *, collect: Callable[[Path], tuple[list[Path], list[dict[str, str]]]] | None = None) -> dict[str, Any]:
+    boundary.bind(vault)
     root = Path(vault).resolve()
     sources = cache_data.get("sources", {})
     result: dict[str, Any] = {"new": [], "modified": [], "unchanged": [], "deleted": [], "errors": [], "skipped_symlinks": []}

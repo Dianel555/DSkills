@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import config, frontmatter
+from . import boundary, config, frontmatter
 from .config import nfc as _nfc
 
 EMBED ="![[index.base#主题总览]]"
@@ -65,10 +65,9 @@ for (const g of groups) {
 def _tiles(directory: Path, ext: str) -> list[tuple[str, str]]:
     """``(label, wiki-relative POSIX path)`` per ``*{ext}`` file, NFC-sorted;
     empty when the directory is missing."""
-    if not directory.exists():
-        return []
-    files = sorted(directory.glob(f"*{ext}"), key=lambda p: _nfc(p.name))
-    return [(_nfc(p.stem), f"{directory.name}/{_nfc(p.name)}") for p in files]
+    entries = boundary.entries(directory, suffix=ext)
+    entries = sorted(entries, key=lambda e: _nfc(e.name))
+    return [(_nfc(e.stem), f"{directory.name}/{_nfc(e.name)}") for e in entries]
 
 
 def _callout(kind: str, title: str, tiles: list[tuple[str, str]]) -> str:
@@ -84,18 +83,17 @@ def _topic_rows(vault: str | Path) -> list[tuple[str, int]]:
     """``(topic-name, source-count)`` per ``wiki/topics/*.md``, NFC-sorted. Count
     is the frontmatter ``sources`` length (0 when absent/unparsable)."""
     topics_dir = config.topics_dir(vault)
-    if not topics_dir.exists():
-        return []
     rows: list[tuple[str, int]] = []
-    for path in sorted(topics_dir.glob("*.md"), key=lambda p: _nfc(p.name)):
+    entries = sorted(boundary.entries(topics_dir, suffix=".md"), key=lambda e: _nfc(e.name))
+    for entry in entries:
         count = 0
         try:
-            meta, _ = frontmatter.parse(path.read_text(encoding="utf-8-sig"))
+            meta, _ = frontmatter.parse(entry.read_text())
             sources = meta.get("sources")
             count = len(sources) if isinstance(sources, list) else 0
         except (OSError, UnicodeDecodeError, frontmatter.FrontmatterError):
             count = 0
-        rows.append((_nfc(path.stem), count))
+        rows.append((_nfc(entry.stem), count))
     return rows
 
 
@@ -128,12 +126,14 @@ def _workspace_body(vault: str | Path, cards: bool) -> str:
 
 def managed_block(vault: str | Path, cards: bool) -> str:
     """The marker-delimited, script-owned 工作区 region (idempotent)."""
+    boundary.bind(vault)
     return f"{AUTO_START}\n\n{_workspace_body(vault, cards)}\n\n{AUTO_END}"
 
 
 def render_skeleton(vault: str | Path, cards: bool) -> str:
     """The full first-run page: frame + Bases embed + nav-table scaffold +
     relationship placeholder + managed workspace region."""
+    boundary.bind(vault)
     rows = _topic_rows(vault)
     total = sum(count for _, count in rows)
     blocks = [
@@ -160,6 +160,7 @@ def merge(existing: str | None, vault: str | Path, cards: bool) -> str:
     """Produce index.md content. Empty/placeholder -> full skeleton. Existing
     managed markers -> refresh only that region (preserve agent prose). Existing
     content without markers -> append the managed region (never clobber)."""
+    boundary.bind(vault)
     block = managed_block(vault, cards)
     if existing is None or _is_placeholder(existing):
         return render_skeleton(vault, cards)

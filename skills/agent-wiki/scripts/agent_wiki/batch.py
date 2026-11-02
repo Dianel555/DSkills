@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from . import cache, config, scanner
+from . import boundary, cache, config, scanner
 
 DEFAULT_BATCH_SIZE = 20
 STATE_VERSION = 1
@@ -59,21 +59,23 @@ def build_plan(vault: str | Path, batch_size: int) -> dict[str, Any]:
 
 
 def load_state(vault: str | Path) -> dict[str, Any] | None:
+    boundary.bind(vault)
     path = config.batch_path(vault)
-    if not path.exists():
+    if not boundary.exists(path):
         return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(boundary.read_text(path, encoding="utf-8"))
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
     return data if isinstance(data, dict) else None
 
 
 def save_state(vault: str | Path, data: dict[str, Any]) -> None:
+    boundary.bind(vault)
     path = config.batch_path(vault)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        config.atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        boundary.ensure_directory(path.parent)
+        boundary.write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     except OSError as exc:
         raise BatchStateError(str(exc)) from exc
 
@@ -98,9 +100,10 @@ def render_report(state: dict[str, Any]) -> str:
 
 
 def write_report(vault: str | Path, state: dict[str, Any]) -> Path:
+    boundary.bind(vault)
     path = report_path(vault)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_report(state), encoding="utf-8")
+    boundary.ensure_directory(path.parent)
+    boundary.write_text(path, render_report(state))
     return path
 
 
@@ -110,7 +113,7 @@ def is_ingested(vault: str | Path, rel: str, tracked: dict[str, Any]) -> bool:
     if not entry:
         return False
     source = config.source_path(vault, rel)
-    if not source.is_file():
+    if boundary.stat(source) is None:
         return False
     try:
         return bool(cache.sha256_file(source) == entry.get("sha256"))

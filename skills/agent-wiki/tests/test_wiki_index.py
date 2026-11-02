@@ -4,7 +4,7 @@ import unicodedata
 from pathlib import Path
 
 import pytest
-from agent_wiki import config, frontmatter, wiki_index
+from agent_wiki import boundary, config, frontmatter, wiki_index
 
 
 def _topic(vault: Path, name: str, meta: dict, body: str = "x") -> Path:
@@ -165,10 +165,10 @@ def test_save_index_preserves_old_bytes_on_replace_failure(tmp_path, monkeypatch
     original = wiki_index.serialize(wiki_index.empty_schema())
     path.write_text(original, encoding="utf-8")
 
-    def boom(src, dst):
+    def boom(dir_fd, tmp_name, destination, fd):
         raise PermissionError("locked")
 
-    monkeypatch.setattr(os, "replace", boom)
+    monkeypatch.setattr(boundary, "_publish_tmp", boom)
     with pytest.raises(wiki_index.IndexWriteError):
         wiki_index.save_index(tmp_path, {"version": 1, "generated_at": "x", "topics": {"new": {}}})
     assert path.read_text(encoding="utf-8") == original

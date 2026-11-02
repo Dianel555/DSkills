@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import sys
@@ -10,24 +9,22 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from . import boundary
+
 
 def nfc(value: Any) -> str:
     return unicodedata.normalize("NFC", str(value))
 
 
 def atomic_write_text(path: Path, data: str | bytes) -> None:
-    """Write via same-dir temp file + ``os.replace``; the old file survives any failure."""
-    tmp = path.with_name(path.name + ".tmp")
-    try:
-        if isinstance(data, bytes):
-            tmp.write_bytes(data)
-        else:
-            tmp.write_text(data, encoding="utf-8")
-        os.replace(tmp, path)
-    except OSError:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
-        raise
+    """Write inside the vault through a verified directory handle.
+
+    The parent directory is opened without following links (see :mod:`boundary`), the
+    payload goes to an exclusively created temporary file inside it, and the temporary
+    file replaces the destination relative to that same directory. A link planted on
+    the destination therefore never redirects the write, and neither does swapping the
+    directory between the check and the write."""
+    boundary.write_text(path, data)
 
 
 def _json_stderr(payload: dict[str, Any]) -> None:
@@ -48,6 +45,9 @@ def resolve_vault(args_vault: str | None) -> Path:
 
 
 def wiki_root(vault: str | Path) -> Path:
+    # Every derived path flows through here, so this is the single place where the vault
+    # is registered as the authorized root for the boundary checks.
+    boundary.bind(vault)
     return Path(vault).expanduser().resolve() / "wiki"
 
 
@@ -89,22 +89,40 @@ def normalize_relpath(path: str | Path) -> str:
 
 
 def to_rel_posix(abs_path: str | Path, vault: str | Path) -> str:
-    path = Path(abs_path).expanduser().resolve()
-    root = Path(vault).expanduser().resolve()
-    return normalize_relpath(path.relative_to(root).as_posix())
+    """Express ``abs_path`` relative to ``vault``.
+
+    The path is normalized lexically rather than resolved: resolving would follow a
+    link and turn a path that is lexically inside the vault into one that is not, which
+    makes the check depend on what the link points at instead of on the path itself.
+    Link safety is the boundary module's job, at open time.
+    """
+    path = Path(os.path.normpath(Path(abs_path).expanduser()))
+    root = Path(os.path.normpath(Path(vault).expanduser()))
+    try:
+        return normalize_relpath(path.relative_to(root).as_posix())
+    except ValueError as exc:
+        raise ValueError(f"{abs_path!r} is not inside the vault {vault!r}") from exc
 
 
 def source_path(vault: str | Path, relpath: str | Path) -> Path:
+    """A source path inside ``vault``; rejects traversal, not links."""
     rel = normalize_relpath(relpath)
-    path = (Path(vault).expanduser().resolve() / Path(rel)).resolve()
-    path.relative_to(Path(vault).expanduser().resolve())
+    root = Path(os.path.normpath(Path(vault).expanduser()))
+    path = Path(os.path.normpath(root / Path(rel)))
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"{relpath!r} escapes the vault {vault!r}") from exc
     return path
 
 
 def topic_path(vault: str | Path, relpath: str | Path) -> Path:
     """Resolve a derived-topic relpath, constrained to wiki/topics (raises ValueError outside)."""
     rel = normalize_relpath(relpath)
-    root = topics_dir(vault)
-    path = (root / Path(rel)).resolve()
-    path.relative_to(root)
+    root = Path(os.path.normpath(topics_dir(vault)))
+    path = Path(os.path.normpath(root / Path(rel)))
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"{relpath!r} is not inside wiki/topics") from exc
     return path

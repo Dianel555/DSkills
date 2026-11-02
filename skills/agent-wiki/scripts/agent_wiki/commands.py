@@ -15,6 +15,7 @@ from . import (
     authors,
     bases,
     batch,
+    boundary,
     cache,
     canvas,
     cleanup,
@@ -31,6 +32,7 @@ from . import (
     wiki_index,
     worklist,
 )
+from .boundary import BoundaryError
 
 
 def emit(payload: dict[str, Any]) -> None:
@@ -59,7 +61,11 @@ def _parse_topics(value: str | None) -> list[str]:
 
 
 def _writable_mode(path: Path) -> bool:
-    return not path.exists() or bool(path.stat().st_mode & stat.S_IWRITE)
+    try:
+        st = boundary.stat(path)
+    except BoundaryError:
+        return False
+    return st is None or bool(st.st_mode & stat.S_IWRITE)
 
 
 def _ensure_wiki_writable(vault: Path) -> None:
@@ -86,18 +92,20 @@ def cmd_init(args: argparse.Namespace) -> None:
         config.queries_dir(vault),
         config.graphs_dir(vault),
     ):
-        if not directory.exists():
-            directory.mkdir(parents=True)
+        if not boundary.exists(directory):
+            boundary.ensure_directory(directory)
             created.append(config.to_rel_posix(directory, vault))
 
     index = root / "index.md"
-    if not index.exists():
-        index.write_text("# Wiki Index\n\n", encoding="utf-8")
+    if not boundary.exists(index):
+        boundary.write_text(index, "# Wiki Index\n\n")
         created.append(config.to_rel_posix(index, vault))
 
     log = root / "log.md"
-    if not log.exists():
-        log.write_text(f"# Wiki Log\n\n## [{date.today().isoformat()}] init | wiki created\n", encoding="utf-8")
+    if not boundary.exists(log):
+        boundary.write_text(
+            log, f"# Wiki Log\n\n## [{date.today().isoformat()}] init | wiki created\n"
+        )
         created.append(config.to_rel_posix(log, vault))
 
     cache_file = config.cache_path(vault)
@@ -240,9 +248,32 @@ def cmd_cache_put(args: argparse.Namespace) -> None:
 
 def _append_log(vault: Path, category: str, action: str, path: str) -> None:
     log = config.wiki_root(vault) / "log.md"
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a", encoding="utf-8") as handle:
-        handle.write(f"## [{date.today().isoformat()}] {category} | {action} | {path}\n")
+    boundary.append_text(
+        log, f"## [{date.today().isoformat()}] {category} | {action} | {path}\n"
+    )
+
+
+def _path_reachable(path: Path) -> bool:
+    """True when ``path`` names an existing, non-link object."""
+    try:
+        with boundary.open_read(path):
+            return True
+    except FileNotFoundError:
+        return False
+    except boundary.BoundaryError as exc:
+        return not exc.is_link  # a link is "absent" here; other refusals are present
+    except OSError:
+        return True  # unreadable is not deleted
+
+
+def _path_is_link(path: Path) -> bool:
+    try:
+        boundary.open_read(path)
+    except boundary.BoundaryError as exc:
+        return exc.is_link
+    except OSError:
+        return False
+    return False
 
 
 def cmd_cleanup(args: argparse.Namespace) -> None:
@@ -256,7 +287,13 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
 
     for rel, entry in list(sources.items()):
         source = config.source_path(vault, rel)
-        if source.exists():
+        if _path_reachable(source):
+            continue
+        if _path_is_link(source):
+            # A link (dangling or external) is not a deleted source: pruning its
+            # topics or archiving them on that basis could destroy real content.
+            source_cleaned = False
+            errors.append({"path": rel, "error": "skipped_link"})
             continue
         source_cleaned = True
         for topic_rel in entry.get("derived_topics", []):
@@ -309,8 +346,8 @@ def _capture(args: argparse.Namespace, dir_func: Callable[[Path], Path], kind: s
     if not target.is_file():
         fail({"error": "capture_not_found", "path": rel}, 1)
     try:
-        meta, body = frontmatter.parse(target.read_text(encoding="utf-8-sig"))
-    except (UnicodeDecodeError, frontmatter.FrontmatterError):
+        meta, body = frontmatter.parse(boundary.read_text(target))
+    except (UnicodeDecodeError, frontmatter.FrontmatterError, BoundaryError):
         fail({"error": "capture_parse_failed", "path": rel}, 1)
     if meta.get("kind") != kind:
         meta["kind"] = kind
@@ -336,24 +373,35 @@ def _rebuild_index(vault: Path, *, incremental: bool = False) -> tuple[dict[str,
 
 
 def _index_stale(vault: Path, index_file: Path) -> bool:
-    if not index_file.exists():
+    index_stat = boundary.stat(index_file)
+    if index_stat is None:
         return True
-    index_mtime = index_file.stat().st_mtime_ns
+    index_mtime = index_stat.st_mtime_ns
     for root in (config.topics_dir(vault), config.queries_dir(vault)):
-        if root.exists() and any(p.stat().st_mtime_ns > index_mtime for p in root.glob("*.md")):
+        try:
+            stale = any(
+                (st := entry.stat()) is not None and st.st_mtime_ns > index_mtime
+                for entry in boundary.entries(root, suffix=".md")
+            )
+        except BoundaryError:
+            return True
+        if stale:
             return True
     return False
 
 
 def _graphs_stale(vault: Path) -> bool:
-    topics_root = config.topics_dir(vault)
-    topics = list(topics_root.glob("*.md")) if topics_root.exists() else []
+    topics = boundary.entries(config.topics_dir(vault), suffix=".md")
     if not topics:
         return False
     graphs_root = config.graphs_dir(vault)
     for topic in topics:
-        graph = graphs_root / (topic.stem + ".canvas")
-        if not graph.exists() or topic.stat().st_mtime_ns > graph.stat().st_mtime_ns:
+        graph = graphs_root / (topic.path.stem + ".canvas")
+        graph_stat = boundary.stat(graph)
+        if graph_stat is None or (
+            (topic_stat := topic.stat()) is not None
+            and topic_stat.st_mtime_ns > graph_stat.st_mtime_ns
+        ):
             return True
     return False
 
@@ -382,18 +430,25 @@ def cmd_status(args: argparse.Namespace) -> None:
     data = cache.load(vault)
     topics_root = config.topics_dir(vault)
     archive_root = config.archive_dir(vault)
-    topics = list(topics_root.glob("*.md")) if topics_root.exists() else []
+    topics = [entry.path for entry in boundary.entries(topics_root, suffix=".md")]
     report_file = batch.report_path(vault)
-    archived_topics = [p for p in archive_root.glob("**/*.md") if p != report_file] if archive_root.exists() else []
+    archived_topics = [
+        entry.path
+        for entry in boundary.walk(archive_root)
+        if entry.path.suffix == ".md" and entry.path != report_file
+    ]
     queries_root = config.queries_dir(vault)
     graphs_root = config.graphs_dir(vault)
-    queries_total = len(list(queries_root.glob("*.md"))) if queries_root.exists() else 0
-    graphs_count = len(list(graphs_root.glob("*.canvas"))) if graphs_root.exists() else 0
+    queries_total = len(boundary.entries(queries_root, suffix=".md"))
+    graphs_count = len(boundary.entries(graphs_root, suffix=".canvas"))
     errors = []
     orphaned = 0
 
     for topic in topics:
-        parsed = frontmatter.parse_file(topic)
+        try:
+            parsed = frontmatter.parse(boundary.read_text(topic))
+        except (UnicodeDecodeError, OSError, frontmatter.FrontmatterError):
+            parsed = None
         if parsed is None:
             errors.append({"path": config.to_rel_posix(topic, vault), "error": "frontmatter_parse_failed"})
             continue
@@ -403,17 +458,21 @@ def cmd_status(args: argparse.Namespace) -> None:
 
     log = config.wiki_root(vault) / "log.md"
     last_log = ""
-    if log.exists():
-        lines = [line.strip() for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if boundary.exists(log):
+        lines = [
+            line.strip()
+            for line in boundary.read_text(log, encoding="utf-8").splitlines()
+            if line.strip()
+        ]
         last_log = lines[-1] if lines else ""
 
     index_file = config.index_path(vault)
-    index_exists = index_file.exists()
+    index_exists = boundary.exists(index_file)
     index_topics = 0
     raw_index: Any = None
     if index_exists:
         try:
-            raw_index = json.loads(index_file.read_text(encoding="utf-8"))
+            raw_index = json.loads(boundary.read_text(index_file, encoding="utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             raw_index = None
         if isinstance(raw_index, dict) and isinstance(raw_index.get("topics"), dict):
@@ -464,19 +523,26 @@ def cmd_status(args: argparse.Namespace) -> None:
     # Check site status
     site_dir = config.wiki_root(vault) / "site"
     site_index = site_dir / "index.html"
-    site_exists = site_index.exists()
+    site_stat = boundary.stat(site_index)
+    site_exists = site_stat is not None
     site_stale = False
-    pages = topics + (list(queries_root.glob("*.md")) if queries_root.exists() else [])
+    pages = topics + [entry.path for entry in boundary.entries(queries_root, suffix=".md")]
     if site_exists and pages:
-        try:
-            site_mtime = site_index.stat().st_mtime_ns
-            # Site is stale if any exported topic/report is newer.
-            site_stale = any(page.stat().st_mtime_ns > site_mtime for page in pages)
-        except OSError:
-            pass
+        site_mtime = site_stat.st_mtime_ns if site_stat else 0
+        # Site is stale if any exported topic/report is newer.
+        site_stale = any(
+            st is not None and st.st_mtime_ns > site_mtime
+            for st in (boundary.stat(page) for page in pages)
+        )
+    # A generation that reported errors leaves no completion stamp, so a partial site
+    # is always stale no matter how recent its index.html looks.
+    if site_exists and not boundary.exists(site_dir / "_complete"):
+        site_stale = True
 
     cache_file = config.cache_path(vault)
     batch_state = batch.load_state(vault)
+    cache_stat = boundary.stat(cache_file)
+    index_stat = boundary.stat(index_file)
     batch_summary = None
     if batch_state:
         batches = batch_state.get("batches", [])
@@ -497,11 +563,11 @@ def cmd_status(args: argparse.Namespace) -> None:
         "queries_total": queries_total,
         "graphs_count": graphs_count,
         "graphs_stale": _graphs_stale(vault),
-        "cache_size_bytes": cache_file.stat().st_size if cache_file.exists() else 0,
+        "cache_size_bytes": cache_stat.st_size if cache_stat else 0,
         "last_log_entry": last_log,
         "errors": errors,
         "index_exists": index_exists,
-        "index_size_bytes": index_file.stat().st_size if index_exists else 0,
+        "index_size_bytes": index_stat.st_size if index_stat else 0,
         "index_topics": index_topics,
         "index_stale": index_stale,
         "index_errors": index_errors,
@@ -599,7 +665,7 @@ def cmd_gen_home(args: argparse.Namespace) -> None:
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
     cards = _resolve_cards(getattr(args, "cards", "auto"), vault)
     index_file = config.wiki_root(vault) / "index.md"
-    existing = index_file.read_text(encoding="utf-8") if index_file.exists() else None
+    existing = boundary.read_text(index_file) if boundary.exists(index_file) else None
     text = home.merge(existing, vault, cards)
     if getattr(args, "emit_only", False):
         # No write: the agent holds an MCP channel this subprocess cannot reach,
@@ -623,7 +689,7 @@ def cmd_quality(args: argparse.Namespace) -> None:
         fail({"error": "wiki_not_initialized", "hint": "run init first"}, 1)
 
     topics_dir = config.topics_dir(vault)
-    if not topics_dir.exists():
+    if not boundary.exists(topics_dir):
         emit({"ok": True, "tiers": {}, "distribution": dict.fromkeys(["stub", "basic", "standard", "rich", "premium"], 0), "errors": []})
         return
 
@@ -631,10 +697,10 @@ def cmd_quality(args: argparse.Namespace) -> None:
     distribution = {"stub": 0, "basic": 0, "standard": 0, "rich": 0, "premium": 0}
     errors = []
 
-    for path in sorted(topics_dir.glob("*.md")):
-        rel = path.name
+    for entry in boundary.entries(topics_dir, suffix=".md"):
+        rel = entry.name
         try:
-            text = path.read_text(encoding="utf-8-sig")
+            text = entry.read_text()
         except (UnicodeDecodeError, OSError):
             errors.append({"path": rel, "error": "topic_decode_failed"})
             continue

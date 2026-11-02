@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import hashlib
 import json
-import os
 import stat
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from . import config
+from . import boundary, config
 
 SCHEMA_VERSION = 1
 _SCHEMA = {"version": SCHEMA_VERSION, "sources": {}}
@@ -41,24 +39,38 @@ def empty_schema() -> dict[str, Any]:
 
 def file_signature(path: str | Path) -> tuple[int, int] | None:
     path = Path(path)
-    if not path.exists():
+    # A BoundaryError is deliberately not swallowed: it means the path is outside
+    # every authorized vault, and reporting "no signature" would make the caller's
+    # conflict check look like "cache absent" and skip the guard entirely.
+    st = boundary.stat(path)
+    if st is None:
         return None
-    st = path.stat()
     return st.st_mtime_ns, st.st_size
 
 
 def load(vault: str | Path) -> dict[str, Any]:
+    boundary.bind(vault)
     return load_with_signature(vault)[0]
 
 
 def load_with_signature(vault: str | Path) -> tuple[dict[str, Any], tuple[int, int] | None]:
+    boundary.bind(vault)
     path = config.cache_path(vault)
     if not path.exists():
         return empty_schema(), None
     signature = file_signature(path)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+        text = boundary.read_text(path, encoding="utf-8")
+        data = json.loads(text)
+    except (json.JSONDecodeError, UnicodeDecodeError, boundary.BoundaryError) as exc:
+        if isinstance(exc, boundary.BoundaryError):
+            print(
+                json.dumps(
+                    {"warning": "cache_outside_vault", "path": str(path)}, ensure_ascii=False
+                ),
+                file=sys.stderr,
+            )
+            return empty_schema(), None
         print(json.dumps({"warning": "cache_parse_failed", "path": str(path)}, ensure_ascii=False), file=sys.stderr)
         return empty_schema(), signature
     if not isinstance(data, dict):
@@ -71,46 +83,61 @@ def load_with_signature(vault: str | Path) -> tuple[dict[str, Any], tuple[int, i
 def is_cache_writable(path: str | Path) -> bool:
     path = Path(path)
     parent = path.parent
-    if path.exists() and not (path.stat().st_mode & stat.S_IWRITE):
+    try:
+        parent_st = boundary.stat(parent)
+    except boundary.BoundaryError:
         return False
-    return parent.exists() and bool(parent.stat().st_mode & stat.S_IWRITE)
+    if parent_st is None or not (parent_st.st_mode & stat.S_IWRITE):
+        return False
+    st = boundary.stat(path)
+    return st is None or bool(st.st_mode & stat.S_IWRITE)
 
 
 def save(vault: str | Path, data: dict[str, Any], expected_signature: tuple[int, int] | None = None) -> None:
+    """Persist the cache, refusing to clobber a concurrent writer's version.
+
+    ``expected_signature`` is the (mtime_ns, size) pair returned by
+    ``load_with_signature``; a mismatch raises ``CacheConflictError`` before anything is
+    written. The check runs twice - once lexically, once inside the verified directory
+    handle immediately before the exclusive-temp publish - to close as much of the
+    check/use window as the platform allows; the publish itself is atomic, so the
+    worst residual outcome of two writers that both pass is "last complete write
+    wins", never a torn file. ``expected_signature=None`` means the caller explicitly
+    opts out of conflict detection and accepts that contract.
+    """
+    boundary.bind(vault)
     path = config.cache_path(vault)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    boundary.ensure_directory(path.parent)
     if not is_cache_writable(path):
         raise CacheNotWritableError("cache_not_writable")
     if expected_signature is not None and file_signature(path) != expected_signature:
         raise CacheConflictError("cache_conflict")
 
-    tmp = path.with_name(path.name + ".tmp")
     payload = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    tmp.write_text(payload, encoding="utf-8")
-    try:
+    # Publish through the verified cache directory so the conflict re-check and the
+    # replacement happen relative to one opened directory, never through a link.
+    with boundary.fs_for(path).open_directory(path.parent) as handle:
         if expected_signature is not None and file_signature(path) != expected_signature:
             raise CacheConflictError("cache_conflict")
-        os.replace(tmp, path)
-    except CacheConflictError:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
-        raise
-    except OSError as exc:
-        with contextlib.suppress(OSError):
-            tmp.unlink()
-        raise CacheReplaceError(str(exc)) from exc
+        try:
+            handle.write_atomic(path.name, payload)
+        except OSError as exc:
+            raise CacheReplaceError(str(exc)) from exc
 
 
 def sha256_file(path: str | Path) -> str:
+    """Hash the bytes of a verified regular file below the authorized root."""
     h = hashlib.sha256()
-    with Path(path).open("rb") as handle:
+    with boundary.open_read(path) as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
 
 
 def stat_signature(path: str | Path) -> tuple[int, int]:
-    stat_result = Path(path).stat()
+    stat_result = boundary.stat(path)
+    if stat_result is None:
+        raise FileNotFoundError(2, "No such file or directory", str(path))
     return stat_result.st_mtime_ns, stat_result.st_size
 
 

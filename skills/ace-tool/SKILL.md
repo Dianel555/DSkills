@@ -59,7 +59,7 @@ python scripts/ace_cli.py get_config
 ## Command Reference
 
 ### index
-Index project files for remote codebase retrieval. Scans, hashes, chunks large files, and uploads to the ACE batch-upload API. Uses incremental indexing with gzip JSON cache at `.ace-tool/index.json.gz`. Respects both `.gitignore` and `.aceignore` patterns. If a parent directory already has a `.ace-tool` cache (lookup stops before home / filesystem root), it is reused as the effective index root; child caches in subtrees covered by the root's scan are absorbed (deleted) after a successful index save. Concurrent runs need no locks: a save interrupted by a concurrent absorption abandons persistence (the next run inherits the ancestor root), and absorption skips caches it cannot delete, retrying on the next run. A 400 `unknown blobs` response during remote search triggers an automatic index rebuild, re-upload, and a single retry.
+Index project files for remote codebase retrieval. Scans, hashes, chunks large files, and uploads to the ACE batch-upload API. Uses incremental indexing with gzip JSON cache at `.ace-tool/index.json.gz`. Respects both `.gitignore` and `.aceignore` patterns. The supplied project root is the index and upload boundary; each root keeps its own cache, and indexing a parent does not delete child caches. Symbolic links, junctions and other reparse points below the root are never followed, so only real files inside the root are read and uploaded; an unreadable or out-of-boundary path is skipped instead of falling back to a plain path read. A 400 `unknown blobs` response during remote search triggers an automatic index rebuild, re-upload, and a single retry.
 
 ```bash
 python scripts/ace_cli.py index -p <project_root>

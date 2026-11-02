@@ -10,6 +10,8 @@ const fs = require('fs');
 const path = require('path');
 
 const API_BASE = 'https://context7.com/api/v3';
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+const REQUEST_DEADLINE_MS = 30_000;
 
 function loadApiKey() {
   if (process.env.CONTEXT7_API_KEY) {
@@ -47,35 +49,66 @@ function makeRequest(requestPath, params = {}, apiKey = API_KEY) {
     const queryString = new URLSearchParams(params).toString();
     const url = `${API_BASE}${requestPath}?${queryString}`;
 
-    https.get(url, { headers: buildHeaders(apiKey) }, (res) => {
-      let data = '';
+    let request;
+    let settled = false;
+    const timer = setTimeout(() => fail(new Error('Context7 request timed out')), REQUEST_DEADLINE_MS);
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+      if (request) request.destroy();
+    };
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback(value);
+    };
 
-      res.on('data', (chunk) => {
-        data += chunk;
-      });
-
-      res.on('end', () => {
-        let payload;
-        try {
-          payload = JSON.parse(data);
-        } catch {
-          if (res.statusCode === 200) {
-            reject(new Error('Context7 returned invalid JSON'));
+    try {
+      request = https.get(url, { headers: buildHeaders(apiKey) }, (res) => {
+        const chunks = [];
+        let size = 0;
+        res.on('data', (chunk) => {
+          if (settled) return;
+          const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          size += bytes.length;
+          if (size > MAX_RESPONSE_BYTES) {
+            fail(new Error('Context7 response too large'));
             return;
           }
-        }
+          chunks.push(bytes);
+        });
+        res.on('aborted', () => fail(new Error('Context7 response aborted')));
+        res.on('error', fail);
+        res.on('end', () => {
+          if (settled) return;
+          let payload;
+          try {
+            payload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          } catch {
+            if (res.statusCode === 200) {
+              finish(reject, new Error('Context7 returned invalid JSON'));
+              return;
+            }
+          }
 
-        if (res.statusCode === 200) {
-          resolve(payload);
-          return;
-        }
+          if (res.statusCode === 200) {
+            finish(resolve, payload);
+            return;
+          }
 
-        const error = new Error(`API Error ${res.statusCode}: ${payload?.message || payload?.error || res.statusMessage}`);
-        error.statusCode = res.statusCode;
-        error.code = payload?.error;
-        reject(error);
+          const error = new Error(`API Error ${res.statusCode}: ${payload?.message || payload?.error || res.statusMessage}`);
+          error.statusCode = res.statusCode;
+          error.code = payload?.error;
+          finish(reject, error);
+        });
       });
-    }).on('error', reject);
+      request.on('error', fail);
+    } catch (error) {
+      fail(error);
+    }
   });
 }
 

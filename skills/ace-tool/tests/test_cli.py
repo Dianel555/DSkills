@@ -34,6 +34,12 @@ class TestIndexAuth:
                 self.root = project_root
                 self._index = SimpleNamespace(last_indexed=0.0)
 
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                captured["closed"] = True
+
             def get_blob_names(self):
                 return ["blob1", "blob2"]
 
@@ -46,6 +52,7 @@ class TestIndexAuth:
 
         assert captured["base_url"] == "https://session.example.com"
         assert captured["token"] == "session_token"
+        assert captured["closed"] is True
 
     def test_index_errors_when_no_auth(self, tmp_path, capsys):
         """Index exits with a clear error when no auth source is configured."""

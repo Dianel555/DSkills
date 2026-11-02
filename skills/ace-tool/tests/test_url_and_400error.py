@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import ace_cli  # noqa: E402
 from client import AceToolClient, build_api_url  # noqa: E402
 from indexer import Indexer, IndexRebuildError, ProjectIndex  # noqa: E402
+from secure_fs import AuthorizedRoot as _AuthorizedRoot  # noqa: E402
 from templates import INDEX_DIR, INDEX_FILE  # noqa: E402
 from utils import build_api_url as utils_build_api_url  # noqa: E402
 
@@ -88,6 +89,7 @@ def test_unknown_blobs_triggers_rebuild_and_single_retry(monkeypatch):
     calls = {"post": 0, "rebuild": 0}
 
     monkeypatch.setattr("client.Indexer.__init__", lambda self, *a, **k: None)
+    monkeypatch.setattr("client.Indexer.close", lambda self: None)
     monkeypatch.setattr("client.Indexer.get_blob_names", lambda self: ["stale"])
 
     def fake_rebuild(self):
@@ -117,6 +119,7 @@ def test_unknown_blobs_no_infinite_retry(monkeypatch):
     calls = {"post": 0}
 
     monkeypatch.setattr("client.Indexer.__init__", lambda self, *a, **k: None)
+    monkeypatch.setattr("client.Indexer.close", lambda self: None)
     monkeypatch.setattr("client.Indexer.get_blob_names", lambda self: ["stale"])
     monkeypatch.setattr("client.Indexer.force_rebuild", lambda self: ["fresh"], raising=False)
 
@@ -137,6 +140,7 @@ def test_other_400_errors_not_swallowed(monkeypatch):
     calls = {"post": 0, "rebuild": 0}
 
     monkeypatch.setattr("client.Indexer.__init__", lambda self, *a, **k: None)
+    monkeypatch.setattr("client.Indexer.close", lambda self: None)
     monkeypatch.setattr("client.Indexer.get_blob_names", lambda self: ["a"])
     monkeypatch.setattr(
         "client.Indexer.force_rebuild",
@@ -160,15 +164,15 @@ def test_other_400_errors_not_swallowed(monkeypatch):
 # --- Problem 3: cache hierarchy ---
 
 
-def test_child_inherits_nearest_ancestor_cache(tmp_path):
+def test_child_keeps_requested_root_despite_ancestor_cache(tmp_path):
     parent = tmp_path / "parent"
     child = parent / "sub"
     child.mkdir(parents=True)
     _write_index(parent)
 
     idx = Indexer(str(child), "https://h", "tok")
-    assert idx.root == parent.resolve()
-    assert idx.index_path == parent.resolve() / INDEX_DIR / INDEX_FILE
+    assert idx.root == child.resolve()
+    assert idx.index_path == child.resolve() / INDEX_DIR / INDEX_FILE
 
 
 def test_own_cache_preferred_over_ancestor(tmp_path):
@@ -190,7 +194,7 @@ def test_no_cache_anywhere_uses_project_root(tmp_path):
     assert idx.root == proj.resolve()
 
 
-def test_nearest_ancestor_wins_over_farther(tmp_path):
+def test_multiple_ancestor_caches_do_not_change_requested_root(tmp_path):
     outer = tmp_path / "repo"
     nearest = outer / "packages"
     child = nearest / "service"
@@ -199,7 +203,7 @@ def test_nearest_ancestor_wins_over_farther(tmp_path):
     _write_index(nearest)
 
     idx = Indexer(str(child), "https://h", "tok")
-    assert idx.root == nearest.resolve()
+    assert idx.root == child.resolve()
 
 
 def test_home_cache_not_inherited(tmp_path, monkeypatch):
@@ -212,7 +216,7 @@ def test_home_cache_not_inherited(tmp_path, monkeypatch):
     assert idx.root == proj.resolve()
 
 
-def test_parent_indexing_absorbs_child_cache(tmp_path):
+def test_parent_indexing_preserves_child_cache(tmp_path):
     root = tmp_path / "proj"
     sub = root / "pkg"
     sub.mkdir(parents=True)
@@ -224,7 +228,7 @@ def test_parent_indexing_absorbs_child_cache(tmp_path):
     idx = Indexer(str(root), "", "")  # empty base_url: upload step is a no-op
     names = idx.get_blob_names()
 
-    assert not (sub / INDEX_DIR).exists()
+    assert (sub / INDEX_DIR / INDEX_FILE).is_file()
     assert (root / INDEX_DIR / INDEX_FILE).exists()
     assert len(names) == 2
 
@@ -308,7 +312,7 @@ def test_cmd_index_reports_effective_root(tmp_path, monkeypatch, capsys):
 
     ace_cli.cmd_index(SimpleNamespace(api_url=None, token=None, endpoint=None, project_root=str(child)))
     out = json.loads(capsys.readouterr().out)
-    assert out["effective_root"] == str(parent.resolve())
+    assert out["effective_root"] == str(child.resolve())
     assert out["project_root"] == str(child)
 
 
@@ -374,7 +378,7 @@ def test_force_rebuild_skips_absorb_when_save_abandoned(tmp_path, monkeypatch):
     assert (sub / INDEX_DIR / INDEX_FILE).exists()
 
 
-def test_absorb_skips_child_on_rmtree_failure(tmp_path, monkeypatch):
+def test_parent_and_rebuild_never_remove_child_cache(tmp_path):
     root = tmp_path / "proj4"
     sub = root / "pkg"
     sub.mkdir(parents=True)
@@ -383,26 +387,23 @@ def test_absorb_skips_child_on_rmtree_failure(tmp_path, monkeypatch):
     _write_index(root)
     _write_index(sub)
 
-    def locked_rmtree(p):
-        raise PermissionError(13, "file in use")  # Windows open-handle / racy delete
-
-    monkeypatch.setattr("indexer.shutil.rmtree", locked_rmtree)
     idx = Indexer(str(root), "", "")
-    names = idx.get_blob_names()  # must not raise
+    names = idx.get_blob_names()
+    rebuilt_names = idx.force_rebuild()
 
-    assert (sub / INDEX_DIR / INDEX_FILE).exists()  # skipped, retried next run
-    assert len(names) == 2
+    assert (sub / INDEX_DIR / INDEX_FILE).is_file()
+    assert len(names) == len(rebuilt_names) == 2
 
 
 def test_save_index_tmp_is_per_process(tmp_path, monkeypatch):
     captured = {}
-    real_replace = Path.replace
+    real_publish = _AuthorizedRoot.publish
 
-    def spy_replace(self, target):
-        captured["tmp"] = self.name
-        return real_replace(self, target)
+    def spy_publish(self, tmp_rel, rel_parts):
+        captured["tmp"] = tmp_rel[-1]
+        return real_publish(self, tmp_rel, rel_parts)
 
-    monkeypatch.setattr(Path, "replace", spy_replace)
+    monkeypatch.setattr(_AuthorizedRoot, "publish", spy_publish)
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     idx = Indexer(str(tmp_path), "", "")
     idx._load_index()
@@ -415,15 +416,15 @@ def test_save_index_tmp_is_per_process(tmp_path, monkeypatch):
 
 def test_save_index_retries_transient_replace_permission_error(tmp_path, monkeypatch):
     attempts = {"n": 0}
-    real_replace = Path.replace
+    real_publish = _AuthorizedRoot.publish
 
-    def briefly_locked_replace(self, target):
+    def briefly_locked_publish(self, tmp_rel, rel_parts):
         attempts["n"] += 1
         if attempts["n"] == 1:
             raise PermissionError(5, "target open in a concurrent reader")  # WinError 5
-        return real_replace(self, target)
+        return real_publish(self, tmp_rel, rel_parts)
 
-    monkeypatch.setattr(Path, "replace", briefly_locked_replace)
+    monkeypatch.setattr(_AuthorizedRoot, "publish", briefly_locked_publish)
     monkeypatch.setattr("indexer.time.sleep", lambda s: None)
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     idx = Indexer(str(tmp_path), "", "")
@@ -436,10 +437,10 @@ def test_save_index_retries_transient_replace_permission_error(tmp_path, monkeyp
 
 
 def test_save_index_propagates_persistent_permission_error(tmp_path, monkeypatch):
-    def always_locked_replace(self, target):
+    def always_locked_publish(self, tmp_rel, rel_parts):
         raise PermissionError(5, "acl denies write")
 
-    monkeypatch.setattr(Path, "replace", always_locked_replace)
+    monkeypatch.setattr(_AuthorizedRoot, "publish", always_locked_publish)
     monkeypatch.setattr("indexer.time.sleep", lambda s: None)
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     idx = Indexer(str(tmp_path), "", "")

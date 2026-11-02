@@ -112,12 +112,8 @@ def parse_chat_history(conversation_history: str) -> list[dict]:
     return messages
 
 
-def detect_and_read(file_path: Path, encoding_chain: list[str]) -> str | None:
-    """Try multiple encodings to read a file. Returns None for binary/unreadable."""
-    try:
-        raw = file_path.read_bytes()
-    except OSError:
-        return None
+def decode_bytes(raw: bytes, encoding_chain: list[str]) -> str | None:
+    """Decode already-read bytes. Returns None for binary/unreadable content."""
     if b"\x00" in raw[:8192]:
         return None
     for enc in encoding_chain:
@@ -126,6 +122,19 @@ def detect_and_read(file_path: Path, encoding_chain: list[str]) -> str | None:
         except (UnicodeDecodeError, LookupError):
             continue
     return None
+
+
+def detect_and_read(file_path: Path, encoding_chain: list[str]) -> str | None:
+    """Try multiple encodings to read a file. Returns None for binary/unreadable.
+
+    Path-based convenience wrapper; callers that must not follow links should read
+    through an :class:`secure_fs.AuthorizedRoot` handle and use ``decode_bytes``.
+    """
+    try:
+        raw = file_path.read_bytes()
+    except OSError:
+        return None
+    return decode_bytes(raw, encoding_chain)
 
 
 def sanitize_content(content: str) -> str:

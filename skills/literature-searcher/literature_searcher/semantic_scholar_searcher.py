@@ -3,6 +3,9 @@ Semantic Scholar API 搜索
 """
 
 import json
+import math
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -10,6 +13,25 @@ import time
 from typing import List, Optional
 
 from . import SEMANTIC_SCHOLAR_API, USER_AGENT, SEMANTIC_SCHOLAR_API_KEY, Paper
+
+
+MAX_RETRY_WAIT = 30.0
+
+
+def _retry_after_seconds(value: str | None, default: float) -> float:
+    try:
+        try:
+            delay = float(value) if value else default
+        except ValueError:
+            date = parsedate_to_datetime(value)
+            if date.tzinfo is None:
+                date = date.replace(tzinfo=timezone.utc)
+            delay = (date - datetime.now(timezone.utc)).total_seconds()
+        if not math.isfinite(delay):
+            delay = default
+        return max(0.0, min(MAX_RETRY_WAIT, delay))
+    except (TypeError, ValueError, OverflowError):
+        return min(MAX_RETRY_WAIT, default)
 
 
 class SemanticScholarSearcher:
@@ -74,10 +96,7 @@ class SemanticScholarSearcher:
                     return None
 
                 retry_after = e.headers.get("Retry-After") if e.headers else None
-                try:
-                    delay = float(retry_after) if retry_after else 2 ** attempt
-                except ValueError:
-                    delay = 2 ** attempt
+                delay = _retry_after_seconds(retry_after, min(MAX_RETRY_WAIT, 2 ** min(attempt, 5)))
                 print(f"[SemanticScholar] 配额已用尽，{delay:.0f} 秒后重试...")
                 time.sleep(delay)
 

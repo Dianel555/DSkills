@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import html
 import re
+from contextlib import suppress
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from . import config, frontmatter, links, wiki_index
+from . import boundary, config, frontmatter, links, wiki_index
 from .config import nfc as _nfc
 
 # Optional markdown import - strictly gated inside this module
@@ -725,7 +726,11 @@ def generate_site(vault: str | Path) -> dict[str, Any]:
 
     Returns ``{"ok": True, "pages": int, "out": str, "degraded": bool, "errors": list}``.
     Raises ``ValueError("wiki_not_initialized")`` if the wiki is absent.
+
+    Refuses (``ok: False``) when ``wiki/site`` or an ancestor of it is a link, because
+    publishing through it would write outside the vault.
     """
+    boundary.bind(vault)
     vault = Path(vault)
     wiki_root = config.wiki_root(vault)
     if not wiki_root.exists():
@@ -749,43 +754,78 @@ def generate_site(vault: str | Path) -> dict[str, Any]:
     type_accent = {t: _TYPE_ACCENTS[i % len(_TYPE_ACCENTS)] for i, t in enumerate(accent_keys)}
 
     site_dir = wiki_root / "site"
-    site_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        boundary.ensure_directory(site_dir)
+    except boundary.BoundaryError as exc:
+        return {
+            "ok": False,
+            "pages": 0,
+            "out": str(site_dir),
+            "degraded": not MARKDOWN_AVAILABLE,
+            "errors": list(index_errors) + [{"path": "site", "error": "outside_vault", "detail": str(exc)}],
+        }
 
     pages_written = 0
     errors: list[dict[str, Any]] = list(index_errors)
-    for key, entry in list(topics.items()) + list(queries.items()):
-        page_path = config.topics_dir(vault) / key if entry.get("kind") == "topic" else wiki_root / key
-        if not page_path.exists():
-            continue
-        try:
-            text = page_path.read_text(encoding="utf-8-sig")
-        except (UnicodeDecodeError, OSError):
-            errors.append({"path": key, "error": "topic_decode_failed"})
-            continue
-        try:
-            _meta, body = frontmatter.parse(text)
-        except frontmatter.FrontmatterError:
-            errors.append({"path": key, "error": "frontmatter_parse_failed"})
-            continue
-        body_html, toc = _render_body_and_toc(
-            body, topic_keys, alias_index, slug_map, query_keys, "../../"
-        )
-        page = _article_page(
-            str(entry.get("title", key)), generated_at,
-            _render_toc(toc), body_html, _render_infobox(entry, "../../"),
-            _render_provenance(entry, "../../"),
-        )
-        config.atomic_write_text(site_dir / slug_map[key], page)
-        pages_written += 1
+    # Hold the verified site directory for the whole publication. On POSIX every write
+    # and prune below is descriptor-relative, so swapping wiki/site for a link cannot
+    # redirect publication or deletion; on Windows the held handle stops the directory
+    # from being renamed or removed while we publish into it.
+    with boundary.fs_for(site_dir).open_directory(site_dir) as out:
+        # Invalidate before the first publication: errors or process interruption
+        # must not leave a partial site behind an older successful run's stamp.
+        with suppress(FileNotFoundError):
+            out.unlink("_complete")
+        for key, entry in list(topics.items()) + list(queries.items()):
+            page_path = config.topics_dir(vault) / key if entry.get("kind") == "topic" else wiki_root / key
+            if not boundary.exists(page_path):
+                errors.append({"path": key, "error": "topic_missing"})
+                continue
+            try:
+                text = boundary.read_text(page_path, encoding="utf-8-sig")
+            except boundary.BoundaryError:
+                errors.append({"path": key, "error": "topic_outside_vault"})
+                continue
+            except (UnicodeDecodeError, OSError):
+                errors.append({"path": key, "error": "topic_decode_failed"})
+                continue
+            try:
+                _meta, body = frontmatter.parse(text)
+            except frontmatter.FrontmatterError:
+                errors.append({"path": key, "error": "frontmatter_parse_failed"})
+                continue
+            body_html, toc = _render_body_and_toc(
+                body, topic_keys, alias_index, slug_map, query_keys, "../../"
+            )
+            page = _article_page(
+                str(entry.get("title", key)), generated_at,
+                _render_toc(toc), body_html, _render_infobox(entry, "../../"),
+                _render_provenance(entry, "../../"),
+            )
+            out.write_atomic(slug_map[key], page)
+            pages_written += 1
 
-    # index.html is written LAST so status.site_stale stays correct.
-    config.atomic_write_text(site_dir / "index.html", _index_page(data, type_accent, generated_at, slug_map))
+        # index.html is written LAST so status.site_stale stays correct.
+        out.write_atomic(
+            "index.html", _index_page(data, type_accent, generated_at, slug_map)
+        )
 
-    # Prune orphaned HTML files not in current output set
-    current_files = {"index.html"} | set(slug_map.values())
-    for html_file in site_dir.glob("*.html"):
-        if html_file.name not in current_files:
-            html_file.unlink()
+        # Prune orphaned HTML files not in current output set. Unlinking happens through
+        # the same verified directory, so a link planted as an HTML name is refused
+        # rather than followed to whatever it points at.
+        current_files = {"index.html"} | set(slug_map.values())
+        for html_file in out.names(".html"):
+            if html_file not in current_files:
+                out.unlink(html_file)
+
+        # Alias resolution warnings do not mean a page failed to publish.
+        # Unknown errors remain blocking rather than being silently downgraded.
+        publication_errors = [
+            error for error in errors
+            if error.get("error") not in {"alias_map_invalid", "alias_target_missing", "alias_conflict"}
+        ]
+        if not publication_errors:
+            out.write_atomic("_complete", b"ok")
 
     return {
         "ok": True,
@@ -793,4 +833,5 @@ def generate_site(vault: str | Path) -> dict[str, Any]:
         "out": str(site_dir),
         "degraded": not MARKDOWN_AVAILABLE,
         "errors": errors,
+        "complete": not publication_errors,
     }

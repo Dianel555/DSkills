@@ -6,7 +6,7 @@ import contextlib
 from pathlib import Path
 from typing import Any
 
-from . import cache, config, links, scanner, wiki_index
+from . import boundary, cache, config, links, scanner, wiki_index
 from .config import nfc as _nfc
 
 
@@ -24,6 +24,7 @@ def compute_worklist(vault: str | Path, data: dict[str, Any] | None = None) -> d
     Raises:
         ValueError: if wiki not initialized
     """
+    boundary.bind(vault)
     vault = Path(vault)
     wiki_root = config.wiki_root(vault)
 

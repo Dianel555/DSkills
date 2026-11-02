@@ -3,7 +3,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from agent_wiki import cache, scanner
+from agent_wiki import boundary, cache, scanner
 
 
 def write(path: Path, content: str) -> None:
@@ -48,6 +48,7 @@ def test_signature_miss_triggers_hash(tmp_path):
 
 def test_legacy_cache_without_mtime_ns_triggers_hash(tmp_path):
     """Legacy cache entry without mtime_ns should trigger hash once."""
+    boundary.bind(tmp_path)
     write(tmp_path / "file.md", "content")
 
     data = cache.empty_schema()
@@ -68,6 +69,7 @@ def test_legacy_cache_without_mtime_ns_triggers_hash(tmp_path):
 
 def test_touched_but_identical_content(tmp_path):
     """File with new mtime but same content should be unchanged."""
+    boundary.bind(tmp_path)
     write(tmp_path / "file.md", "content")
     file_path = tmp_path / "file.md"
     sha = cache.sha256_file(file_path)

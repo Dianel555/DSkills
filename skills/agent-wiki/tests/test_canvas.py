@@ -1,13 +1,12 @@
 import json
 import math
-import os
 import subprocess
 import sys
 from itertools import combinations
 from pathlib import Path
 
 import pytest
-from agent_wiki import canvas, config, frontmatter
+from agent_wiki import boundary, canvas, config, frontmatter
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agent_wiki_cli.py"
@@ -141,6 +140,7 @@ def test_canvas_byte_identical():
 # --- atomic write ----------------------------------------------------------
 
 def test_write_canvas_atomic_no_tmp(tmp_path):
+    boundary.bind(tmp_path)
     path = tmp_path / "g" / "T.canvas"
     canvas.write_canvas(path, {"nodes": [], "edges": []})
     assert path.exists()
@@ -148,13 +148,14 @@ def test_write_canvas_atomic_no_tmp(tmp_path):
 
 
 def test_write_canvas_preserves_old_bytes_on_failure(tmp_path, monkeypatch):
+    boundary.bind(tmp_path)
     path = tmp_path / "T.canvas"
     path.write_text("OLD", encoding="utf-8")
 
-    def boom(src, dst):
+    def boom(dir_fd, tmp_name, destination, fd):
         raise PermissionError("locked")
 
-    monkeypatch.setattr(os, "replace", boom)
+    monkeypatch.setattr(boundary, "_publish_tmp", boom)
     with pytest.raises(canvas.CanvasWriteError):
         canvas.write_canvas(path, {"nodes": [], "edges": []})
     assert path.read_text(encoding="utf-8") == "OLD"

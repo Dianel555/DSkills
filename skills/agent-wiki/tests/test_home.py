@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from agent_wiki import config, frontmatter, home
+from agent_wiki import boundary, config, frontmatter, home
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agent_wiki_cli.py"
@@ -174,13 +174,14 @@ def test_gen_home_requires_init(tmp_path):
 
 
 def test_atomic_write_text_cleans_tmp_and_preserves_old_on_failure(tmp_path, monkeypatch):
+    boundary.bind(tmp_path)
     path = tmp_path / "index.md"
     path.write_text("OLD", encoding="utf-8")
 
-    def boom(src, dst):
+    def boom(dir_fd, tmp_name, destination, fd):
         raise PermissionError("locked")
 
-    monkeypatch.setattr(os, "replace", boom)
+    monkeypatch.setattr(boundary, "_publish_tmp", boom)
     with pytest.raises(OSError):
         config.atomic_write_text(path, "NEW")
     assert path.read_text(encoding="utf-8") == "OLD"

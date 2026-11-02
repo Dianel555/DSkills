@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import config, frontmatter
+from . import boundary, config, frontmatter
 from .config import nfc as _nfc
 
 _AUTHOR_RE = re.compile(r"作者[:：]\s*(.+)")
@@ -22,7 +22,13 @@ _TAG_RE = re.compile(r"<[^>]+>")
 
 def _root_notes(vault: Path) -> dict[str, Path]:
     # Root-level source notes only (wiki/ and attachments/ are subdirectories).
-    return {_nfc(path.name): path for path in vault.glob("*.md")}
+    # Links are not source notes: their target is outside the vault.
+    boundary.bind(vault)
+    try:
+        entries = boundary.entries(vault, ".md")
+    except boundary.BoundaryError:
+        return {}
+    return {_nfc(entry.name): entry.path for entry in entries}
 
 
 def _resolve(src: str, root_by_norm: dict[str, Path]) -> Path | None:
@@ -41,7 +47,7 @@ def _resolve(src: str, root_by_norm: dict[str, Path]) -> Path | None:
 
 
 def _authors_row(path: Path) -> str:
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = boundary.read_text(path, encoding="utf-8", errors="replace")
     for line in text.splitlines():
         if "作者" in line and "|" in line:
             plain = _TAG_RE.sub("", line).replace("|", " ").strip()
@@ -53,11 +59,22 @@ def _authors_row(path: Path) -> str:
 
 def extract(vault: str | Path) -> dict[str, list[dict[str, Any]]]:
     """Per-topic raw author strings resolved from each source note."""
+    boundary.bind(vault)
     vault = Path(vault)
+    boundary.bind(vault)
     root_by_norm = _root_notes(vault)
     out: dict[str, list[dict[str, Any]]] = {}
-    for topic in sorted(config.topics_dir(vault).glob("*.md")):
-        meta, _ = frontmatter.parse(topic.read_text(encoding="utf-8-sig"))
+    try:
+        topics = boundary.entries(config.topics_dir(vault), ".md")
+    except boundary.BoundaryError:
+        # The topics directory is a link: there is nothing inside the vault to extract.
+        return {}
+    for entry in topics:
+        try:
+            text = entry.read_text(encoding="utf-8-sig")
+        except (UnicodeDecodeError, OSError):
+            continue
+        meta, _ = frontmatter.parse(text)
         entries: list[dict[str, Any]] = []
         for src in meta.get("sources") or []:
             resolved = _resolve(str(src), root_by_norm)
@@ -66,7 +83,7 @@ def extract(vault: str | Path) -> dict[str, list[dict[str, Any]]]:
                 "file": resolved.name[:40] if resolved else None,
                 "authors": _authors_row(resolved) if resolved else "",
             })
-        out[_nfc(topic.name)] = entries
+        out[_nfc(entry.name)] = entries
     return out
 
 

@@ -1,8 +1,7 @@
 import json
-import os
 
 import pytest
-from agent_wiki import cache
+from agent_wiki import boundary, cache
 
 
 def test_load_missing_returns_empty_schema(tmp_path):
@@ -34,10 +33,10 @@ def test_save_replace_failure_leaves_existing_cache(tmp_path, monkeypatch):
     target = wiki / ".wiki-cache.json"
     target.write_text('{"version": 1, "sources": {}}', encoding="utf-8")
 
-    def fail_replace(src, dst):
+    def fail_replace(dir_fd, tmp_name, destination, fd):
         raise PermissionError("locked")
 
-    monkeypatch.setattr(os, "replace", fail_replace)
+    monkeypatch.setattr(boundary, "_publish_tmp", fail_replace)
 
     with pytest.raises(cache.CacheWriteError):
         cache.save(tmp_path, {"version": 1, "sources": {"a.md": {}}})
@@ -46,6 +45,7 @@ def test_save_replace_failure_leaves_existing_cache(tmp_path, monkeypatch):
 
 
 def test_sha256_file_streams_content(tmp_path):
+    boundary.bind(tmp_path)
     path = tmp_path / "empty.md"
     path.write_bytes(b"")
 
@@ -53,6 +53,7 @@ def test_sha256_file_streams_content(tmp_path):
 
 
 def test_stat_signature_and_remove(tmp_path):
+    boundary.bind(tmp_path)
     path = tmp_path / "note.md"
     path.write_text("hello", encoding="utf-8")
     mtime, size = cache.stat_signature(path)

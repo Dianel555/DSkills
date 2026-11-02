@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import config, scanner, wiki_index
+from . import boundary, config, scanner, wiki_index
 from .config import nfc as _nfc
 
 
@@ -24,6 +24,7 @@ def compute_coverage(vault: str | Path, data: dict[str, Any] | None = None) -> d
     - gaps: list[dict] (uncovered sources, NFC-sorted by path)
     - coverage_ratio: float ∈ [0, 1] (1.0 when scan set empty)
     """
+    boundary.bind(vault)
     vault = Path(vault)
 
     # Require initialized wiki

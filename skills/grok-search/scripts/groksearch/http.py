@@ -21,6 +21,7 @@ def _is_retryable_exception(exc) -> bool:
 
 class _WaitWithRetryAfter(wait_base):
     def __init__(self, multiplier: float, max_wait: int):
+        self._max_wait = max_wait
         self._base_wait = wait_random_exponential(multiplier=multiplier, max=max_wait)
 
     def __call__(self, retry_state):
@@ -29,7 +30,7 @@ class _WaitWithRetryAfter(wait_base):
             if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429:
                 retry_after = self._parse_retry_after(exc.response)
                 if retry_after is not None:
-                    return retry_after
+                    return min(self._max_wait, retry_after)
         return self._base_wait(retry_state)
 
     def _parse_retry_after(self, response: httpx.Response) -> float | None:
@@ -38,7 +39,10 @@ class _WaitWithRetryAfter(wait_base):
             return None
         header = header.strip()
         if header.isdigit():
-            return float(header)
+            try:
+                return float(header)
+            except (ValueError, OverflowError):
+                return float(self._max_wait)
         try:
             retry_dt = parsedate_to_datetime(header)
             if retry_dt.tzinfo is None:

@@ -12,9 +12,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from . import boundary
+
 
 def obsidian_config_dir(vault: str | Path) -> Path | None:
     """The ``.obsidian`` directory at or above ``vault``; None when none exists."""
+    boundary.bind(vault)
     current = Path(vault).expanduser().resolve()
     while True:
         candidate = current / ".obsidian"
@@ -34,6 +37,7 @@ def _read_json(path: Path) -> Any:
 
 def dataview_installed(vault: str | Path) -> bool:
     """True when ``dataview`` appears in ``.obsidian/community-plugins.json``."""
+    boundary.bind(vault)
     cfg = obsidian_config_dir(vault)
     if cfg is None:
         return False
@@ -44,6 +48,7 @@ def dataview_installed(vault: str | Path) -> bool:
 def dataviewjs_enabled(vault: str | Path) -> bool:
     """True when Dataview's ``enableDataviewJs`` setting is on (required for the
     ``dataviewjs`` card block to execute)."""
+    boundary.bind(vault)
     cfg = obsidian_config_dir(vault)
     if cfg is None:
         return False
@@ -54,4 +59,5 @@ def dataviewjs_enabled(vault: str | Path) -> bool:
 def cards_available(vault: str | Path) -> bool:
     """True only when Dataview is installed *and* its JavaScript queries are on —
     both are needed to render the dynamic card grid."""
+    boundary.bind(vault)
     return dataview_installed(vault) and dataviewjs_enabled(vault)

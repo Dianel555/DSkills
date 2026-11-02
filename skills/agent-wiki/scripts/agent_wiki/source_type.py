@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from . import config, frontmatter
+from . import boundary, config, frontmatter
 from .config import nfc as _nfc
 
 _EXTENSION_TYPES = {
@@ -62,14 +62,16 @@ def backfill(vault: str | Path) -> dict[str, Any]:
     """Rewrite each topic's ``source_type`` frontmatter to its ``sources[]``
     format, in place. Topics already matching, or with no sources to derive a
     format from, are left untouched (no mtime churn). Returns changed/skipped/errors."""
+    boundary.bind(vault)
     topics_dir = config.topics_dir(vault)
     changed: list[dict[str, Any]] = []
     skipped = 0
     errors: list[dict[str, Any]] = []
-    for path in sorted(topics_dir.glob("*.md")):
-        rel = config.normalize_relpath(path.name)
+    for entry in sorted(boundary.entries(topics_dir, suffix=".md"), key=lambda e: _nfc(e.name)):
+        path = entry.path
+        rel = config.normalize_relpath(entry.name)
         try:
-            raw = path.read_bytes()
+            raw = entry.read_bytes()
             has_bom = raw.startswith(b"\xef\xbb\xbf")
             meta, body = frontmatter.parse(raw.decode("utf-8-sig"))
         except (UnicodeDecodeError, frontmatter.FrontmatterError):
@@ -85,6 +87,6 @@ def backfill(vault: str | Path) -> dict[str, Any]:
         text = frontmatter.dump(meta, body)
         if has_bom:
             text = "﻿" + text
-        config.atomic_write_text(path, text.encode("utf-8"))
+        boundary.write_text(path, text.encode("utf-8"))
         changed.append({"path": rel, "source_type": derived})
     return {"changed": changed, "skipped": skipped, "errors": errors}

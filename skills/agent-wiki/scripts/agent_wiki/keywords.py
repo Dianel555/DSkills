@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import config, wiki_index
+from . import boundary, config, wiki_index
 
 
 def compute_keywords(vault: str | Any) -> dict[str, Any]:
@@ -24,6 +24,7 @@ def compute_keywords(vault: str | Any) -> dict[str, Any]:
         ``keywords`` is frequency-descending (NFC tiebreak), so the most common
         terms the Agent should base categories on come first.
     """
+    boundary.bind(vault)
     if not config.wiki_root(vault).exists():
         raise ValueError("wiki_not_initialized")
 

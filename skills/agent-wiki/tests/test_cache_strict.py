@@ -1,10 +1,10 @@
-import os
 
 import pytest
-from agent_wiki import cache
+from agent_wiki import boundary, cache
 
 
 def test_save_raises_cache_conflict_when_expected_signature_changes(tmp_path):
+    boundary.bind(tmp_path)
     wiki = tmp_path / "wiki"
     wiki.mkdir()
     target = wiki / ".wiki-cache.json"
@@ -32,16 +32,17 @@ def test_save_raises_cache_not_writable_before_tmp_write(tmp_path, monkeypatch):
 
 
 def test_save_replace_failure_is_distinct_from_conflict(tmp_path, monkeypatch):
+    boundary.bind(tmp_path)
     wiki = tmp_path / "wiki"
     wiki.mkdir()
     target = wiki / ".wiki-cache.json"
     target.write_text('{"version": 1, "sources": {}}', encoding="utf-8")
     expected = cache.file_signature(target)
 
-    def fail_replace(src, dst):
+    def fail_replace(dir_fd, tmp_name, destination, fd):
         raise PermissionError("locked")
 
-    monkeypatch.setattr(os, "replace", fail_replace)
+    monkeypatch.setattr(boundary, "_publish_tmp", fail_replace)
 
     with pytest.raises(cache.CacheReplaceError):
         cache.save(tmp_path, {"version": 1, "sources": {"a.md": {}}}, expected_signature=expected)
