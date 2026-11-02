@@ -39,8 +39,10 @@ jobs:
           pip install -e ".[dev,site]"
       - name: Ruff
         run: python -m ruff check scripts/ tests/
-      - name: Mypy
-        run: python -m mypy --strict scripts/agent_wiki_cli.py scripts/agent_wiki/
+      - name: Mypy (Linux and Windows targets)
+        run: |
+          python -m mypy --strict --platform linux scripts/agent_wiki_cli.py scripts/agent_wiki/
+          python -m mypy --strict --platform win32 scripts/agent_wiki_cli.py scripts/agent_wiki/
       - name: Pytest
         run: python -m pytest tests/ -q
 

@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-
 from groksearch.http import _WaitWithRetryAfter
 
 

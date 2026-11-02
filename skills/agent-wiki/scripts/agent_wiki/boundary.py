@@ -59,6 +59,7 @@ import errno
 import os
 import secrets
 import stat as stat_module
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import TracebackType
@@ -113,7 +114,7 @@ def _validate_name(name: str) -> str:
         raise BoundaryError(f"refusing file name containing a path separator: {name!r}")
     if "\x00" in name:
         raise BoundaryError(f"refusing file name containing a null byte: {name!r}")
-    if os.name == "nt" and ":" in name:
+    if sys.platform == "win32" and ":" in name:
         # A colon introduces a drive qualifier or an alternate data stream, neither of
         # which is a name this boundary may create.
         raise BoundaryError(f"refusing file name containing a colon: {name!r}")
@@ -138,7 +139,7 @@ class BoundaryError(OSError):
         self.is_link = is_link
 
 
-if os.name == "nt":  # pragma: no cover - loaded only on Windows
+if sys.platform == "win32":  # pragma: no cover - loaded only on Windows
     import msvcrt
     from ctypes import wintypes
 
@@ -262,10 +263,11 @@ def _publish_tmp(dir_fd: int, tmp_name: str, destination: Path, fd: int) -> None
     Windows renames the very object it created (a handle-based rename needs DELETE
     access, which ``os.open`` does not request).
     """
-    if os.name == "posix":
+    if sys.platform != "win32":
         os.replace(tmp_name, destination.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
         return
-    _rename_by_handle(msvcrt.get_osfhandle(fd), str(destination))
+    else:
+        _rename_by_handle(msvcrt.get_osfhandle(fd), str(destination))
 
 
 def _move_noreplace_posix(src_fd: int, src: str, dst_fd: int, dst: str) -> None:
@@ -295,6 +297,8 @@ def _is_reparse_entry(entry: os.DirEntry[str]) -> bool:
     """True for symlinks, junctions and other reparse points on either platform."""
     if entry.is_symlink():
         return True
+    if sys.platform != "win32":
+        return False
     try:
         attrs = entry.stat(follow_symlinks=False).st_file_attributes
     except (OSError, AttributeError):
@@ -343,7 +347,7 @@ class DirectoryHandle:
         self._fs = fs
         self.path = path
         self._fd = fd
-        if os.name == "nt":
+        if sys.platform == "win32":
             # Pinning the resolved directory does not pin intermediate junction
             # aliases. Never reuse the caller's alias for a mutation after opening.
             try:
@@ -357,7 +361,7 @@ class DirectoryHandle:
 
     def names(self, suffix: str | None = None) -> list[str]:
         """Names of real (non-link) entries directly inside the directory."""
-        if os.name == "posix":
+        if sys.platform != "win32":
             found: list[str] = []
             with os.scandir(self._fd) as scan:
                 for item in scan:
@@ -402,35 +406,36 @@ class DirectoryHandle:
         _validate_name(new_name)
         if self._fs.root != destination._fs.root:
             raise BoundaryError("refusing a move across vault boundaries")
-        if os.name == "posix":
+        if sys.platform != "win32":
             st = os.stat(name, dir_fd=self._fd, follow_symlinks=False)
             if not stat_module.S_ISREG(st.st_mode):
                 raise BoundaryError(f"refusing non-file {self.path / name}", is_link=True)
             _move_noreplace_posix(self._fd, name, destination._fd, new_name)
             return
-        path = self.path / name
-        handle = _kernel32.CreateFileW(
-            str(path),
-            _GENERIC_DELETE | _FILE_READ_ATTRIBUTES | _SYNCHRONIZE,
-            _FILE_SHARE_READ,
-            None,
-            _OPEN_EXISTING,
-            _FILE_FLAG_OPEN_REPARSE_POINT | _FILE_FLAG_BACKUP_SEMANTICS,
-            None,
-        )
-        if not handle or handle == _INVALID_HANDLE:
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
-            info = _ByHandleFileInformation()
-            if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+        else:
+            path = self.path / name
+            handle = _kernel32.CreateFileW(
+                str(path),
+                _GENERIC_DELETE | _FILE_READ_ATTRIBUTES | _SYNCHRONIZE,
+                _FILE_SHARE_READ,
+                None,
+                _OPEN_EXISTING,
+                _FILE_FLAG_OPEN_REPARSE_POINT | _FILE_FLAG_BACKUP_SEMANTICS,
+                None,
+            )
+            if not handle or handle == _INVALID_HANDLE:
                 raise ctypes.WinError(ctypes.get_last_error())
-            if info.dwFileAttributes & (_FILE_ATTRIBUTE_REPARSE_POINT | _FILE_ATTRIBUTE_DIRECTORY):
-                raise BoundaryError(f"refusing non-file {path}", is_link=True)
-            if not self._fs._contains(_final_path(handle)):
-                raise BoundaryError(f"{path} resolves outside the vault")
-            _rename_by_handle(handle, str(destination.path / new_name), replace=False)
-        finally:
-            _kernel32.CloseHandle(handle)
+            try:
+                info = _ByHandleFileInformation()
+                if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if info.dwFileAttributes & (_FILE_ATTRIBUTE_REPARSE_POINT | _FILE_ATTRIBUTE_DIRECTORY):
+                    raise BoundaryError(f"refusing non-file {path}", is_link=True)
+                if not self._fs._contains(_final_path(handle)):
+                    raise BoundaryError(f"{path} resolves outside the vault")
+                _rename_by_handle(handle, str(destination.path / new_name), replace=False)
+            finally:
+                _kernel32.CloseHandle(handle)
 
     def write_atomic(self, name: str, data: str | bytes) -> None:
         """Publish ``name`` inside this directory via an exclusive temporary file.
@@ -447,7 +452,7 @@ class DirectoryHandle:
         """
         payload = data if isinstance(data, bytes) else data.encode("utf-8")
         _validate_name(name)
-        if os.name == "posix":
+        if sys.platform != "win32":
             for _ in range(_TEMP_ATTEMPTS):
                 tmp_name = _temp_name(name)
                 try:
@@ -469,53 +474,54 @@ class DirectoryHandle:
                     raise
                 return
             raise BoundaryError(f"cannot create a temporary file beside {name}")
-        # Windows: the held handle pins the directory, so the temporary file is
-        # created inside the directory that was verified, and publishing renames it by
-        # handle. Renaming a handle requires DELETE access on it, so the temporary file
-        # is opened directly rather than through ``os.open`` (which would ask for
-        # GENERIC_WRITE only and fail with access denied at publish time).
-        destination = self.path / name
-        self._fs._refuse_reparse(destination)
-        for _ in range(_TEMP_ATTEMPTS):
-            tmp_path = self.path / _temp_name(name)
-            handle = _kernel32.CreateFileW(
-                str(tmp_path),
-                _GENERIC_WRITE | _GENERIC_DELETE | _SYNCHRONIZE,
-                _FILE_SHARE_ALL,
-                None,
-                _CREATE_NEW,
-                _FILE_ATTRIBUTE_NORMAL,
-                None,
-            )
-            if not handle or handle == _INVALID_HANDLE:
-                err = ctypes.get_last_error()
-                if err == _ERROR_ALREADY_EXISTS:
-                    continue
-                if err in (_ERROR_FILE_NOT_FOUND, _ERROR_PATH_NOT_FOUND):
-                    raise BoundaryError(f"missing {tmp_path}", is_link=True) from None
-                raise BoundaryError(f"cannot create {tmp_path}: WinError {err}")
-            fd = -1
-            try:
-                fd = msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
-                view = memoryview(payload)
-                while view:
-                    view = view[os.write(fd, view) :]
-                # Rename the very object we created: no path is resolved again, so a
-                # destination swapped in the meantime is replaced, not written through.
-                _publish_tmp(-1, tmp_path.name, destination, fd)
-            except BaseException:
-                if fd >= 0:
+        else:
+            # Windows: the held handle pins the directory, so the temporary file is
+            # created inside the directory that was verified, and publishing renames it by
+            # handle. Renaming a handle requires DELETE access on it, so the temporary file
+            # is opened directly rather than through ``os.open`` (which would ask for
+            # GENERIC_WRITE only and fail with access denied at publish time).
+            destination = self.path / name
+            self._fs._refuse_reparse(destination)
+            for _ in range(_TEMP_ATTEMPTS):
+                tmp_path = self.path / _temp_name(name)
+                handle = _kernel32.CreateFileW(
+                    str(tmp_path),
+                    _GENERIC_WRITE | _GENERIC_DELETE | _SYNCHRONIZE,
+                    _FILE_SHARE_ALL,
+                    None,
+                    _CREATE_NEW,
+                    _FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )
+                if not handle or handle == _INVALID_HANDLE:
+                    err = ctypes.get_last_error()
+                    if err == _ERROR_ALREADY_EXISTS:
+                        continue
+                    if err in (_ERROR_FILE_NOT_FOUND, _ERROR_PATH_NOT_FOUND):
+                        raise BoundaryError(f"missing {tmp_path}", is_link=True) from None
+                    raise BoundaryError(f"cannot create {tmp_path}: WinError {err}")
+                fd = -1
+                try:
+                    fd = msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
+                    view = memoryview(payload)
+                    while view:
+                        view = view[os.write(fd, view) :]
+                    # Rename the very object we created: no path is resolved again, so a
+                    # destination swapped in the meantime is replaced, not written through.
+                    _publish_tmp(-1, tmp_path.name, destination, fd)
+                except BaseException:
+                    if fd >= 0:
+                        with SuppressOSError():
+                            os.close(fd)
+                    else:
+                        _kernel32.CloseHandle(handle)
                     with SuppressOSError():
-                        os.close(fd)
-                else:
-                    _kernel32.CloseHandle(handle)
-                with SuppressOSError():
-                    os.unlink(tmp_path)
-                raise
-            if fd >= 0:
-                os.close(fd)
-            return
-        raise BoundaryError(f"cannot create a temporary file beside {name}")
+                        os.unlink(tmp_path)
+                    raise
+                if fd >= 0:
+                    os.close(fd)
+                return
+            raise BoundaryError(f"cannot create a temporary file beside {name}")
 
     def append_atomic(self, name: str, data: str | bytes) -> None:
         """Append to ``name`` inside this directory without ever following a link.
@@ -529,7 +535,7 @@ class DirectoryHandle:
         """
         payload = data if isinstance(data, bytes) else data.encode("utf-8")
         _validate_name(name)
-        if os.name == "posix":
+        if sys.platform != "win32":
             # O_NOFOLLOW makes the open itself refuse a link leaf: appending through
             # one would write the caller's data into a file outside the vault.
             flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | _O_NOFOLLOW | _O_CLOEXEC
@@ -565,7 +571,7 @@ class DirectoryHandle:
 
     def unlink(self, name: str) -> None:
         _validate_name(name)
-        if os.name == "posix":
+        if sys.platform != "win32":
             os.unlink(name, dir_fd=self._fd)
             return
         self._fs._refuse_reparse(self.path / name)
@@ -607,7 +613,7 @@ class VaultFS:
         self.root = Path(root).expanduser().resolve()
         self._dir_fd = -1
         self._win_prefix = ""
-        if os.name == "posix":
+        if sys.platform != "win32":
             self._dir_fd = os.open(self.root, os.O_RDONLY | _O_DIRECTORY | _O_CLOEXEC)
         else:
             self._win_prefix = _normalize(str(self.root))
@@ -656,7 +662,7 @@ class VaultFS:
         so later renames/link swaps of the root *name* cannot redirect them. On Windows
         there is no storable anchor descriptor, so callers get a fresh validated open.
         """
-        if os.name == "nt":
+        if sys.platform == "win32":
             handle, _links = self._open_windows((), write=False, want_directory=True)
             return handle
         return os.dup(self._dir_fd)
@@ -741,63 +747,67 @@ class VaultFS:
         create: bool | None = None,
     ) -> tuple[int, int]:
         """Open and fully verify one object, returning its raw Windows handle."""
-        if create is None:
-            create = write
-        path = str(self.root.joinpath(*parts))
-        # Listing a directory needs FILE_LIST_DIRECTORY; a leaf needs read or write.
-        access = (
-            _GENERIC_READ | _FILE_LIST_DIRECTORY
-            if want_directory
-            else _GENERIC_WRITE if write else _GENERIC_READ
-        )
-        disposition = _CREATE_NEW if create else _OPEN_EXISTING
-        # A held output directory is opened without FILE_SHARE_DELETE so Windows refuses
-        # to rename or remove it while we work inside it.
-        share = _FILE_SHARE_ALL if share_delete else (_FILE_SHARE_READ | _FILE_SHARE_WRITE)
-        flags = _FILE_FLAG_BACKUP_SEMANTICS | _FILE_FLAG_OPEN_REPARSE_POINT
-        handle = _kernel32.CreateFileW(path, access, share, None, disposition, flags, None)
-        if not handle or handle == _INVALID_HANDLE:
-            err = ctypes.get_last_error()
-            if err in (_ERROR_FILE_NOT_FOUND, _ERROR_PATH_NOT_FOUND):
-                raise FileNotFoundError(err, f"missing {path}")
-            raise BoundaryError(f"refusing {path}: WinError {err}")
-        try:
-            info = _ByHandleFileInformation()
-            if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
-                raise BoundaryError(
-                    f"cannot stat handle for {path}: WinError {ctypes.get_last_error()}"
-                )
-            if info.dwFileAttributes & _FILE_ATTRIBUTE_REPARSE_POINT:
-                # The opened object is itself a link (junction, symlink, mount point).
-                raise BoundaryError(f"refusing reparse point {path}", is_link=True)
-            final = _final_path(handle)
-            if not self._contains(final):
-                # An intermediate component was a link: the handle names the real target.
-                raise BoundaryError(f"{path} resolves outside the vault to {final}")
-            if want_directory is True and not (info.dwFileAttributes & _FILE_ATTRIBUTE_DIRECTORY):
-                raise BoundaryError(f"{path} is not a directory")
-            if want_directory is False and (info.dwFileAttributes & _FILE_ATTRIBUTE_DIRECTORY):
-                raise BoundaryError(f"{path} is a directory, not a file")
-            return handle, info.nNumberOfLinks
-        except BaseException:
-            _kernel32.CloseHandle(handle)
-            raise
+        if sys.platform == "win32":
+            if create is None:
+                create = write
+            path = str(self.root.joinpath(*parts))
+            # Listing a directory needs FILE_LIST_DIRECTORY; a leaf needs read or write.
+            access = (
+                _GENERIC_READ | _FILE_LIST_DIRECTORY
+                if want_directory
+                else _GENERIC_WRITE if write else _GENERIC_READ
+            )
+            disposition = _CREATE_NEW if create else _OPEN_EXISTING
+            # A held output directory is opened without FILE_SHARE_DELETE so Windows refuses
+            # to rename or remove it while we work inside it.
+            share = _FILE_SHARE_ALL if share_delete else (_FILE_SHARE_READ | _FILE_SHARE_WRITE)
+            flags = _FILE_FLAG_BACKUP_SEMANTICS | _FILE_FLAG_OPEN_REPARSE_POINT
+            handle = _kernel32.CreateFileW(path, access, share, None, disposition, flags, None)
+            if not handle or handle == _INVALID_HANDLE:
+                err = ctypes.get_last_error()
+                if err in (_ERROR_FILE_NOT_FOUND, _ERROR_PATH_NOT_FOUND):
+                    raise FileNotFoundError(err, f"missing {path}")
+                raise BoundaryError(f"refusing {path}: WinError {err}")
+            try:
+                info = _ByHandleFileInformation()
+                if not _kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+                    raise BoundaryError(
+                        f"cannot stat handle for {path}: WinError {ctypes.get_last_error()}"
+                    )
+                if info.dwFileAttributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+                    # The opened object is itself a link (junction, symlink, mount point).
+                    raise BoundaryError(f"refusing reparse point {path}", is_link=True)
+                final = _final_path(handle)
+                if not self._contains(final):
+                    # An intermediate component was a link: the handle names the real target.
+                    raise BoundaryError(f"{path} resolves outside the vault to {final}")
+                if want_directory is True and not (info.dwFileAttributes & _FILE_ATTRIBUTE_DIRECTORY):
+                    raise BoundaryError(f"{path} is not a directory")
+                if want_directory is False and (info.dwFileAttributes & _FILE_ATTRIBUTE_DIRECTORY):
+                    raise BoundaryError(f"{path} is a directory, not a file")
+                return handle, info.nNumberOfLinks
+            except BaseException:
+                _kernel32.CloseHandle(handle)
+                raise
+        raise BoundaryError(errno.ENOTSUP, "Windows handles are unavailable on this platform")
 
     def _adopt_windows(self, handle: int, path: str, write: bool, append: bool = False) -> int:
         """Turn a verified handle into a file descriptor for reads and writes."""
-        flags = (os.O_WRONLY if write else os.O_RDONLY) | os.O_BINARY
-        if append:
-            # CreateFileW was asked for write access only, so without this the first
-            # write would land at offset 0 and overwrite the existing content.
-            flags |= os.O_APPEND
-        try:
-            fd = msvcrt.open_osfhandle(handle, flags)
-            if fd < 0:
-                raise BoundaryError(f"cannot adopt handle for {path}")
-            return fd
-        except BaseException:
-            _kernel32.CloseHandle(handle)
-            raise
+        if sys.platform == "win32":
+            flags = (os.O_WRONLY if write else os.O_RDONLY) | os.O_BINARY
+            if append:
+                # CreateFileW was asked for write access only, so without this the first
+                # write would land at offset 0 and overwrite the existing content.
+                flags |= os.O_APPEND
+            try:
+                fd = msvcrt.open_osfhandle(handle, flags)
+                if fd < 0:
+                    raise BoundaryError(f"cannot adopt handle for {path}")
+                return fd
+            except BaseException:
+                _kernel32.CloseHandle(handle)
+                raise
+        raise BoundaryError(errno.ENOTSUP, "Windows handles are unavailable on this platform")
 
     def _contains(self, final_path: str) -> bool:
         normalized = _normalize(final_path)
@@ -809,7 +819,7 @@ class VaultFS:
         An inspection failure other than "missing" is fail-closed: refusing to publish
         is recoverable, silently publishing over an uninspectable link is not.
         """
-        if os.name != "nt":
+        if sys.platform != "win32":
             return
         try:
             st = os.lstat(path)
@@ -830,7 +840,7 @@ class VaultFS:
         ``want_directory=None`` accepts either kind, which is what metadata lookups need;
         callers that read bytes still require a regular file and check afterwards.
         """
-        if os.name == "posix":
+        if sys.platform != "win32":
             return self._open_posix(parts, write=write, want_directory=want_directory)
         handle, _links = self._open_windows(parts, write=write, want_directory=want_directory)
         path = str(self.root.joinpath(*parts))
@@ -901,7 +911,7 @@ class VaultFS:
         candidate = Path(os.path.normpath(candidate.expanduser()))
         if self._is_root(candidate):
             # The authorized root itself: duplicate the authorized descriptor.
-            if os.name == "posix":
+            if sys.platform != "win32":
                 return DirectoryHandle(self, self.root, self._dup_root_fd())
             handle, _links = self._open_windows(
                 (), write=False, want_directory=True, share_delete=False
@@ -910,7 +920,7 @@ class VaultFS:
                 self, self.root, self._adopt_windows(handle, str(self.root), write=False)
             )
         parts = self.rel_parts(path)
-        if os.name == "posix":
+        if sys.platform != "win32":
             # The descriptor returned is the verified directory itself: nothing is
             # re-resolved from a path afterwards.
             return DirectoryHandle(self, self.root.joinpath(*parts), self._verify_dir_posix(parts))
@@ -928,7 +938,7 @@ class VaultFS:
         parts = self.rel_parts(path)
         if not parts:
             return  # the root itself already exists
-        if os.name == "posix":
+        if sys.platform != "win32":
             parent = self._dir_fd
             for part in parts:
                 fd = self._open_component_posix(parent, part)
@@ -938,41 +948,42 @@ class VaultFS:
             if parent != self._dir_fd:
                 os.close(parent)
             return
-        # Windows has no dir_fd, so the parent is pinned instead: each component is
-        # opened (never following a link) and held without FILE_SHARE_DELETE while the
-        # next one is created. Nothing is created through a path whose parent has not
-        # been verified and pinned, which is what makes creation safe here.
-        held: list[int] = []
-        try:
-            handle, _links = self._open_windows(
-                (), write=False, want_directory=True, share_delete=False
-            )
-            held.append(handle)
-            for part in parts:
-                # Use the pinned parent's canonical name, not an alias that could
-                # be retargeted between its verification and mkdir.
-                parent_path = Path(_native_path(_final_path(held[-1])))
-                target = parent_path / part
-                child_parts = self.rel_parts(target)
-                try:
-                    child, _links = self._open_windows(
-                        child_parts, write=False, want_directory=True, share_delete=False
-                    )
-                except FileNotFoundError:
+        else:
+            # Windows has no dir_fd, so the parent is pinned instead: each component is
+            # opened (never following a link) and held without FILE_SHARE_DELETE while the
+            # next one is created. Nothing is created through a path whose parent has not
+            # been verified and pinned, which is what makes creation safe here.
+            held: list[int] = []
+            try:
+                handle, _links = self._open_windows(
+                    (), write=False, want_directory=True, share_delete=False
+                )
+                held.append(handle)
+                for part in parts:
+                    # Use the pinned parent's canonical name, not an alias that could
+                    # be retargeted between its verification and mkdir.
+                    parent_path = Path(_native_path(_final_path(held[-1])))
+                    target = parent_path / part
+                    child_parts = self.rel_parts(target)
                     try:
-                        os.mkdir(target, 0o755)
-                    except OSError as exc:
-                        raise BoundaryError(
-                            f"refusing to create {target} below {self.root}: {exc.strerror}"
-                        ) from exc
-                    child, _links = self._open_windows(
-                        child_parts, write=False, want_directory=True, share_delete=False
-                    )
-                _kernel32.CloseHandle(held.pop())
-                held.append(child)
-        finally:
-            for handle in held:
-                _kernel32.CloseHandle(handle)
+                        child, _links = self._open_windows(
+                            child_parts, write=False, want_directory=True, share_delete=False
+                        )
+                    except FileNotFoundError:
+                        try:
+                            os.mkdir(target, 0o755)
+                        except OSError as exc:
+                            raise BoundaryError(
+                                f"refusing to create {target} below {self.root}: {exc.strerror}"
+                            ) from exc
+                        child, _links = self._open_windows(
+                            child_parts, write=False, want_directory=True, share_delete=False
+                        )
+                    _kernel32.CloseHandle(held.pop())
+                    held.append(child)
+            finally:
+                for handle in held:
+                    _kernel32.CloseHandle(handle)
 
     def _open_component_posix(self, parent: int, part: str) -> int:
         """Open (creating if needed) one directory component without following links.
@@ -1004,8 +1015,11 @@ class VaultFS:
             ) from exc
 
     def _verify_dir_windows(self, parts: tuple[str, ...]) -> None:
-        handle, _links = self._open_windows(parts, write=False, want_directory=True)
-        _kernel32.CloseHandle(handle)
+        if sys.platform == "win32":
+            handle, _links = self._open_windows(parts, write=False, want_directory=True)
+            _kernel32.CloseHandle(handle)
+        else:
+            raise BoundaryError(errno.ENOTSUP, "Windows handles are unavailable on this platform")
 
     def write_text(self, path: Path, data: str | bytes) -> None:
         """Write through the verified parent directory: exclusive temp + replace."""
@@ -1120,7 +1134,7 @@ def _no_follow_kind(path: Path) -> tuple[bool, bool] | None:
     if stat_module.S_ISLNK(st.st_mode):
         return True, False
     attrs = getattr(st, "st_file_attributes", 0)
-    if os.name == "nt" and attrs & 0x400 and attrs & 0x10:
+    if sys.platform == "win32" and attrs & 0x400 and attrs & 0x10:
         return True, True
     return False, stat_module.S_ISDIR(st.st_mode)
 
@@ -1128,7 +1142,7 @@ def _no_follow_kind(path: Path) -> tuple[bool, bool] | None:
 def _as_not_found(exc: OSError, path: Path) -> OSError:
     if isinstance(exc, FileNotFoundError):
         return exc
-    if exc.errno in (2, 3) or (os.name == "nt" and exc.winerror in (2, 3)):
+    if exc.errno in (2, 3) or (sys.platform == "win32" and exc.winerror in (2, 3)):
         return FileNotFoundError(exc.errno, f"missing {path}")
     # A link where a file or directory was required (ELOOP with O_NOFOLLOW, ENOTDIR when
     # the component is a link) is a boundary refusal, not a missing object.
