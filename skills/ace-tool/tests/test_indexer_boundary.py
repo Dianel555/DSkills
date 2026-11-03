@@ -422,9 +422,15 @@ def test_repeated_client_indexing_does_not_leak_root_descriptors(tmp_path, monke
         with pytest.raises(IndexReadinessError, match="no indexable"):
             client._get_blob_names(str(tmp_path))
     monkeypatch.setattr(Indexer, "get_blob_names", lambda self: ["known"])
-    monkeypatch.setattr(client, "_post_json", lambda *args, **kwargs: {
-        "unknown_blob_names": [], "nonindexed_blob_names": [], "checkpoint_not_found": False,
-    })
+    monkeypatch.setattr(
+        client,
+        "_post_json",
+        lambda *args, **kwargs: {
+            "unknown_blob_names": [],
+            "nonindexed_blob_names": [],
+            "checkpoint_not_found": False,
+        },
+    )
     for _ in range(50):
         assert client._get_blob_names(str(tmp_path)) == ["known"]
     assert len(list(descriptors.iterdir())) <= before

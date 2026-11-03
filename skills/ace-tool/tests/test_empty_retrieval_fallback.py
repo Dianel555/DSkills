@@ -35,8 +35,10 @@ def test_nonempty_remote_result_is_preserved(monkeypatch, remote_text):
 
 def test_readiness_failure_does_not_trigger_empty_result_fallback(monkeypatch):
     client = _client()
+
     def fail(*args):
         raise IndexReadinessError("index timed out")
+
     monkeypatch.setattr(client, "_remote_search", fail)
     monkeypatch.setattr(client, "_local_search", lambda *args: pytest.fail("readiness failure was hidden"))
     with pytest.raises(IndexReadinessError, match="timed out"):

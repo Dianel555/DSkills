@@ -199,6 +199,11 @@ python scripts/ace_cli.py get_config
 | `PROMPT_ENHANCER_TOKEN` | Third-party API key |
 | `PROMPT_ENHANCER_MODEL` | Model override for third-party endpoints |
 | `PROMPT_ENHANCER_INCLUDE_SEARCH_CONTEXT` | Enable search context injection (`1`, `true`, `yes`, `on`) |
+| `ACE_UPLOAD_READ_TIMEOUT_SECONDS` | Upload response read inactivity timeout in seconds (default: 300) |
+| `ACE_UPLOAD_BATCH_COUNT` | Maximum blobs per batch (default/maximum: 30) |
+| `ACE_UPLOAD_BATCH_BYTES` | Maximum UTF-8 content bytes per batch (default/maximum: 1048576) |
+
+For slow synchronous embedding, increase the read timeout and/or reduce batch size. The byte budget measures file content only, excluding JSON and HTTP overhead; each blob must fit within it. Settings must be positive and finite. Read/write and other uncertain transport errors, or HTTP 408, 429, and 5xx responses, trigger `/agents/blob-status` polling before any retransmission. Previously uncertain blobs receive a 5-second grace period when status is unknown; pending blobs are polled up to 180 seconds. These are not strict wall-clock limits because HTTPX read timeouts measure inactivity. If status remains uncertain or unavailable, the client automatically retries up to three potentially sent attempts per blob, tracked across process restarts. The server may still be processing an earlier request, so duplicate server work is possible. Exhausted attempts, authentication failures, and unsafe recovery state produce explicit errors; no manual prompt is shown.
 
 ### .env File
 
@@ -263,12 +268,12 @@ The `index` command performs incremental indexing:
 - **Cache**: Incremental via `mtime + size` check; stored as `.ace-tool/index.json.gz`. Legacy chunk-based caches are rebuilt once.
 - **Hierarchy**: The supplied project root is the index and upload boundary. Each root keeps its own cache; indexing a parent does not delete child caches.
 - **Boundary**: Symbolic links, junctions and other reparse points below the root are never followed, and the index cache is read and written through a verified handle. Only real files inside the root are read and uploaded; a link, an out-of-boundary path or an oversized cache is skipped or rebuilt rather than followed.
-- **Concurrency**: A save interrupted by removal of its cache directory abandons persistence; a later run can rebuild that root's cache.
+- **Recovery and concurrency**: A per-project OS lock serializes cooperating processes through cache publication. `.ace-tool/upload-journal.json` stores blob hashes, hashed service origins and API path prefixes, and attempt state before uploads, but no file contents or tokens. API URL paths must contain only non-secret prefixes: credentials belong in the separate token configuration, not in URLs. Configured tokens in URL paths are rejected, but arbitrary secrets in paths cannot be detected automatically. Blobs are checked with current credentials before upload; confirmed ready blobs are reused, while unresolved blobs are retried within the persistent attempt budget. Acknowledged entries are compacted from the journal; uncertain entries and their attempt counts are retained. If the 64 MiB journal cannot accommodate unresolved entries, uploads stop with an explicit error. The persistent `.ace-tool.lock` marker rejects mixed Windows and POSIX/WSL access to the same project root; use a separate root for each platform.
 - **Readiness**: Indexing, search and project-scoped prompt enhancement poll `POST /agents/blob-status` before using blobs, with a 3-minute polling deadline and per-request network timeouts. Unsupported or invalid status responses are errors, not empty search results.
-- **Retrieval timeout**: Remote retrieval allows up to 2 minutes per network read, with a 15-second connection timeout; readiness has a separate 2-minute deadline.
+- **Retrieval timeout**: Remote retrieval allows up to 2 minutes per network read, with a 15-second connection timeout; readiness has a separate 3-minute deadline.
 - **Empty results**: Empty remote retrieval (including OCE's header-only response) falls back to local keyword matching. Local prompt context contains matching file paths, not semantic code snippets.
-- **Self-heal**: Unknown blobs trigger one full rebuild and re-upload, followed by a readiness check; a subsequent unknown-blob error is reported.
-- **Upload**: Batch upload (≤30 blobs, ≤1MB per batch) to `POST /batch-upload` with retry (429 Retry-After, 5xx exponential backoff, 401/403 abort). The response must confirm every expected SHA-256 blob name.
+- **Self-heal**: Unknown blobs trigger one full rescan, with status checks before re-uploading missing blobs, followed by a readiness check; a subsequent unknown-blob error is reported.
+- **Upload**: Batch upload (≤30 blobs, ≤1 MiB of content per batch) to `POST /batch-upload`. Confirmed connection failures are retried; 401/403 abort. Ambiguous results are checked through blob status and may be retried automatically within the persistent budget; 429 waits for the bounded `Retry-After` delay before reconciliation. A successful upload response must confirm every expected SHA-256 blob name.
 - **Failure**: An upload failure raises an error and leaves the previous cache on disk unchanged; stale entries are not returned as successful results.
 - **Encoding**: Multi-encoding detection chain (`utf-8 → gbk → gb18030 → cp1252`)
 

@@ -16,11 +16,13 @@ def test_indexer_sends_one_whole_file_with_original_path(tmp_path, line_count):
     with Indexer(str(tmp_path), "", "") as indexer:
         indexer._load_index()
         assert indexer._scan_and_update()
-        assert indexer._pending == [{
-            "path": "source.py",
-            "content": content,
-            "blob_name": indexer._hash_blob("source.py", content),
-        }]
+        assert indexer._pending == [
+            {
+                "path": "source.py",
+                "content": content,
+                "blob_name": indexer._hash_blob("source.py", content),
+            }
+        ]
 
 
 def test_unchanged_legacy_chunk_cache_is_rebuilt_and_replaced(tmp_path, monkeypatch):
@@ -35,7 +37,10 @@ def test_unchanged_legacy_chunk_cache_is_rebuilt_and_replaced(tmp_path, monkeypa
             path = f"source.py#chunk{index}of2"
             blob_name = indexer._hash_blob(path, "\n".join(chunk))
             entries[blob_name] = {
-                "path": path, "blob_name": blob_name, "mtime": stat.st_mtime, "size": stat.st_size,
+                "path": path,
+                "blob_name": blob_name,
+                "mtime": stat.st_mtime,
+                "size": stat.st_size,
             }
         cache = tmp_path / INDEX_DIR / INDEX_FILE
         cache.parent.mkdir()
@@ -60,6 +65,7 @@ def test_new_cache_reuses_whole_file_with_chunk_in_real_filename(tmp_path, monke
     with Indexer(str(tmp_path), "", "") as first:
         names = first.get_blob_names()
     with Indexer(str(tmp_path), "", "") as second:
+
         def unexpected_read(*args):
             pytest.fail("unchanged file should be reused from the new-format cache")
 

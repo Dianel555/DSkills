@@ -62,6 +62,7 @@ _ERROR_ALREADY_EXISTS = 183
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 # ctypes sign-extends the 32-bit INVALID_HANDLE_VALUE to a 64-bit pointer value.
 _INVALID_HANDLE = 0xFFFFFFFFFFFFFFFF
 
@@ -222,6 +223,12 @@ class SafeFile:
                 raise OSError("short write")
             view = view[written:]
 
+    def fileno(self) -> int:
+        return self._fd
+
+    def flush_to_disk(self) -> None:
+        os.fsync(self._fd)
+
     def close(self) -> None:
         if self._fd >= 0:
             fd, self._fd = self._fd, -1
@@ -261,7 +268,8 @@ class AuthorizedRoot:
                 )
                 parents.append(fd)
                 parent = fd
-            flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL) if write else os.O_RDONLY
+            # Nonblocking open lets fstat reject FIFOs/devices without waiting for a peer.
+            flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL) if write else os.O_RDONLY | _O_NONBLOCK
             leaf = os.open(parts[-1], flags | _O_NOFOLLOW | _O_CLOEXEC, 0o600, dir_fd=parent)
         except OSError as e:
             for fd in parents:
@@ -292,13 +300,16 @@ class AuthorizedRoot:
 
     # --- Windows implementation ---
 
-    def _open_windows(self, parts: tuple[str, ...], write: bool, want_directory: bool) -> tuple[int, int]:
+    def _open_windows(
+        self, parts: tuple[str, ...], write: bool, want_directory: bool, *, share_delete: bool = True
+    ) -> tuple[int, int]:
         path = str(self.root.joinpath(*parts))
         access = _GENERIC_WRITE if write else _GENERIC_READ
         disposition = _CREATE_NEW if write else _OPEN_EXISTING
-        # A newly created private file needs no share flags; reads share everything so
-        # concurrent tools keep working.
-        share = _FILE_SHARE_READ if write else _FILE_SHARE_ALL
+        # Lock handles must not allow their directory entry to be replaced.
+        share = (
+            _FILE_SHARE_READ if write else (_FILE_SHARE_ALL if share_delete else _FILE_SHARE_READ | _FILE_SHARE_WRITE)
+        )
         flags = _FILE_FLAG_BACKUP_SEMANTICS | _FILE_FLAG_OPEN_REPARSE_POINT
         parent_handle = -1
         if write:
@@ -517,6 +528,32 @@ class AuthorizedRoot:
             return SafeFile(self._open_posix(parts, write=True))
         fd, _links = self._open_windows(parts, write=True, want_directory=False)
         return SafeFile(fd)
+
+    def open_lock_verified(self, rel_parts) -> SafeFile:
+        """Open a lock anchor without permitting Windows rename/delete sharing."""
+        parts = self._validate(rel_parts)
+        if os.name == "posix":
+            return self.open_verified(parts)
+        fd, links = self._open_windows(parts, write=False, want_directory=False, share_delete=False)
+        return SafeFile(fd, link_count=links)
+
+    def sync_directory(self, rel_parts) -> None:
+        """Flush a verified directory entry on POSIX; Windows only guarantees process-crash recovery."""
+        if os.name != "posix":
+            return
+        parts = self._validate(rel_parts)
+        fds: list[int] = []
+        try:
+            parent = self._dir_fd
+            for part in parts:
+                parent = os.open(part, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW | _O_CLOEXEC, dir_fd=parent)
+                fds.append(parent)
+            os.fsync(parent)
+        except OSError as exc:
+            raise UnsafePathError(f"cannot sync directory {self.root.joinpath(*parts)}: {exc}") from exc
+        finally:
+            for fd in fds:
+                os.close(fd)
 
     def verify_directory(self, rel_parts) -> None:
         """Refuse unless every component below the root is a real (non-link) directory."""

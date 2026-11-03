@@ -674,7 +674,9 @@ class AceToolClient:
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (404, 405, 501):
                     raise IndexReadinessError("Server does not support the blob readiness status endpoint") from e
-                raise IndexReadinessError(f"Blob readiness status request failed (HTTP {e.response.status_code})") from e
+                raise IndexReadinessError(
+                    f"Blob readiness status request failed (HTTP {e.response.status_code})"
+                ) from e
             except (httpx.TransportError, ValueError) as e:
                 raise IndexReadinessError("Blob readiness status request failed or returned invalid JSON") from e
             if time.monotonic() >= deadline:
@@ -739,8 +741,13 @@ class AceToolClient:
                         try:
                             data = self._post_json(url, payload, headers=self._get_headers(), timeout=timeout)
                         except httpx.HTTPStatusError as retry_error:
-                            if retry_error.response.status_code == 400 and "unknown blob" in retry_error.response.text.lower():
-                                raise IndexReadinessError("Server reports unknown blobs after index rebuild") from retry_error
+                            if (
+                                retry_error.response.status_code == 400
+                                and "unknown blob" in retry_error.response.text.lower()
+                            ):
+                                raise IndexReadinessError(
+                                    "Server reports unknown blobs after index rebuild"
+                                ) from retry_error
                             raise
 
             return {

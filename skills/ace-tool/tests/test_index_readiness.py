@@ -62,7 +62,9 @@ def test_pending_index_is_polled_before_retrieval(fake_indexer, monkeypatch):
         return {"formatted_retrieval": "ready result"}
 
     monkeypatch.setattr(client, "_post_json", post)
-    monkeypatch.setattr("client.time", SimpleNamespace(monotonic=time.monotonic, sleep=lambda seconds: None), raising=False)
+    monkeypatch.setattr(
+        "client.time", SimpleNamespace(monotonic=time.monotonic, sleep=lambda seconds: None), raising=False
+    )
     result = client._remote_search("workspace", "query")
 
     assert [url.rsplit("/", 1)[-1] for url, _ in calls] == ["blob-status", "blob-status", "codebase-retrieval"]
@@ -82,7 +84,9 @@ def test_unknown_blob_rebuilds_once_then_waits_for_new_names(fake_indexer, monke
         return {"formatted_retrieval": "ready"}
 
     monkeypatch.setattr(client, "_post_json", post)
-    monkeypatch.setattr("client.time", SimpleNamespace(monotonic=time.monotonic, sleep=lambda seconds: None), raising=False)
+    monkeypatch.setattr(
+        "client.time", SimpleNamespace(monotonic=time.monotonic, sleep=lambda seconds: None), raising=False
+    )
     assert client._remote_search("workspace", "query")["results"] == "ready"
     assert fake_indexer.instances[0].rebuilds == 1
     assert [names for _, names in calls] == [["old"], ["fresh"], ["fresh"], ["fresh"]]
@@ -121,10 +125,12 @@ def test_unknown_on_retrieval_retry_is_explicit_and_not_locally_suppressed(fake_
     client = AceToolClient(base_url="https://example.invalid", token="dummy")
     request = httpx.Request("POST", "https://example.invalid/agents/codebase-retrieval")
     response = httpx.Response(400, text="unknown blobs", request=request)
+
     def post(url, payload, **kwargs):
         if url.endswith("/agents/blob-status"):
             return _status()
         raise httpx.HTTPStatusError("unknown blobs", request=request, response=response)
+
     monkeypatch.setattr(client, "_post_json", post)
     monkeypatch.setattr(client, "_local_search", lambda *args: pytest.fail("unresolved unknown blob was hidden"))
     with pytest.raises(ValueError, match="unknown"):
@@ -157,7 +163,16 @@ def test_pending_timeout_is_explicit_and_not_retried_or_locally_suppressed(fake_
     assert clock[0] == 2.0
 
 
-@pytest.mark.parametrize("response", [None, {}, {"unknown_blob_names": [], "nonindexed_blob_names": "pending", "checkpoint_not_found": False}, _status(unknown=["unrequested"]), _status(checkpoint_not_found=True)])
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        {},
+        {"unknown_blob_names": [], "nonindexed_blob_names": "pending", "checkpoint_not_found": False},
+        _status(unknown=["unrequested"]),
+        _status(checkpoint_not_found=True),
+    ],
+)
 def test_malformed_or_invalid_status_cannot_be_treated_as_ready(fake_indexer, monkeypatch, response):
     client = AceToolClient(base_url="https://example.invalid", token="dummy")
     calls = []
@@ -170,8 +185,10 @@ def test_malformed_or_invalid_status_cannot_be_treated_as_ready(fake_indexer, mo
 def test_unsupported_status_endpoint_is_explicit_error(fake_indexer, monkeypatch):
     client = AceToolClient(base_url="https://example.invalid", token="dummy")
     response = httpx.Response(404, request=httpx.Request("POST", "https://example.invalid/agents/blob-status"))
+
     def post(*args, **kwargs):
         raise httpx.HTTPStatusError("not found", request=response.request, response=response)
+
     monkeypatch.setattr(client, "_post_json", post)
     monkeypatch.setattr(client, "_local_search", lambda *args: pytest.fail("unsupported status was hidden"))
     with pytest.raises(ValueError, match="(?i)(readiness|status|unsupported)"):
@@ -181,7 +198,9 @@ def test_unsupported_status_endpoint_is_explicit_error(fake_indexer, monkeypatch
 def test_empty_scope_never_sends_unscoped_retrieval(fake_indexer, monkeypatch):
     fake_indexer.initial = []
     client = AceToolClient(base_url="https://example.invalid", token="dummy")
-    monkeypatch.setattr(client, "_post_json", lambda *args, **kwargs: pytest.fail("empty workspace must not call the server"))
+    monkeypatch.setattr(
+        client, "_post_json", lambda *args, **kwargs: pytest.fail("empty workspace must not call the server")
+    )
     result = client._remote_search("workspace", "query")
     assert result["results"] == ""
     assert result["blob_count"] == 0
@@ -192,12 +211,15 @@ def test_cached_unchanged_blobs_are_still_checked_for_readiness(tmp_path, monkey
     with Indexer(str(tmp_path), "", "") as indexer:
         cached = indexer.get_blob_names()
     assert cached
-    monkeypatch.setattr(Indexer, "_upload_pending", lambda *args: pytest.fail("unchanged file reuploaded"))
+    monkeypatch.setattr(Indexer, "_upload_status", lambda *args: (set(), set()))
+    monkeypatch.setattr(Indexer, "_upload_batch_with_retry", lambda *args: pytest.fail("unchanged file reuploaded"))
     client = AceToolClient(base_url="https://example.invalid", token="dummy")
     calls = []
+
     def post(url, payload, **kwargs):
         calls.append((url, payload["blobs"]["added_blobs"]))
         return _status() if url.endswith("/agents/blob-status") else {"formatted_retrieval": "cached result"}
+
     monkeypatch.setattr(client, "_post_json", post)
     assert client._remote_search(str(tmp_path), "cached")["results"] == "cached result"
     assert [names for _, names in calls] == [cached, cached]
@@ -209,10 +231,12 @@ def test_ready_response_arriving_after_deadline_is_not_accepted(fake_indexer, mo
     clock = [0.0]
     monkeypatch.setattr("client.READINESS_TIMEOUT", 2.0, raising=False)
     monkeypatch.setattr("client.time", SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda _: None), raising=False)
+
     def post(url, payload, **kwargs):
         assert url.endswith("/agents/blob-status")
         clock[0] = 2.1
         return _status()
+
     monkeypatch.setattr(client, "_post_json", post)
     with pytest.raises(ValueError, match="(?i)(timeout|timed out)"):
         client._remote_search("workspace", "query")
@@ -222,10 +246,12 @@ def test_unknown_rebuild_to_empty_scope_does_not_send_retrieval(fake_indexer, mo
     fake_indexer.rebuilt = []
     client = AceToolClient(base_url="https://example.invalid", token="dummy")
     calls = []
+
     def post(url, payload, **kwargs):
         calls.append(url)
         assert url.endswith("/agents/blob-status")
         return _status(unknown=["old"])
+
     monkeypatch.setattr(client, "_post_json", post)
     result = client._remote_search("workspace", "query")
     assert result["blob_count"] == 0
@@ -243,6 +269,7 @@ def test_legacy_enhancement_rejects_empty_project_scope(fake_indexer, monkeypatc
 
 def test_index_command_waits_for_readiness_before_reporting(fake_indexer, monkeypatch, capsys):
     import ace_cli
+
     fake_indexer.root = "workspace"
     fake_indexer._index = SimpleNamespace(last_indexed=0)
     client = AceToolClient(base_url="https://example.invalid", token="dummy")
@@ -267,8 +294,10 @@ def test_enhancement_retrieval_does_not_hide_readiness_failure(fake_indexer, mon
 
 def test_upload_failure_is_not_silently_replaced_by_local_search(monkeypatch):
     client = AceToolClient(base_url="https://example.invalid", token="dummy")
+
     def fail(*args):
         raise IndexUploadError("upload failed")
+
     monkeypatch.setattr(client, "_remote_search", fail)
     monkeypatch.setattr(client, "_local_search", lambda *args: pytest.fail("upload failure was hidden"))
     with pytest.raises(IndexUploadError):

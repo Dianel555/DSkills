@@ -8,13 +8,25 @@ from indexer import Indexer, IndexUploadError
 from templates import INDEX_DIR, INDEX_FILE
 
 
-@pytest.mark.parametrize("response_kind", ["missing", "empty", "short", "duplicate", "mismatch", "invalid-type", "malformed-json"])
+@pytest.mark.parametrize(
+    "response_kind", ["missing", "empty", "short", "duplicate", "mismatch", "invalid-type", "malformed-json"]
+)
 def test_unacknowledged_upload_never_becomes_cached(tmp_path, monkeypatch, response_kind):
     (tmp_path / "first.py").write_text("one = 1\n", encoding="utf-8")
     (tmp_path / "second.py").write_text("two = 2\n", encoding="utf-8")
 
     def handler(request):
         sent = json.loads(request.content)["blobs"]
+        if request.url.path == "/agents/blob-status":
+            return httpx.Response(
+                200,
+                json={
+                    "unknown_blob_names": sent["added_blobs"],
+                    "nonindexed_blob_names": [],
+                    "checkpoint_not_found": False,
+                },
+                request=request,
+            )
         names = [Indexer._hash_blob(item["path"], item["content"]) for item in sent]
         response = {
             "missing": {},
@@ -30,8 +42,9 @@ def test_unacknowledged_upload_never_becomes_cached(tmp_path, monkeypatch, respo
 
     real_client = httpx.Client
     monkeypatch.setattr("indexer.httpx.Client", lambda **kwargs: real_client(transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr("indexer.UPLOAD_UNKNOWN_GRACE", 0.0)
     with Indexer(str(tmp_path), "https://example.invalid", "dummy") as indexer:
-        with pytest.raises(ValueError, match="upload"):
+        with pytest.raises(ValueError, match="[Uu]pload"):
             indexer.get_blob_names()
         assert not (tmp_path / INDEX_DIR / INDEX_FILE).exists()
 
@@ -42,6 +55,16 @@ def test_reordered_matching_acknowledgements_are_accepted(tmp_path, monkeypatch)
 
     def handler(request):
         sent = json.loads(request.content)["blobs"]
+        if request.url.path == "/agents/blob-status":
+            return httpx.Response(
+                200,
+                json={
+                    "unknown_blob_names": sent["added_blobs"],
+                    "nonindexed_blob_names": [],
+                    "checkpoint_not_found": False,
+                },
+                request=request,
+            )
         names = [Indexer._hash_blob(item["path"], item["content"]) for item in sent]
         return httpx.Response(200, json={"blob_names": list(reversed(names))}, request=request)
 
@@ -67,6 +90,7 @@ def test_partial_upload_failure_does_not_return_stale_entries_or_commit_cache(tm
 
     with Indexer(str(tmp_path), "https://example.invalid", "dummy") as indexer:
         batches = []
+
         def fail_second(headers, payload):
             batches.append(payload["blobs"])
             return len(batches) != 2
@@ -77,12 +101,17 @@ def test_partial_upload_failure_does_not_return_stale_entries_or_commit_cache(tm
         assert [len(batch) for batch in batches] == [30, 1]
         assert cache.read_bytes() == before
 
-        # Reusing this instance must rescan/re-upload, not treat its failed
-        # candidate state as a successful cached index.
+        # The confirmed first batch is reused; the still-unknown second batch
+        # is automatically retried after status reconciliation.
+        confirmed = {Indexer._hash_blob(blob["path"], blob["content"]) for blob in batches[0]}
         batches.clear()
-        monkeypatch.setattr(indexer, "_upload_batch_with_retry", lambda headers, payload: batches.append(payload["blobs"]) or True)
+        monkeypatch.setattr("indexer.UPLOAD_UNKNOWN_GRACE", 0.0)
+        monkeypatch.setattr(indexer, "_upload_status", lambda headers, names, timeout: (set(names) - confirmed, set()))
+        monkeypatch.setattr(
+            indexer, "_upload_batch_with_retry", lambda headers, payload: batches.append(payload["blobs"]) or True
+        )
         names = indexer.get_blob_names()
-        assert [len(batch) for batch in batches] == [30, 1]
+        assert [len(batch) for batch in batches] == [1]
         assert len(names) == 31
         assert not (set(names) & stale_names)
 
@@ -91,8 +120,10 @@ def test_upload_http_error_is_explicit_and_does_not_leave_candidate_cached(tmp_p
     (tmp_path / "a.py").write_text("value = 1\n", encoding="utf-8")
     with Indexer(str(tmp_path), "https://example.invalid", "dummy") as indexer:
         response = httpx.Response(400, request=httpx.Request("POST", "https://example.invalid/batch-upload"))
+
         def fail(*args):
             raise httpx.HTTPStatusError("bad request", request=response.request, response=response)
+
         monkeypatch.setattr(indexer, "_upload_batch_with_retry", fail)
         with pytest.raises(IndexUploadError, match="upload"):
             indexer.get_blob_names()
@@ -105,7 +136,9 @@ def test_upload_stops_after_failed_batch(tmp_path, monkeypatch):
         (tmp_path / f"new_{number}.py").write_text(f"value = {number}\n", encoding="utf-8")
     with Indexer(str(tmp_path), "https://example.invalid", "dummy") as indexer:
         calls = []
-        monkeypatch.setattr(indexer, "_upload_batch_with_retry", lambda headers, payload: calls.append(payload) or False)
+        monkeypatch.setattr(
+            indexer, "_upload_batch_with_retry", lambda headers, payload: calls.append(payload) or False
+        )
         with pytest.raises(ValueError, match="upload"):
             indexer.get_blob_names()
         assert len(calls) == 1

@@ -47,7 +47,9 @@ class TestIndexAuth:
             patch("pathlib.Path.home", return_value=tmp_path),
             patch.dict(os.environ, env_vars, clear=False),
             patch.object(ace_cli, "Indexer", FakeIndexer),
-            patch.object(ace_cli.AceToolClient, "_wait_for_index", lambda self, indexer, names: (names, False), create=True),
+            patch.object(
+                ace_cli.AceToolClient, "_wait_for_index", lambda self, indexer, names: (names, False), create=True
+            ),
         ):
             ace_cli.cmd_index(_index_args(tmp_path))
 

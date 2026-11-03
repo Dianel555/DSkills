@@ -218,6 +218,13 @@ Legacy variables continue to work for backward compatibility but are not recomme
 | `PROMPT_ENHANCER_TOKEN` | Third-party API token |
 | `PROMPT_ENHANCER_MODEL` | Override default model for third-party endpoints |
 | `PROMPT_ENHANCER_INCLUDE_SEARCH_CONTEXT` | Enable search context injection for third-party endpoints (`1`, `true`, `yes`, `on`) |
+| `ACE_UPLOAD_READ_TIMEOUT_SECONDS` | Upload response read inactivity timeout in seconds (default: 300) |
+| `ACE_UPLOAD_BATCH_COUNT` | Maximum blobs per batch (default/maximum: 30) |
+| `ACE_UPLOAD_BATCH_BYTES` | Maximum UTF-8 content bytes per batch (default/maximum: 1048576) |
+
+Settings are positive and finite. The byte budget counts content only, excluding JSON/HTTP overhead, and each blob must fit within it. Read/write and other uncertain transport errors, or HTTP 408, 429, and 5xx responses, trigger `/agents/blob-status` polling before retransmission. Previously uncertain blobs receive a 5-second grace period when status is unknown; pending blobs are polled up to 180 seconds. These are not strict wall-clock limits because HTTPX read timeouts measure inactivity. When status remains uncertain or unavailable, unresolved blobs are retried automatically up to three potentially sent attempts per blob across process restarts. The server may still be processing an earlier request, so this does not guarantee exactly-once server work. Exhausted attempts, authentication failures, and unsafe recovery state produce explicit errors.
+
+A per-project OS lock serializes cooperating processes through index publication. `.ace-tool/upload-journal.json` stores blob hashes, hashed service origins and API path prefixes, and attempt state, not file contents or tokens. URL paths must contain only non-secret API prefixes; configure credentials separately. Configured tokens in paths are rejected, but arbitrary path secrets cannot be detected automatically. Blobs are checked with current credentials before upload and ready blobs are reused. Acknowledged entries are compacted; uncertain entries and their attempt counts are retained. Uploads fail explicitly if unresolved entries exceed the 64 MiB journal limit. The persistent `.ace-tool.lock` marker rejects mixed Windows and POSIX/WSL access to the same project root; use a separate root for each platform.
 
 ## Search Context Injection
 

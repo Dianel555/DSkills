@@ -314,7 +314,9 @@ def test_cmd_index_reports_effective_root(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(
         ace_cli,
         "AceToolClient",
-        lambda *a: SimpleNamespace(base_url="https://h", token="tok", _wait_for_index=lambda indexer, names: (names, False)),
+        lambda *a: SimpleNamespace(
+            base_url="https://h", token="tok", _wait_for_index=lambda indexer, names: (names, False)
+        ),
     )
 
     def fake_names(self):

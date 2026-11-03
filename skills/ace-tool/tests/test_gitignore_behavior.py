@@ -51,7 +51,18 @@ def test_gitignore_pattern_semantics(tmp_path, patterns, relative, ignored):
         env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
         subprocess.run(["git", "init", "-q"], cwd=tmp_path, env=env, check=True, capture_output=True)
         result = subprocess.run(
-            ["git", "-c", "core.ignorecase=false", "-c", "core.excludesFile=", "check-ignore", "--no-index", "-q", "--", relative],
+            [
+                "git",
+                "-c",
+                "core.ignorecase=false",
+                "-c",
+                "core.excludesFile=",
+                "check-ignore",
+                "--no-index",
+                "-q",
+                "--",
+                relative,
+            ],
             cwd=tmp_path,
             env=env,
             check=False,
@@ -103,11 +114,17 @@ def test_repeated_indexing_refreshes_changed_ignore_rules(tmp_path, monkeypatch,
     if rule_source == "existing_nested_git":
         (tmp_path / "src" / ".gitignore").write_text("", encoding="utf-8")
     uploads = []
+    ready = set()
     with Indexer(str(tmp_path), "https://example.invalid", "dummy") as indexer:
-        monkeypatch.setattr(
-            indexer, "_upload_batch_with_retry",
-            lambda headers, payload: uploads.extend(blob["path"] for blob in payload["blobs"]) or True,
-        )
+
+        def upload(headers, payload):
+            for blob in payload["blobs"]:
+                uploads.append(blob["path"])
+                ready.add(indexer._hash_blob(blob["path"], blob["content"]))
+            return True
+
+        monkeypatch.setattr(indexer, "_upload_batch_with_retry", upload)
+        monkeypatch.setattr(indexer, "_upload_status", lambda headers, names, timeout: (set(names) - ready, set()))
         initial_names = indexer.get_blob_names()
         private_name = indexer._hash_blob(private, "diagnostic_keyword = True\n")
         assert private_name in initial_names and private in uploads
